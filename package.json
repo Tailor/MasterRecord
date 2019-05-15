@@ -1,0 +1,51 @@
+{
+  "_from": "masterrecord@^0.0.05",
+  "_id": "masterrecord@0.0.5",
+  "_inBundle": false,
+  "_integrity": "sha512-+q8ysCvZBETY902v7o07PxWrsBtHZv68bRugf8vFve45R5axH8+lvfsRd/daSBnRpBJ5sTRiSlo93tSPKEfPRA==",
+  "_location": "/masterrecord",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "range",
+    "registry": true,
+    "raw": "masterrecord@^0.0.05",
+    "name": "masterrecord",
+    "escapedName": "masterrecord",
+    "rawSpec": "^0.0.05",
+    "saveSpec": null,
+    "fetchSpec": "^0.0.05"
+  },
+  "_requiredBy": [
+    "#USER",
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.5.tgz",
+  "_shasum": "12848641191a54998a9919d7aab94845e756bbf5",
+  "_spec": "masterrecord@^0.0.05",
+  "_where": "C:\\Users\\rbatista\\Desktop\\kollege-masters",
+  "author": {
+    "name": "Alexander Batista",
+    "email": "spidergt1@aol.com"
+  },
+  "bugs": {
+    "url": "https://github.com/Tailor/Masterrecord/issues"
+  },
+  "bundleDependencies": [],
+  "dependencies": {
+    "better-sqlite3": "^5.2.0"
+  },
+  "deprecated": false,
+  "description": "An Object-relational mapping foe the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
+  "homepage": "https://github.com/Tailor/MasterRecord#readme",
+  "license": "Apache-2.0",
+  "main": "MasterRecord.js",
+  "name": "masterrecord",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tailor/Masterrecord.git"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "version": "0.0.5"
+}
