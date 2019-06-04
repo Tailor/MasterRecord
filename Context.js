@@ -1,6 +1,6 @@
 
 var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
-var query = require('masterrecord/QueryLanguage/queryBuilder');
+var query = require('masterrecord/QueryLanguage/simpleQuery');
 var tools =  require('./Tools');
 var sqlEngine = require('./SQLEngine');
 

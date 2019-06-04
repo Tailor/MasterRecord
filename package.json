@@ -1,8 +1,8 @@
 {
   "_from": "masterrecord",
-  "_id": "masterrecord@0.0.7",
+  "_id": "masterrecord@0.0.8",
   "_inBundle": false,
-  "_integrity": "sha512-lvj3RDJYn7p3UqXXPN4FZpsmtfK944enXnnJGwXevPKdfwjmXWSjD82RIALOnNaegRdLID6l3GN44pCHotg8Tg==",
+  "_integrity": "sha512-6ZKETAfu3YoW9IJj3hQU0cpKM+CDTrTAF0jZA707RhFtBUmwA8nMaa4kb/3U2yhOfIPGrSg2odpydVcfU8u4Qg==",
   "_location": "/masterrecord",
   "_phantomChildren": {},
   "_requested": {
@@ -19,10 +19,10 @@
     "#USER",
     "/"
   ],
-  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.7.tgz",
-  "_shasum": "535c41572436cdbcd56d0c906e607975f8d265ea",
+  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.8.tgz",
+  "_shasum": "a93cd54859d9f9d93419ff3f4988474ea57a4606",
   "_spec": "masterrecord",
-  "_where": "C:\\Users\\rbatista\\Desktop\\sd",
+  "_where": "C:\\Users\\rbatista\\Desktop\\mastt",
   "author": {
     "name": "Alexander Batista",
     "email": "spidergt1@aol.com"
@@ -32,7 +32,7 @@
   },
   "bundleDependencies": [],
   "dependencies": {
-    "better-sqlite3": "^5.2.0"
+    "better-sqlite3": "^5.4.0"
   },
   "deprecated": false,
   "description": "An Object-relational mapping foe the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
@@ -47,5 +47,5 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "version": "0.0.7"
+  "version": "0.0.8"
 }
