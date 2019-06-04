@@ -11,17 +11,17 @@ class MasterRecord {
     }
 
     init(env){
-        switch(env.database.type) {
+        switch(env.type) {
             case "better-sqlite3":
-                this.__SQLiteInit(env, env.database.type);
+                this.__SQLiteInit(env, env.type);
             break;
         }
     }
 
     async __SQLiteInit(env, name){
         const sqlite3 = require(name);
-        let DBAddress = env.database.connection + env.type + ".sqlite3";
-        var db = new sqlite3(DBAddress, env.database);
+        let DBAddress = env.connection + ".sqlite3";
+        var db = new sqlite3(DBAddress, env);
         db.__name = name;
         SQLEngine.setDB(db);
     }

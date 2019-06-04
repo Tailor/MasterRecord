@@ -1,27 +1,28 @@
 {
-  "_from": "masterrecord@^0.0.7cd",
+  "_from": "masterrecord",
   "_id": "masterrecord@0.0.7",
   "_inBundle": false,
   "_integrity": "sha512-lvj3RDJYn7p3UqXXPN4FZpsmtfK944enXnnJGwXevPKdfwjmXWSjD82RIALOnNaegRdLID6l3GN44pCHotg8Tg==",
   "_location": "/masterrecord",
   "_phantomChildren": {},
   "_requested": {
-    "type": "range",
+    "type": "tag",
     "registry": true,
-    "raw": "masterrecord@^0.0.7cd",
-    "name": "masterRecord",
-    "escapedName": "masterRecord",
-    "rawSpec": "^0.0.7cd",
+    "raw": "masterrecord",
+    "name": "masterrecord",
+    "escapedName": "masterrecord",
+    "rawSpec": "",
     "saveSpec": null,
-    "fetchSpec": "^0.0.7cd"
+    "fetchSpec": "latest"
   },
   "_requiredBy": [
+    "#USER",
     "/"
   ],
   "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.7.tgz",
   "_shasum": "535c41572436cdbcd56d0c906e607975f8d265ea",
-  "_spec": "masterrecord@^0.0.7cd",
-  "_where": "C:\\Users\\rbatista\\Desktop\\jj",
+  "_spec": "masterrecord",
+  "_where": "C:\\Users\\rbatista\\Desktop\\sd",
   "author": {
     "name": "Alexander Batista",
     "email": "spidergt1@aol.com"
@@ -31,7 +32,7 @@
   },
   "bundleDependencies": [],
   "dependencies": {
-    "better-sqlite3": "^5.4.0"
+    "better-sqlite3": "^5.2.0"
   },
   "deprecated": false,
   "description": "An Object-relational mapping foe the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",

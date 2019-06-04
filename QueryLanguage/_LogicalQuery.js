@@ -1,6 +1,6 @@
 
 
-var Query = require('masterrecord/QueryLanguage/simpleQuery');
+var Query = require('masterrecord/QueryLanguage/_simpleQuery');
 
 class LogicalQuery {
     constructor(context, modelName){

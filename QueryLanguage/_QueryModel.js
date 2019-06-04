@@ -20,7 +20,7 @@
 
 
 // TODO: build out conditions
-var LogicalQuery = require('masterrecord/QueryLanguage/LogicalQuery');
+var LogicalQuery = require('masterrecord/QueryLanguage/_LogicalQuery');
 
 
 class QueryModel {
@@ -95,7 +95,7 @@ class QueryModel {
         // this means it found the context
         if(relationshipContext !== -1){
             this.discardToken();
-            var Query = require('masterrecord/QueryLanguage/simpleQuery');
+            var Query = require('masterrecord/QueryLanguage/_simpleQuery');
             var queryNew = new Query(relationshipContext, this.__context);
             var innerQuery = innerQuery === undefined ? this.buildInnerQueryObject("",queryNew) : innerQuery;
             // get all the code that relates to relationship

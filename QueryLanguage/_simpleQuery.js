@@ -1,7 +1,7 @@
 // ALL THIS SHOULD DO IS BUILD A SQL QUERY
 var EntityTrackerModel  = require('masterrecord/Entity/EntityTrackerModel');
-var Tokenize  = require('masterrecord/QueryLanguage/Tokenization');
-var QueryModel = require('masterrecord/QueryLanguage/QueryModel');
+var Tokenize  = require('masterrecord/QueryLanguage/_Tokenization');
+var QueryModel = require('masterrecord/QueryLanguage/_QueryModel');
 
 
 class simpleQuery{
