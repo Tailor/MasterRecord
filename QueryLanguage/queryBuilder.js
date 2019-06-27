@@ -1,6 +1,6 @@
 // ALL THIS SHOULD DO IS BUILD A SQL QUERY
 var entityTrackerModel  = require('masterrecord/Entity/EntityTrackerModel');
-var sqlEngine = require('./SQLEngine');
+var sqlEngine = require('masterrecord/SQLEngine');
 
 class queryBuilder{
     constructor(model, context) {
@@ -12,28 +12,37 @@ class queryBuilder{
     raw(query){
         // get the query
         var entityValue = sqlEngine.get(query);
-        var ent = entityTrackerModel.build(entityValue, this.__model);
-        ent.__state = "track";
-        this.__context.__Track(ent);
-        return ent;
+        if(entityValue !== undefined){
+            var ent = new entityTrackerModel();
+            ent.build(entityValue, this.__model);
+            ent.__state = "track";
+            this.__context.__Track(ent);
+            return ent;
+        }else{
+            return null;
+        }
+
     }
 
     add(entityValue){
         // This will call context API to REMOVE entity to update list
-        var ent = entityTrackerModel.build(entityValue, this.__model);
+        var ent = new entityTrackerModel();
+        ent.build(entityValue, this.__model);
         ent.__state = "insert";
         this.__context.__Track(ent);
     }
     
     remove(entityValue){
         // This will call context API to REMOVE entity to Delete list
-        var ent = entityTrackerModel.build(entityValue, this.__model);
+        var ent = new entityTrackerModel();
+        ent.build(entityValue, this.__model);
         ent.__state = "delete";
         this.__context.__Track(ent);
     }
 
     track(entityValue){
-        var ent = entityTrackerModel.build(entityValue, this.__model);
+        var ent = new entityTrackerModel();
+        ent.build(entityValue, this.__model);
         ent.__state = "track";
         return this.__context.__Track(ent);
     }

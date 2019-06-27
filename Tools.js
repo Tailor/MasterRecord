@@ -5,9 +5,15 @@ class Tools{
         var dirtyFields = model.__dirtyFields;
         for (var column in dirtyFields) {
             // column1 = value1, column2 = value2, ...
-            argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
+            var value = model[dirtyFields[column]];
+            // TODO Boolean value is a string with a letter
+            if(typeof value === "number"){
+                argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
+            }else{
+                argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
+            }
         }
-        return argument.replace(/,\s*$/, ""); 
+        return argument.replace(/,\s*$/, "");
     }
     
     // return columns and value strings

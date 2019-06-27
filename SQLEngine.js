@@ -4,7 +4,6 @@ class SQLEngine {
         var query = ` UPDATE ${query.tableName}
         SET ${query.arg} 
         WHERE ${query.primaryKey} = ${query.value}` // primary key for that table = 
-       
         return this.execute(query);
    }
 
@@ -23,13 +22,8 @@ class SQLEngine {
 
         switch(this.db.__name) {
             case "better-sqlite3":
-                try {
-                    console.log("SQL:", query);
-                    return this.db.exec(query);
-                } catch (err) {
-                    console.error(err)
-                }
-                
+                console.log("SQL:", query);
+                return this.db.exec(query);
                 // code block
             break;
         }
@@ -42,9 +36,8 @@ class SQLEngine {
                 console.log("SQL:", query);
                 return this.db.prepare(query).get();
             } catch (err) {
-                console.error(err)
+                console.error(err);
             }
-            
             // code block
         break;
     }

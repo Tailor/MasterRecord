@@ -1,28 +1,28 @@
 {
-  "_from": "masterrecord",
-  "_id": "masterrecord@0.0.9",
+  "_from": "masterrecord@^0.0.10",
+  "_id": "masterrecord@0.0.10",
   "_inBundle": false,
-  "_integrity": "sha512-6ZKETAfu3YoW9IJj3hQU0cpKM+CDTrTAF0jZA707RhFtBUmwA8nMaa4kb/3U2yhOfIPGrSg2odpydVcfU8u4Qg==",
+  "_integrity": "sha512-uZW7sFwOxj362gOxrV/401B3jX5bFxreUQnlEf0CxvgfkSFerGxJ1ORm5bJaHoENcGXQlNiw3bEZinYfix/WSQ==",
   "_location": "/masterrecord",
   "_phantomChildren": {},
   "_requested": {
-    "type": "tag",
+    "type": "range",
     "registry": true,
-    "raw": "masterrecord",
+    "raw": "masterrecord@^0.0.10",
     "name": "masterrecord",
     "escapedName": "masterrecord",
-    "rawSpec": "",
+    "rawSpec": "^0.0.10",
     "saveSpec": null,
-    "fetchSpec": "latest"
+    "fetchSpec": "^0.0.10"
   },
   "_requiredBy": [
     "#USER",
     "/"
   ],
-  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.9.tgz",
-  "_shasum": "a93cd54859d9f9d93419ff3f4988474ea57a4606",
-  "_spec": "masterrecord",
-  "_where": "C:\\Users\\rbatista\\Desktop\\mastt",
+  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.10.tgz",
+  "_shasum": "dda89a441f00ce7831ef42c91d01ca281cd254b1",
+  "_spec": "masterrecord@^0.0.10",
+  "_where": "C:\\Users\\rbatista\\Downloads\\kollege\\tailor.support",
   "author": {
     "name": "Alexander Batista",
     "email": "spidergt1@aol.com"
@@ -47,5 +47,5 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "version": "0.0.9"
+  "version": "0.0.10"
 }

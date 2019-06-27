@@ -1,3 +1,4 @@
+// https://www.learnentityframeworkcore.com/dbset/deleting-data
 
 var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryBuilder');
@@ -6,10 +7,46 @@ var sqlEngine = require('masterrecord/SQLEngine');
 
 class Context {
 
+    _isModelValid = {
+        isValid: true,
+        errors: []
+    }
+
     constructor(){
         this.__allContexts = [];
         this.__trackedEntities = [];
         this.__relationshipModels = [] // tracked entities must only come from entity tracker models
+    }
+
+    
+    validateEntity(currentModel){
+        for(var entity in currentModel.__entity) {
+            var currentEntity = currentModel.__entity[entity];
+            if (currentModel.__entity.hasOwnProperty(entity)) {
+                // TODO: // check if types are correct
+                if(currentEntity.default !== undefined){
+                    if(!currentModel[entity]){
+                        currentModel[entity] = currentEntity.default;
+                    }
+                }
+                if(currentEntity.primary === true){
+                    // skip it from the insert
+                    delete currentModel[`_${entity}`];
+                }
+                if(currentEntity.virtual === true){
+                    // skip it from the insert
+                    delete currentModel[`_${entity}`];
+                }
+                if(currentEntity.required === true){
+                    if(!currentModel[entity]){
+                        this._isModelValid.isValid = false;
+                        this._isModelValid.errors.push( `Entity ${entity} is a required Field`);
+                        console.log(`Entity ${entity} is a required Field`);
+                    }
+                }
+            }
+
+        }
     }
 
     dbset(model){
@@ -23,11 +60,20 @@ class Context {
         this[validModel.__name] = new query(validModel, this);
     }
 
+    modelState(){
+        return this._isModelValid;
+    }
+
     saveChanges(){
         
-        // TODO: convert dirty to update
         for (var model in this.__trackedEntities) {
             var currentModel = this.__trackedEntities[model];
+            this.validateEntity(currentModel);
+            if(this._isModelValid.valid === false){
+                // everything great
+                console.log(JSON.stringify(this._isModelValid.valid.errors));
+            }
+
             switch(currentModel.__state) {
                 case "modified":
                     if(currentModel.__dirtyFields.length <= 0){
@@ -41,6 +87,7 @@ class Context {
                   // code block
                   break;
                 case "insert":
+                    // TODO: skip virtual
                     var insertObj =  tools.getInsertObj(currentModel);
                     var sqlUpdate = {tableName: currentModel.__entity.__name, columns: insertObj.columns, values: insertObj.values };
                     sqlEngine.insert(sqlUpdate);
@@ -55,8 +102,6 @@ class Context {
         }
         return true;
     }
-
-    // https://www.learnentityframeworkcore.com/dbset/deleting-data
 
     __Track(model){
         this.__trackedEntities.push(model);
