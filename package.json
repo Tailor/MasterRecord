@@ -1,28 +1,28 @@
 {
-  "_from": "masterrecord",
-  "_id": "masterrecord@0.0.9",
+  "_from": "masterrecord@0.0.11",
+  "_id": "masterrecord@0.0.11",
   "_inBundle": false,
-  "_integrity": "sha512-6ZKETAfu3YoW9IJj3hQU0cpKM+CDTrTAF0jZA707RhFtBUmwA8nMaa4kb/3U2yhOfIPGrSg2odpydVcfU8u4Qg==",
+  "_integrity": "sha512-6QEQa2F1/p8CWKMIsBheJa6sLAerww/1ypV+zW6xi97V0lW/17RdngSjXo5iXFa4w+Ig7LnWvx+BG93UFoty0Q==",
   "_location": "/masterrecord",
   "_phantomChildren": {},
   "_requested": {
-    "type": "tag",
+    "type": "version",
     "registry": true,
-    "raw": "masterrecord",
+    "raw": "masterrecord@0.0.11",
     "name": "masterrecord",
     "escapedName": "masterrecord",
-    "rawSpec": "",
+    "rawSpec": "0.0.11",
     "saveSpec": null,
-    "fetchSpec": "latest"
+    "fetchSpec": "0.0.11"
   },
   "_requiredBy": [
     "#USER",
     "/"
   ],
-  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.9.tgz",
-  "_shasum": "a93cd54859d9f9d93419ff3f4988474ea57a4606",
-  "_spec": "masterrecord",
-  "_where": "C:\\Users\\rbatista\\Desktop\\mastt",
+  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.10.tgz",
+  "_shasum": "15e02bf12c016ebbffedd603614915c4e7023280",
+  "_spec": "masterrecord@0.0.11",
+  "_where": "C:\\Users\\rbatista\\Downloads\\kollege\\tailor.support\\components\\directoryAPI",
   "author": {
     "name": "Alexander Batista",
     "email": "spidergt1@aol.com"
@@ -32,7 +32,7 @@
   },
   "bundleDependencies": [],
   "dependencies": {
-    "better-sqlite3": "^5.4.0"
+    "better-sqlite3": "^5.4.3"
   },
   "deprecated": false,
   "description": "An Object-relational mapping foe the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
@@ -47,5 +47,5 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "version": "0.0.9"
+  "version": "0.0.11"
 }
