@@ -1,24 +1,24 @@
 
 class SQLEngine {
-    static update(query){
+    update(query){
         var query = ` UPDATE ${query.tableName}
         SET ${query.arg} 
         WHERE ${query.primaryKey} = ${query.value}` // primary key for that table = 
         return this.execute(query);
    }
 
-   static delete(query){
+    delete(query){
        var query = `DELETE FROM ${query.tableName} WHERE ${query.primaryKey} = ${query.value}`;
        return this.execute(query);
     }
 
-    static insert(query){
+    insert(query){
         var query = `INSERT INTO ${query.tableName} (${query.columns})
         VALUES (${query.values})`;
         return this.execute(query);
     }
 
-   static execute(query){
+    execute(query){
 
         switch(this.db.__name) {
             case "better-sqlite3":
@@ -27,9 +27,9 @@ class SQLEngine {
                 // code block
             break;
         }
-   }
+    }
 
-   static get(query){
+    get(query){
     switch(this.db.__name) {
         case "better-sqlite3":
             try {
@@ -40,14 +40,12 @@ class SQLEngine {
             }
             // code block
         break;
+        }
     }
-}
 
-   static setDB(db){
+    setDB(db){
        this.db = db;
    }
-
-
 }
 
 module.exports = SQLEngine;
