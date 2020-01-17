@@ -1,50 +1,23 @@
 {
-  "_from": "masterrecord@^0.0.12",
-  "_id": "masterrecord@0.0.12",
-  "_inBundle": false,
-  "_integrity": "sha512-/SACoYsO7uqnASpQgFxZU2ZWflkt8W4JGEFvzZFyECUJC726xyW1xNOT2jQ0S4mv5DKzaP5quQWwxqPQjMmQpg==",
-  "_location": "/masterrecord",
-  "_phantomChildren": {},
-  "_requested": {
-    "type": "range",
-    "registry": true,
-    "raw": "masterrecord@^0.0.12",
-    "name": "masterrecord",
-    "escapedName": "masterrecord",
-    "rawSpec": "^0.0.12",
-    "saveSpec": null,
-    "fetchSpec": "^0.0.12"
-  },
-  "_requiredBy": [
-    "/"
-  ],
-  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.12.tgz",
-  "_shasum": "ce36978bd006e7b6044d6a5462acf3a6dd344e37",
-  "_spec": "masterrecord@^0.0.12",
-  "_where": "C:\\Users\\rbatista\\Desktop\\freshmen",
-  "author": {
-    "name": "Alexander Batista",
-    "email": "spidergt1@aol.com"
-  },
+  "name": "masterrecord",
+  "version": "0.0.16",
+  "author": "Alexander Batista",
+  "main": "./MasterRecord.js",
   "bugs": {
     "url": "https://github.com/Tailor/Masterrecord/issues"
   },
-  "bundleDependencies": [],
   "dependencies": {
-    "better-sqlite3": "^5.4.3"
+    "better-sqlite3": "^5.4.3",
+    "commander": "^4.1.0"
   },
-  "deprecated": false,
-  "description": "An Object-relational mapping foe the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
+  "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
-  "license": "Apache-2.0",
-  "main": "MasterRecord.js",
-  "name": "masterrecord",
+  "license": "ISC",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Tailor/Masterrecord.git"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "version": "0.0.12"
+  }
 }

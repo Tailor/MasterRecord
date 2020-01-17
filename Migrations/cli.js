@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 const program = require('commander');
-var fs = require('fs-extra');
-var crypto = require('crypto');
-var Git = require("nodegit");
-var nrc = require('node-run-cmd');
+let fs = require('fs');
+let path = require('path');
+var Migration = require('./migrations');
 
 
 // npm unlink
@@ -12,43 +11,94 @@ const [,, ...args] = process.argv
 
 //console.log(`hello ${args}`);
 
+
 program
   .version('0.0.1')
+  .option('-v, --version', '0.0.1') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
+  // go to folder with contaxt file and run command
   program
-  .command('add-migration')
+  .command('enable-migrations <contextFileName>')
+  .alias('am')
+  .description('Enables the migration in your project by creating a Configuration class called database.js')
+  .action(function(contextFileName){
+        // location of folder where command is being executed..
+        var executedLocation = process.cwd();
+        // go back 1 folder level
+        let previousFolder = path.join(executedLocation, '../');
+        var migrationsDirectory = `${previousFolder}/jack`;
+        // create js file name configuration.js // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
+        if (!fs.existsSync(migrationsDirectory)){
+            fs.mkdirSync(migrationsDirectory);
+        }
+
+        var content = {
+            contextLocation: `${executedLocation}/${contextFileName}.js`,
+            migrationLocation: `${executedLocation}/Migrations`
+
+        };
+        
+        const jsonContent = JSON.stringify(content, null, 2);
+
+        try{
+          // will replace the whole file if it exist
+            fs.writeFileSync(`${migrationsDirectory}/database.json`, jsonContent);
+        }catch (e){
+            console.log("Cannot write file ", e);
+        }
+  });
+
+  // must be in the migration folder to run this command
+  // todo
+    // we find the database.json file
+    // we read the json file and get the json data
+    // we use that json data to find the context file
+    // we run the context file and get all the models
+    // we run it through migrations manager
+
+  program
+  .command('add-migration <name>')
   .alias('am')
   .description('Creates a new migration class')
-  .action(function(cmd){
-      var dir = process.cwd();
-      console.log("starting server");
-      require(dir + '/server.js');
-      /*
-        we need to loop through the db context
-        then create the up texts and down text
-        then get the migration template
-        then add the up and down text into the template file
-        then push the file to the migration folder
-      
-      */
-    //return "node c:\node\server.js"
+  .action(function(name){
+
+      var dbJson = null;
+      try{
+        dbJson =  fs.readFileSync(`./database.json`, 'utf8');
+      }catch (e){
+          console.log("Cannot read or find file ", e);
+      }
+
+      // TODO: get database.json file
+      var migration = new Migration();
+      var dbJsonData = JSON.parse(dbJson);
+      var context = require(dbJsonData.contextLocation);
+      var snapShot = migration.buildMigrationSnapshot(dbJsonData.migrationLocation);
+  // loop through each context dbset
+  // 
+      var newEntity = migration.EDMModelDiffer(context, snapShot);
+      if(newEntity !== -1){
+        var migrationDate = Date.now();
+        migration.migrationCodeGenerator(name, newEntity, migrationDate);
+        console.log(`migration ${name}_${migrationDate} created`);
+      }
   });
 
 
+ // we will find the migration folder inside the nearest app folder if no migration folder is location is added
   program
-  .command('remove-migration')
+  .command('remove-migration <name> <migrationFolderLocation>')
   .alias('rm')
   .description('Removes the last migration that has not been applied')
-  .action(function(cmd){
-      var dir = process.cwd();
-      console.log("starting server");
-      require(dir + '/server.js');
-    //return "node c:\node\server.js"
+  .action(function(name){
+    // find migration file using name and delete it.
   });
 
+
+ // we will find the migration folder inside the nearest app folder if no migration folder is location is added
   program
-  .command('revert-migration <name>')
+  .command('revert-migration <name> <migrationFolderLocation>')
   .alias('rm')
   .description('Reverts back to the last migration with given name')
   .action(function(cmd){
@@ -58,9 +108,9 @@ program
     //return "node c:\node\server.js"
   });
 
-
+// we will find the migration folder inside the nearest app folder if no migration folder is location is added
   program
-  .command('update-database')
+  .command('update-database <databaseSettingLocation> <migrationFolderLocation> ')
   .alias('ud')
   .description('Apply pending migrations to database')
   .action(function(cmd){
@@ -71,257 +121,4 @@ program
   });
 
 
-  program
-  .command('generate <type> <name> [actionName]')
-  .alias('g')
-  .description('Generate Controllers, Views, Sockets and Scaffoldings')
-  .action(function(type, name, actionName){
-    if(type !== null){
-      if(name !== null){
-          var dir = process.cwd();
-          switch(type) {
-              case "controller":
-
-                        // find controller using name
-                        var file = dir + '/app/controllers/' + name + "_controller.js";
-                        if(actionName !== undefined){
-                        // read controller template file
-                            var result = 
-`var app = require('mastercontroller');
-
-app.controller({
-  action : '${ actionName }',
-  type: "get"
-}, async function(params){
-    app.view.returnView();
-});`;
-
-                            // add template file to controller folder with name
-                            fs.writeFile(file, result, 'utf8', function (err) {
-                               if (err) return console.log(err)
-                               else{
-                                    console.log("generated controller with name " + name);
-
-                                    var viewPath = dir + '/app/views/' + name;
-                                      // create view folder if non is created
-                                    fs.ensureDir(viewPath, function(err){
-                                         if (err) return console.log('An error occured while creating folder.');
-                                         else{
-                                            console.log("generated view folder with name " + name);
-                                            // create the view file
-                                              var file = viewPath + "/" + actionName + ".html"
-                                              fs.writeFile(file, "", 'utf8', function (err) {
-                                                   if (err) return console.log(err)
-                                                   else{
-                                                      console.log("generated View file with name " + actionName);
-                                                   }                             
-                                              });
-                                         }
-                                    });
-                               }                             
-                            });
-                          }
-                          else{
-                            return console.log('Master generate controller must include(have) action name.');
-                          }
-
-                  break;
-              case "view":
-                      var pathName = dir + '/app/views/' + name;
-                      fs.ensureDir(pathName, function(err){
-                         if (err) return console.log('An error occured while creating View folder ' + name);
-                         else{
-                            console.log("generated View folder with name " + name);
-                            if(actionName !== undefined){
-                                var file = pathName + "/" + actionName + ".html"
-                                fs.writeFile(file, "", 'utf8', function (err) {
-                                     if (err) return console.log(err)
-                                     else{
-                                        console.log("generated View file with name " + actionName);
-                                     }                             
-                                });
-                              }
-                         }
-                       });
-
-                  break;
-              case "socket":
-
-                         // find controller using name
-                        var file = dir + '/app/sockets/' + name + "_socket.js";
-                        var pathName = __dirname + "/templates/socket.js";
-
-                        // read socket template file
-                        fs.readFile(pathName, 'utf8', function (err,data) {
-                            if (err) return console.log("An error occured while creating socket");
-                            //var result =  data.replace(/<add_action_name>/g, actionName);
-                            var result = data;
-                            // add template file to socket folder with name
-                            fs.writeFile(file, result, 'utf8', function (err) {
-                               if (err) return console.log(err)
-                               else{
-                                    console.log("generated socket with name " + name);
-                               }                             
-                            });
-                        });
-
-                  break;
-              case "scaffold":
-                      // consider creating style sheets in scaffolding
-
-                       // find controller using name
-                        var file = dir + '/app/controllers/' + name + "_controller.js";
-                        var pathName = __dirname + "/templates/controller.js"
-                        
-                        // read controller template file
-                        fs.readFile(pathName, 'utf8', function (err,data) {
-                            if (err) return console.log("An error occured while creating controller");
-                            var result = data.replace(/<add_name>/g, name);;
-
-                            // add template file to controller folder with name
-                            fs.writeFile(file, result, 'utf8', function (err) {
-                               if (err) return console.log(err)
-                               else{
-                                    console.log("generated controller with name " + name);
-                                    // read routes.js
-                                    var routesPath = dir + '/routes.js';
-                                    fs.readFile(routesPath, 'utf8', function (err,data) {
-                                          if (err) return console.log("An error occured while creating controller");
-                                          var resource = "app.router.routeResources('" + name + "');"
-                                          var result = data + resource;
-
-                                          // write route resource to routes.js
-                                          fs.writeFile(routesPath, result, 'utf8', function (err) {
-                                             if (err) return console.log(err)
-                                             else{
-                                                  console.log("Added route resource to routes.js");
-                                                  var viewPath = dir + '/app/views/' + name;
-                                                  // create view folder if non is created
-                                                  fs.ensureDir(viewPath, function(err){
-                                                     if (err) return console.log('An error occured while creating folder.');
-                                                     else{
-                                                        console.log("generated view folder with name " + name);
-                                                        // todo : create all the files needs for controlller resources
-                                                        var formData = `
-<%- html.formTag('/${ name }/', { method : "post", multiport: true, class : ""}) %>
-  <div class="actions">
-    <%- html.submitButton("submit") %>
-  </div>
-<%- html.formTagEnd(); %>`;
-                                                        var indexData = `
-<h1>${ name }</h1>
-
-<br>
-
-<%- html.linkTo('${ name }', '/${ name }/new') %>
-`;
-                                                        var showData = `
-<h1>Show ${ name }</h1>
-                                                        `;
-                                                        var newData = `
-<h1>New ${ name } </h1>
-<%- html.render('${ name }/_form.html') %>
-                                                        `;
-                                                        var editData = `
-<h1> Edit ${ name } </h1>
-<%- html.render('${ name }/_form.html') %>
-                                                        `;
-
-                                                        fs.writeFileSync(viewPath + "/" + "_form.html", formData, 'utf8');
-                                                        fs.writeFileSync(viewPath + "/" + "index.html", indexData, 'utf8');
-                                                        fs.writeFileSync(viewPath + "/" + "show.html", showData, 'utf8');
-                                                        fs.writeFileSync(viewPath + "/" + "new.html", newData, 'utf8');
-                                                        fs.writeFileSync(viewPath + "/" + "edit.html", editData, 'utf8');
-
-                                                                                 // find controller using name
-                                                        var socketTempFile = dir + '/app/sockets/' + name + "_socket.js";
-                                                        var socketPathName = __dirname + "/templates/socket.js";
-
-                                                        // read socket template file
-                                                        fs.readFile(socketPathName, 'utf8', function (err,data) {
-                                                            if (err) return console.log("An error occured while creating socket");
-                                                            //var result =  data.replace(/<add_action_name>/g, actionName);
-                                                            var result = data;
-                                                            // add template file to socket folder with name
-                                                            fs.writeFile(socketTempFile, result, 'utf8', function (err) {
-                                                               if (err) return console.log(err)
-                                                               else{
-                                                                    console.log("generated socket with name " + name);
-                                                               }                             
-                                                            });
-                                                        });
-
-                                                     }
-                                                });
-                                             }                             
-                                          });
-                                      });
-                               }                             
-                            });
-                        });
-
-
-                  break;
-              default:
-                  return "You can only generate types : controller, view, socket and scaffolding"
-          }
-      }
-      else{
-      return "Please provide a name for " + type;
-      }
-
-    }
-    else{
-      return "Please choose a generator: controller, view";
-    }
-  });
-
-  program
-  .command('new <name>')
-  .alias('n')
-  .description('Create a new Master application')
-  .action(function(name){
-    if(name !== null){
-      var dir = process.cwd();
-      var pathName = dir + "/" + name;
-      fs.ensureDir(pathName, function(err){
-             if (err) return console.log('An error occured while creating folder.');
-             else{
-                  // copy source folder to destination
-                  fs.copy(__dirname + "/master", pathName, function (err) {
-                      if (err) return console.log('An error occured while copying the folder.');
-                      
-                      var hash = crypto.randomBytes(20).toString('hex');
-
-                      fs.readFile(pathName + "/config.js", 'utf8', function (err,data) {
-                          if (err) return console.log(err);
-                          var result = data.replace(/<ADD_SECRET_HERE>/g, hash);
-
-                          fs.writeFile(pathName + "/config.js", result, 'utf8', function (err) {
-                             if (err) return console.log(err)
-                              else{
-                                  console.log("Created new Master application named " + name);
-                              };
-                             
-                          });
-                      });
-                      
-                  });
-             }
-
-        });
-
-          // todo: open the config and create a new token and overwrite <ADD_SECRET_HERE> with token
-        }
-    else{
-      return "You must provide a name when creating new applications";
-    }
-  });
-
-  program.parse(process.argv);
-
-  var toLower = function(v) {
-    return v.toLowerCase();
-  }
-
-
+program.parse(process.argv);

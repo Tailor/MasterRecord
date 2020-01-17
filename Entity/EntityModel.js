@@ -9,14 +9,30 @@ class EntityModel {
             required : null,
             virtual : null,
             belongsTo : null,
-            get : null
+            get : null,
+            foreignKey : null,
+            maxLength : null,
+            nullable : false // no
         }
     }
 
     type(type){
         this.obj.type = type;
+        switch(type) {
+            case Number:
+              // code block
+              this.obj.default = 0;
+              this.obj.nullable = false;
+              break;
+          }
         return this;
     }
+
+    maxLength(amount){
+        this.obj.maxLength = amount;
+        return this;
+    }
+    
     // is this obj a primary key
     primary(){
         this.obj.primary = true;
@@ -39,8 +55,18 @@ class EntityModel {
         return this;
     }
 
+    nullable(){
+        this.obj.nullable = true; // yes
+        return this; 
+    }
+
     virtual(){
         this.obj.virtual = true;
+        return this;
+    }
+
+    foreignKey(tableName){
+        this.obj.foreignKey = tableName;
         return this;
     }
 

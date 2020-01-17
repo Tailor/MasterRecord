@@ -37,6 +37,7 @@ class SQLEngine {
                 return this.db.prepare(query).get();
             } catch (err) {
                 console.error(err);
+                return null;
             }
             // code block
         break;
