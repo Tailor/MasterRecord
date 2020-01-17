@@ -6,7 +6,6 @@ var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryBuilder');
 var tools =  require('./Tools');
 var SQLEngine  = require('./SQLEngine');
-var cli = require('./Migrations/cli');
 
 class Context {
 

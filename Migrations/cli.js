@@ -27,7 +27,7 @@ program
         var executedLocation = process.cwd();
         // go back 1 folder level
         let previousFolder = path.join(executedLocation, '../');
-        var migrationsDirectory = `${previousFolder}/jack`;
+        var migrationsDirectory = `${previousFolder}/migrations`;
         // create js file name configuration.js // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
         if (!fs.existsSync(migrationsDirectory)){
             fs.mkdirSync(migrationsDirectory);
