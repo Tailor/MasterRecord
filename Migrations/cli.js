@@ -22,7 +22,7 @@ program
         var executedLocation = process.cwd();
         // go back 1 folder level
         let previousFolder = path.join(executedLocation, '../');
-        var migrationsDirectory = `${previousFolder}/migrations`;
+        var migrationsDirectory = `${previousFolder}/Migrations`;
         if (!fs.existsSync(migrationsDirectory)){
             fs.mkdirSync(migrationsDirectory);
         }
@@ -35,7 +35,7 @@ program
         const jsonContent = JSON.stringify(content, null, 2);
         try{
           // will replace the whole file if it exist
-            fs.writeFileSync(`${migrationsDirectory}/ContextModelSnapShot.json`, jsonContent);
+            fs.writeFileSync(`${migrationsDirectory}/ContextSnapShot.json`, jsonContent);
         }catch (e){
             console.log("Cannot write file ", e);
         }
@@ -48,7 +48,7 @@ program
   .action(function(name){
 
       try{
-        var contextSnapshot = fs.readFileSync(`./ContextModelSnapShot.json`, 'utf8');
+        var contextSnapshot = fs.readFileSync(`./ContextSnapShot.json`, 'utf8');
         var migration = new Migration();
         var contextSnapShotModel = JSON.parse(contextSnapshot);
         var context = require(contextSnapShotModel.contextLocation);
