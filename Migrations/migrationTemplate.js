@@ -1,4 +1,4 @@
-var Migration = require('./migrations');
+var Schema = require('./schema');
 
 
 // https://channel9.msdn.com/Blogs/EF/Migrations-Under-the-Hood
@@ -13,7 +13,7 @@ var Migration = require('./migrations');
 // we then create the miration using function 'migrationCodeGenerator' based on the model that was provided by EDMModelDiffer
 // js date stamp Date.now()
 
-class Migration extends Migration {
+class Migration extends Schema {
 
     constructor() {
         super();

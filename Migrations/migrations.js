@@ -5,62 +5,19 @@ var fs = require('fs');
 // node masterrecord add-migration josh C:\Users\rbatista\Downloads\kollege\freshmen\app\models\context
 class Migrations{
 
-    // build current Migration snapShot
-    buildMigrationSnapshot(migrationFolderLocation){
-        // we will loop through each old migration and rebuild each enitity object so that we can check the diffrence
-        // return full snapshot
 
-        fs.readdirSync(migrationFolderLocation).forEach(file => {
-            console.log(file);
-          });
-
-    }
-
-    EDMModelDiffer(currentModel, migrationSnapShot){
-        // calculate required database changes
-        // find model changes that have not been implemented in migrations.
+    EDMModelDiffer(snapShot, contextModel){
+        // do a diff and return only diff fields
+        // if table doesnt exist then add a create database object.
     }
 
     migrationCodeGenerator(name, column, migrationDate){
         // will create migration file with data needed
+        // using the migration template
 
     }
 
-    // create obj to convert into create sql
-    addColumn(tableName, columnName, ){
 
-        // add column to database
-    }
-
-    dropColumn(tableName, columnName){
-        // drop column 
-
-    }
-
-    createTable(name, columns){
-
-    }
-
-    dropTable(name){
-
-    }
-
-    // will get the data and create the file
-    done(){
-
-
-    }
 }
-
-
-/*
-    up and down function..
-    on commmand line call of run migrations with folder location of context. it will
-    load context and all the objects.
-    it will then match objects with migration data. 
-    if it's a new item it will generate a new migration dependent on what comes from migration. 
-    
-
-*/
 
 module.exports = Migrations;
