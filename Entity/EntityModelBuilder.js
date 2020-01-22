@@ -1,4 +1,4 @@
-var modelDB  = require('masterrecord/Entity/EntityModel');
+var modelDB  = require('./EntityModel');
 
 // creates new instance if entity model and calls inner functions to build out a valid entity
 class EntityModelBuilder {
@@ -46,7 +46,9 @@ class EntityModelBuilder {
         return cleaned;
     }
 
+    // who calls this? What does this do?
     static callAllGets(data, model){
+        console.log("callAllGets");
         for(var keys = Object.keys(model), i = 0, end = keys.length; i < end; i++) {
             var key = keys[i], value = model[key];
             if(value.get !== undefined){

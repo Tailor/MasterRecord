@@ -1,5 +1,6 @@
+var Migration = require('./migrations');
 
-const Masterrecord = require('masterrecord');
+
 // https://channel9.msdn.com/Blogs/EF/Migrations-Under-the-Hood
 
 
@@ -11,49 +12,42 @@ const Masterrecord = require('masterrecord');
 // EDMModelDiffer will return only database changes model that have not been implemented already
 // we then create the miration using function 'migrationCodeGenerator' based on the model that was provided by EDMModelDiffer
 // js date stamp Date.now()
-class Migration extends Masterrecord.Migrations {
+
+class Migration extends Migration {
 
     constructor() {
         super();
     }
 
-    // Public field declaration
-    models = {
-            "user": {
-                id : {
-                    type : Number,
-                    primary : true,
-                    default : "0",
-                    nullable : false
-                },
-                user_id : {
-                    type : Number,
-                    required : true,
-                    foreignKey : "user"
-                },
-                website_url : {
-                    type : String,
-                    required : true,
-                    maxLength : 60
-                },
-                website_type : {
-                    type : String,
-                    required : true
-                }
-            },
-            "blog": {
-                url : {
-                    type : String,
-                    required : true
-                }
-            }
-    };
-
     static up(){
 
-        this.createTable("user", model["user"]);
+        this.createTable("user", {
+            id : {
+                type : "integer",
+                primary : true,
+                unique : true,
+                nullable : false
+            },
+            user_id : {
+                type : "integer",
+                required : true, // SQL Data Constraints
+                foreignKey : "user" // SQL Data Constraints
+            },
+            website_url : {
+                type : "string",
+                required : true,
+                maxLength : 60
+            },
+            website_type : {
+                type : "string",
+                required : true
+            }
+        });
 
-        this.addColumn("blog", "url", model["blog"]["url"]);
+        this.addColumn("blog", "url", {
+            type : "string",
+            required : true
+        });
 
         this.done();
     }

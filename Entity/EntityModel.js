@@ -1,3 +1,21 @@
+/*
+
+:binary
+:boolean
+:date
+:datetime
+:decimal
+:float
+:integer
+:bigint
+:primary_key
+:references
+:string
+:text
+:time
+:timestamp
+
+*/
 
 class EntityModel {
     
@@ -6,26 +24,26 @@ class EntityModel {
             type: null,
             primary : null,
             default : null,
-            required : null,
             virtual : null,
             belongsTo : null,
             get : null,
             foreignKey : null,
             maxLength : null,
-            nullable : false // no
+            nullable : false, // no
+            unique : null
         }
     }
 
-    type(type){
-        this.obj.type = type;
-        switch(type) {
-            case Number:
-              // code block
-              this.obj.default = 0;
-              this.obj.nullable = false;
-              break;
-          }
-        return this;
+    string(){
+        this.obj.type = "string";
+    }
+
+    integer(){
+        this.obj.type = "integer";
+    }
+
+    time(){
+        this.obj.type = "time";
     }
 
     maxLength(amount){
@@ -36,6 +54,8 @@ class EntityModel {
     // is this obj a primary key
     primary(){
         this.obj.primary = true;
+        this.obj.nullable = false;
+        this.obj.unique = true;
         return this;
     }
 
@@ -45,14 +65,15 @@ class EntityModel {
         return this;
     }
 
-    required(){
-        this.obj.required = true;
-        return this;
-    }
+    // get(func){
+    //     this.obj.get = func;
+    //     return this;
+    // }
 
-    get(func){
-        this.obj.get = func;
-        return this;
+    unique(){
+        this.obj.unique = true; // yes
+        return this; 
+
     }
 
     nullable(){
@@ -60,13 +81,16 @@ class EntityModel {
         return this; 
     }
 
-    virtual(){
-        this.obj.virtual = true;
-        return this;
+    notNullable(){
+        this.obj.nullable = false; // no
+        return this; 
     }
 
-    foreignKey(tableName){
-        this.obj.foreignKey = tableName;
+    virtual(tableName){
+        this.obj.virtual = true;
+        if(tableName !== null){
+            this.obj.hasOne = tableName;
+        }
         return this;
     }
 
@@ -74,9 +98,18 @@ class EntityModel {
         this.obj.hasMany = name;
         return this;
     }
+
+    hasOne(tableName){
+        this.obj.hasOne = tableName;
+    }
     
-    belongsTo(){
-        this.obj.belongsTo = true;
+    belongsTo(tableName){
+        this.obj.foreignKey = tableName;
+        return this
+    }
+
+    hasForeignKey(tableName){
+        this.obj.foreignKey = tableName;
         return this;
     }
 

@@ -9,6 +9,11 @@ class Migrations{
     buildMigrationSnapshot(migrationFolderLocation){
         // we will loop through each old migration and rebuild each enitity object so that we can check the diffrence
         // return full snapshot
+
+        fs.readdirSync(migrationFolderLocation).forEach(file => {
+            console.log(file);
+          });
+
     }
 
     EDMModelDiffer(currentModel, migrationSnapShot){
@@ -37,6 +42,12 @@ class Migrations{
     }
 
     dropTable(name){
+
+    }
+
+    // will get the data and create the file
+    done(){
+
 
     }
 }
