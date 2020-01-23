@@ -50,10 +50,8 @@ program
       try{
         var contextSnapshot = fs.readFileSync(`./ContextSnapShot.json`, 'utf8');
         var migration = new Migration();
-        var contextSnapShotModel = JSON.parse(contextSnapshot);
-        var context = require(contextSnapShotModel.contextLocation);
-        var snapShotSchema = contextSnapShotModel.schema;
-        var newEntity = migration.EDMModelDiffer(snapShotSchema, context);
+        var context = require(contextSnapshot.contextLocation);
+        var newEntity = migration.EDMModelDiffer(contextSnapshot.schema, context);
         if(newEntity !== -1){
             var migrationDate = Date.now();
             migration.migrationCodeGenerator(name, newEntity, migrationDate);

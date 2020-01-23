@@ -5,8 +5,8 @@ var fs = require('fs');
 // node masterrecord add-migration josh C:\Users\rbatista\Downloads\kollege\freshmen\app\models\context
 class Migrations{
 
-
     EDMModelDiffer(snapShot, contextModel){
+            
         // do a diff and return only diff fields
         // if table doesnt exist then add a create database object.
     }
