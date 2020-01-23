@@ -36,14 +36,17 @@ class EntityModel {
 
     string(){
         this.obj.type = "string";
+        return this;
     }
 
     integer(){
         this.obj.type = "integer";
+        return this;
     }
 
     time(){
         this.obj.type = "time";
+        return this;
     }
 
     maxLength(amount){
@@ -101,6 +104,7 @@ class EntityModel {
 
     hasOne(tableName){
         this.obj.hasOne = tableName;
+        return this;
     }
     
     belongsTo(tableName){
