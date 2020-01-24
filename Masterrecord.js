@@ -1,6 +1,7 @@
 
 // https://github.com/kriasoft/node-sqlite
 // https://www.learnentityframeworkcore.com/dbset/deleting-data
+// version 1.0.14
 
 var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryBuilder');
@@ -21,9 +22,9 @@ class Context {
         this._SQLEngine = new SQLEngine();
     }
 
-    __SQLiteInit(env, sqlName, name){
+    __SQLiteInit(env, sqlName){
         const sqlite3 = require(sqlName);
-        let DBAddress = env.connection + name + ".sqlite3";
+        let DBAddress = `${env.connection}${env.env}.sqlite3`;
         var db = new sqlite3(DBAddress, env);
         db.__name = sqlName;
         return db;
@@ -38,7 +39,7 @@ class Context {
     }
     
     */
-    setup(rootFolderLocation, env, name){
+    setup(rootFolderLocation, env){
         if(env.type !== undefined){
             switch(env.type) {
                 case "better-sqlite3":
