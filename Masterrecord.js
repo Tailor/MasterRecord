@@ -29,10 +29,20 @@ class Context {
         return db;
     }
 
-    setup(env, name){
+    /*
+    expected model {
+        "type": "better-sqlite3",
+        "connection" : "/db/",
+        "password": "",
+        "username": ""
+    }
+    
+    */
+    setup(rootFolderLocation, env, name){
         if(env.type !== undefined){
             switch(env.type) {
                 case "better-sqlite3":
+                    env.connection = rootFolderLocation + env.connection;
                     this.db = this.__SQLiteInit(env, env.type, name);
                     this._SQLEngine.setDB(this.db);
                     return this;
