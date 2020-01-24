@@ -1,6 +1,6 @@
 {
   "name": "masterrecord",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "author": "Alexander Batista",
   "main": "./MasterRecord.js",
   "bugs": {

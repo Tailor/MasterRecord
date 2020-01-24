@@ -1,4 +1,6 @@
 // ALL THIS SHOULD DO IS BUILD A SQL QUERY
+// version 1.0.1
+
 var entityTrackerModel  = require('masterrecord/Entity/EntityTrackerModel');
 
 class queryBuilder{
@@ -11,7 +13,7 @@ class queryBuilder{
     raw(query){
         // get the query
         var entityValue = this.__context._SQLEngine.get(query);
-        if(entityValue !== undefined){
+        if(entityValue){
             var ent = new entityTrackerModel();
             ent.build(entityValue, this.__model);
             ent.__state = "track";

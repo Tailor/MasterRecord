@@ -19,7 +19,7 @@ class EntityTrackerModel {
 
         for (const [modelField, modelFieldValue] of modelFields) { // loop through database values
             // set the value dynamiclly
-            if(currentEntity[modelField] !== undefined){ // current entity has a value then add
+            if(currentEntity[modelField]){ // current entity has a value then add
                 modelClass["_" + modelField] = modelFieldValue;
 
                 // Setter

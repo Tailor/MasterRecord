@@ -76,7 +76,7 @@ class Context {
             var currentEntity = currentModel.__entity[entity];
             if (currentModel.__entity.hasOwnProperty(entity)) {
                 // TODO: // check if types are correct
-                if(currentEntity.default !== undefined){
+                if(currentEntity.default){
                     if(!currentModel[entity]){
                         currentModel[entity] = currentEntity.default;
                     }

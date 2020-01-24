@@ -91,7 +91,7 @@ class EntityModel {
 
     virtual(tableName){
         this.obj.virtual = true;
-        if(tableName !== null){
+        if(tableName){
             this.obj.hasOne = tableName;
         }
         return this;

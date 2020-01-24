@@ -28,7 +28,7 @@ class EntityModelBuilder {
 
     static cleanNull(obj) {
         for (var propName in obj) { 
-          if (obj[propName] === null || obj[propName] === undefined) {
+          if (obj[propName]) {
             delete obj[propName];
           }
         }
@@ -51,7 +51,7 @@ class EntityModelBuilder {
         console.log("callAllGets");
         for(var keys = Object.keys(model), i = 0, end = keys.length; i < end; i++) {
             var key = keys[i], value = model[key];
-            if(value.get !== undefined){
+            if(value.get){
                 data[key] = value.get(data);
             }
         };
