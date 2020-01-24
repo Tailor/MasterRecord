@@ -44,7 +44,7 @@ class Context {
             switch(env.type) {
                 case "better-sqlite3":
                     env.connection = rootFolderLocation + env.connection;
-                    this.db = this.__SQLiteInit(env, env.type, name);
+                    this.db = this.__SQLiteInit(env, env.type);
                     this._SQLEngine.setDB(this.db);
                     return this;
                 break;
