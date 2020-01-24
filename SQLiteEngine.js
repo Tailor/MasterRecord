@@ -1,5 +1,5 @@
 
-class SQLEngine {
+class SQLiteEngine {
     update(query){
         var query = ` UPDATE ${query.tableName}
         SET ${query.arg} 
@@ -44,9 +44,13 @@ class SQLEngine {
         }
     }
 
-    setDB(db){
-       this.db = db;
+    setDB(env, sqlName){
+        const sqlite3 = require(sqlName);
+        let DBAddress = `${env.connection}${env.env}.sqlite3`;
+        this.db = new sqlite3(DBAddress, env);
+        db.__name = sqlName;
+        return db;
    }
 }
 
-module.exports = SQLEngine;
+module.exports = SQLiteEngine;

@@ -6,7 +6,7 @@
 var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryBuilder');
 var tools =  require('./Tools');
-var SQLEngine  = require('./SQLEngine');
+var SQLiteEngine  = require('./SQLiteEngine');
 
 class Context {
 
@@ -19,33 +19,28 @@ class Context {
     __relationshipModels = []
 
     constructor(){
-        this._SQLEngine = new SQLEngine();
-    }
-
-    __SQLiteInit(env, sqlName){
-        const sqlite3 = require(sqlName);
-        let DBAddress = `${env.connection}${env.env}.sqlite3`;
-        var db = new sqlite3(DBAddress, env);
-        db.__name = sqlName;
-        return db;
-    }
-
-    /*
-    expected model {
-        "type": "better-sqlite3",
-        "connection" : "/db/",
-        "password": "",
-        "username": ""
+        this._SQLEngine = null;
     }
     
-    */
+// IMPORTANT: SQLITE has no date so use text
+// MUST MAP TYPES TO INTERGER, TEXT, BLOB, REAL, NUMERIC
     setup(rootFolderLocation, env){
+            /*
+                expected model {
+                    "type": "better-sqlite3",
+                    "connection" : "/db/",
+                    "password": "",
+                    "username": ""
+                }
+    
+        */
         if(env.type !== undefined){
             switch(env.type) {
                 case "better-sqlite3":
+                    // set the engine for everyone to use
+                    this._SQLEngine = new new SQLiteEngine();
                     env.connection = rootFolderLocation + env.connection;
-                    this.db = this.__SQLiteInit(env, env.type);
-                    this._SQLEngine.setDB(this.db);
+                    this.db = this._SQLiteEngine.setDB(env, env.type);
                     return this;
                 break;
             }

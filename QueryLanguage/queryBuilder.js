@@ -1,5 +1,5 @@
-// ALL THIS SHOULD DO IS BUILD A SQL QUERY
-// version 1.0.1
+
+// version 1.0.15
 
 var entityTrackerModel  = require('masterrecord/Entity/EntityTrackerModel');
 

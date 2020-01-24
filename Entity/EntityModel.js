@@ -16,6 +16,7 @@
 :timestamp
 
 */
+// version 1.0.15
 
 class EntityModel {
     
@@ -30,7 +31,8 @@ class EntityModel {
             foreignKey : null,
             maxLength : null,
             nullable : false, // no
-            unique : null
+            unique : null,
+            autoIncrement : false
         }
     }
 
@@ -59,6 +61,7 @@ class EntityModel {
         this.obj.primary = true;
         this.obj.nullable = false;
         this.obj.unique = true;
+        this.obj.autoIncrement = true;
         return this;
     }
 
@@ -77,6 +80,11 @@ class EntityModel {
         this.obj.unique = true; // yes
         return this; 
 
+    }
+
+    autoIncrement(){
+        this.obj.autoIncrement = true;
+        return this;
     }
 
     nullable(){
