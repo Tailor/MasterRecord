@@ -1,14 +1,14 @@
 {
   "name": "masterrecord",
-  "version": "0.0.23",
+  "version": "0.0.24",
   "author": "Alexander Batista",
   "main": "./MasterRecord.js",
   "bugs": {
     "url": "https://github.com/Tailor/Masterrecord/issues"
   },
   "dependencies": {
-    "better-sqlite3": "^5.4.3",
-    "commander": "^4.1.0"
+    "better-sqlite3": "^7.6.2",
+    "commander": "^9.4.0"
   },
   "bin": {
     "masterrecord": "./migrations/cli.js"
