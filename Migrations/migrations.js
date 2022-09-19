@@ -1,12 +1,44 @@
-// version 1
+// version 0.0.2
+
+
 var fs = require('fs');
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
 // node masterrecord add-migration josh C:\Users\rbatista\Downloads\kollege\freshmen\app\models\context
 class Migrations{
 
-    EDMModelDiffer(snapShots, tableList){
-        new schemaList = []
+    createSnapShot(snap){
+        var migrationsDirectory = `${snap.executedLocation}/db/migrations`;
+        if (!fs.existsSync(migrationsDirectory)){
+            fs.mkdirSync(migrationsDirectory);
+        }
+    
+        var content = {
+            contextLocation: snap.file,
+            migrationFolder: `${snap.executedLocation}/db/migrations`,
+            snapShotLocation: `${snap.executedLocation}/db/migrations/contextSnapShot.json`,
+            schema : snap.context.__entities
+        };
+    
+        const jsonContent = JSON.stringify(content, null, 2);
+        try{
+          // will replace the whole file if it exist
+            fs.writeFileSync(`${migrationsDirectory}/${snap.contextFileName}_contextSnapShot.json`, jsonContent);
+        }catch (e){
+            console.log("Cannot write file ", e);
+        }
+      }
+
+      /*
+       object returned
+        
+      
+      
+      
+      */
+      
+    schemaCompare(snapShots, tableList){
+        var schemaList = []
         const tableKeyList = Object.keys(tableList);
         // loop through tables
         for (const tableKey of tableKeyList) {

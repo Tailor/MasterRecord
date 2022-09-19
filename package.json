@@ -2,7 +2,8 @@
   "name": "masterrecord",
   "dependencies": {
     "better-sqlite3": "^7.6.2",
-    "commander": "^9.4.0"
+    "commander": "^9.4.0",
+    "glob" : "^8.0.3"
   },
   "version": "0.0.26",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
@@ -11,13 +12,13 @@
     "type": "git",
     "url": "git+https://github.com/Tailor/Masterrecord.git"
   },
-  "main": "./MasterRecord.js",
+  "main": "./migrations/cli.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Alexander Rich",
   "license": "ISC",
   "bin": {
-    "masterrecord": "migrations/cli.js"
+    "masterrecord": "./migrations/cli.js"
   }
 }

@@ -13,7 +13,7 @@ var Schema = require('./schema');
 // we then create the miration using function 'migrationCodeGenerator' based on the model that was provided by EDMModelDiffer
 // js date stamp Date.now()
 
-class Migration extends Schema {
+class MigrationTemplate extends Schema {
 
     constructor() {
         super();
@@ -61,4 +61,4 @@ class Migration extends Schema {
     }
 }
 
-module.exports = Migration;
+module.exports = MigrationTemplate;

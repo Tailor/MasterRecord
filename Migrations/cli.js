@@ -4,64 +4,71 @@ const program = require('commander');
 let fs = require('fs');
 let path = require('path');
 var Migration = require('./migrations');
+var globSearch = require("glob");
 
 const [,, ...args] = process.argv
 
+
+
 program
-  .version('0.0.1')
-  .option('-v, --version', '0.0.1') 
+  .version('0.0.2')
+  .option('-v, --version', '0.0.2') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
-  // Instructions : to run command you must go to folder where context file is located and run command with context file name.
+  // Instructions : to run command you must go to main project folder is located and run the command using the  context file name.
   program
   .command('enable-migrations <contextFileName>')
   .alias('am')
   .description('Enables the migration in your project by creating a Configuration class called ContextModelSnapShot.json')
   .action(function(contextFileName){
+        var migration = new Migration();
         // location of folder where command is being executed..
         var executedLocation = process.cwd();
-        // go back 1 folder level
-        let previousFolder = path.join(executedLocation, '../');
-        var migrationsDirectory = `${previousFolder}/Migrations`;
-        if (!fs.existsSync(migrationsDirectory)){
-            fs.mkdirSync(migrationsDirectory);
-        }
+        // find context file from main folder location
+        var search = `${executedLocation}/**/*${contextFileName}.js`
 
-        var content = {
-            contextLocation: `${executedLocation}/${contextFileName}.js`,
-            migrationLocation: `${executedLocation}/Migrations`,
-            schema : {}
-        };
-        const jsonContent = JSON.stringify(content, null, 2);
-        try{
-          // will replace the whole file if it exist
-            fs.writeFileSync(`${migrationsDirectory}/ContextSnapShot.json`, jsonContent);
-        }catch (e){
-            console.log("Cannot write file ", e);
+        var files = globSearch.sync(search, executedLocation);
+
+        var snap = {
+          file : files[0],
+          executedLocation : executedLocation,
+          context : require(file),
+          contextFileName: contextFileName
         }
+        migration.createSnapShot(snap);
+
+
   });
 
   // Instructions : to run command you must go to folder where migration file is located.
   program
-  .command('add-migration <name>')
+  .command('add-migration <name> <contextFileName>')
   .alias('am')
   .description('Creates a new migration class')
-  .action(function(name){
-
+  .action(function(name, contextFileName){
+    var executedLocation = process.cwd();
+    
       try{
-        var contextSnapshot = fs.readFileSync(`./ContextSnapShot.json`, 'utf8');
+        var contextSnapshot = require(`${executedLocation}/db/migrations/${contextFileName}_contextSnapShot.json`);
         var migration = new Migration();
         var context = require(contextSnapshot.contextLocation);
-        var newEntity = migration.EDMModelDiffer(contextSnapshot.schema, context);
-        if(newEntity.length > 0){
-            var migrationDate = Date.now();
-            migration.migrationCodeGenerator(name, newEntity, migrationDate);
-            console.log(`migration ${name}_${migrationDate} created`);
-        }
-      }catch (e){
-          console.log("Cannot read or find file ", e);
-      }
+        /* SCHEMA FILE SHOULD BE CREATED IN SECTION 
+            var newEntity = migration.schemaCompare(contextSnapshot.schema, context.__entities);
+            if(newEntity.length > 0){
+                var migrationDate = Date.now();
+                migration.migrationCodeGenerator(name, newEntity, migrationDate);
+                console.log(`migration ${name}_${migrationDate} created`);
+            }
+      */
+      
+      // RUN SCHEMA FILE AND UPDATE DATABASE
 
+
+
+
+      }catch (e){
+        console.log("Cannot read or find file ", e);
+      }
   });
 
  // will use the database settings to call and get the schema_migration table
