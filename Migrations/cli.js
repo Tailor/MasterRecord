@@ -12,7 +12,7 @@ program
   .option('-v, --version', '0.0.1') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
-  // Instructions : to run command you must go to folder where contaxt file is located and run command with context file name.
+  // Instructions : to run command you must go to folder where context file is located and run command with context file name.
   program
   .command('enable-migrations <contextFileName>')
   .alias('am')
@@ -41,6 +41,7 @@ program
         }
   });
 
+  // Instructions : to run command you must go to folder where migration file is located.
   program
   .command('add-migration <name>')
   .alias('am')
@@ -52,7 +53,7 @@ program
         var migration = new Migration();
         var context = require(contextSnapshot.contextLocation);
         var newEntity = migration.EDMModelDiffer(contextSnapshot.schema, context);
-        if(newEntity !== -1){
+        if(newEntity.length > 0){
             var migrationDate = Date.now();
             migration.migrationCodeGenerator(name, newEntity, migrationDate);
             console.log(`migration ${name}_${migrationDate} created`);

@@ -3,102 +3,123 @@
 // https://www.learnentityframeworkcore.com/dbset/deleting-data
 // version 1.0.14
 
-var modelBuilder  = require('masterrecord/Entity/EntityModelBuilder');
-var query = require('masterrecord/QueryLanguage/queryBuilder');
+var modelBuilder  = require('./Entity/EntityModelBuilder');
+var query = require('masterrecord/QueryLanguage/queryMethods');
 var tools =  require('./Tools');
-var SQLiteEngine  = require('./SQLiteEngine');
+var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
+var MYSQLEngine = require('masterrecord/MYSQLEngine');
+var insertManager = require('./InsertManager');
+var deleteManager = require('./DeleteManager');
 
 class Context {
-
     _isModelValid = {
         isValid: true,
         errors: []
-    }
-    __allContexts = [];
+    };
+    __entities = [];
+    __builderEntities = [];
     __trackedEntities = [];
-    __relationshipModels = []
+    __relationshipModels = [];
 
     constructor(){
-        this._SQLEngine = null;
+        // TODO when we build the sql engine it depends on the which type.
+
+        this._SQLEngine = "";
+        this.__name = this.constructor.name;
     }
+
+        /* 
+        SQLite expected model 
+        {
+            "type": "better-sqlite3",
+            "connection" : "/db/",
+            "password": "",
+            "username": ""
+        }
+    */
+    __SQLiteInit(env, sqlName){
+        try{
+            const sqlite3 = require(sqlName);
+            let DBAddress = `${env.completeConnection}${env.env}.sqlite3`;
+            var db = new sqlite3(DBAddress, env);
+            db.__name = sqlName;
+            this._SQLEngine = new SQLLiteEngine();
+            return db;
+        }
+        catch (e) {
+            console.log("error SQL", e);
+        }
+    }
+
+    /*
+    mysql expected model
+         {
+             "type": "mysql",
+            host     : 'localhost',
+            user     : 'me',
+            password : 'secret',
+            database : 'my_db'
+          }
+          */
+    __mysqlInit(env, sqlName){
+        try{
+            const mysql = require(sqlName);
+            const connection = mysql.createConnection(env);
+            connection.connect();
+            db.__name = sqlName;
+            this._SQLEngine = new MYSQLEngine();
+            return connection;
+
+        }
+        catch (e) {
+            console.log("error SQL", e);
+        }
+    }
+
+
+
+    __clearErrorHandler(){
+        this._isModelValid = {
+            isValid: true,
+            errors: []
+        };
+    };
     
-// IMPORTANT: SQLITE has no date so use text
-// MUST MAP TYPES TO INTERGER, TEXT, BLOB, REAL, NUMERIC
-    setup(rootFolderLocation, env){
-            /*
-                expected model {
-                    "type": "better-sqlite3",
-                    "connection" : "/db/",
-                    "password": "",
-                    "username": ""
+    setup(options, rootFolderLocation){
+        
+        if(options !== undefined){
+            if(options.type !== undefined){
+                switch(options.type) {
+                    case "better-sqlite3":
+                        options.completeConnection = rootFolderLocation + options.connection;
+                        this.db = this.__SQLiteInit(options, options.type);
+                        this._SQLEngine.setDB(this.db, "better-sqlite3");
+                        return this;
+                    break;
+                    case "mysql":
+                        this.db = this.__mysqlInit(options, options.type);
+                        this._SQLEngine.setDB(this.db, "mysql");
+                        return this;
+                    break;
                 }
-    
-        */
-        if(env.type !== undefined){
-            switch(env.type) {
-                case "better-sqlite3":
-                    // set the engine for everyone to use
-                    this._SQLEngine = new new SQLiteEngine();
-                    env.connection = rootFolderLocation + env.connection;
-                    this.db = this._SQLiteEngine.setDB(env, env.type);
-                    return this;
-                break;
+            }
+            else{
+                console.log("database type not defined - Master Record");
             }
         }
-    }
-
-    returnCopywithoutPrimaryKeyAndVirtual(currentModel){
-        var newCurrentModel = Object.create(currentModel);
-        for(var entity in newCurrentModel.__entity) {
-            var currentEntity = newCurrentModel.__entity[entity];
-            if (newCurrentModel.__entity.hasOwnProperty(entity)) {
-                if(currentEntity.primary === true){
-                    newCurrentModel[`__primaryKey`] = newCurrentModel[entity];
-                    delete newCurrentModel[`_${entity}`];
-                }
-            }
-            if(currentEntity.virtual === true){
-                // skip it from the insert
-                delete newCurrentModel[`_${entity}`];
-            }
-
+        else{
+            console.log("database information not added - Master Record");
         }
-        return newCurrentModel;
+        
     }
 
-    // loop through all the enitities and check if required
-    validateEntity(currentModel){
-        for(var entity in currentModel.__entity) {
-            var currentEntity = currentModel.__entity[entity];
-            if (currentModel.__entity.hasOwnProperty(entity)) {
-                // TODO: // check if types are correct
-                if(currentEntity.default){
-                    if(!currentModel[entity]){
-                        currentModel[entity] = currentEntity.default;
-                    }
-                }
-            
-                if(currentEntity.required === true){
-                    if(!currentModel[entity]){
-                        this._isModelValid.isValid = false;
-                        this._isModelValid.errors.push( `Entity ${entity} is a required Field`);
-                        console.log(`Entity ${entity} is a required Field`);
-                    }
-                }
-            }
-
-        }
-    }
-
-    dbset(model){
-        var validModel = modelBuilder.init(model);
-        validModel.__name = model.name;
-        this.__allContexts.push(validModel);
-        this.createNewInstance(validModel);
-    }
-
-    createNewInstance(validModel){
-        this[validModel.__name] = new query(validModel, this);
+    dbset(model, name){
+        var validModel = modelBuilder.create(model);
+        validModel.__name = name === undefined ? model.name : name;
+        this.__entities.push(validModel); // model object
+        var buildMod = tools.createNewInstance(validModel, query, this);
+        this.__builderEntities.push(buildMod); // query builder entites
+        this[validModel.__name] = buildMod;
     }
 
     modelState(){
@@ -106,59 +127,63 @@ class Context {
     }
 
     saveChanges(){
+        try{
+            var tracked = this.__trackedEntities;
+            // start transaction
+            this._SQLEngine.startTransaction();
+            for (var model in tracked) {
+                var currentModel = tracked[model];
+                    switch(currentModel.__state) {
+                        case "insert": 
+                            var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                            insert.init(currentModel);
+                            
+                        break;
+                        case "modified":
+                            if(currentModel.__dirtyFields.length > 0){
+                                var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                // build columns equal to value string 
+                                var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                this._SQLEngine.update(sqlUpdate);
+                            }
+                            else{
+                                console.log("Tracked entity modified with no values being changed");
+                            }
 
-        for (var model in this.__trackedEntities) {
-            var currentModel = this.__trackedEntities[model];
-            // validate required fields
-            this.validateEntity(currentModel);
-            if(this._isModelValid.valid === false){
-                // everything great
-                console.log(JSON.stringify(this._isModelValid.valid.errors));
+                          // code block
+                          break;
+                        case "delete":
+                            var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                            deleteObject.init(currentModel);
+                            
+                          break;
+                    } 
             }
-
-            try{
-                switch(currentModel.__state) {
-                    case "modified":
-                        if(currentModel.__dirtyFields.length <= 0){
-                            throw "Tracked entity modified with no values being changed";
-                        }
-                        var cleanCurrentModel = this.returnCopywithoutPrimaryKeyAndVirtual(currentModel);
-                        // build columns equal to value string 
-                        var argu = tools.buildSQLEqualTo(cleanCurrentModel);
-                        var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, value : cleanCurrentModel[`__primaryKey`] };
-                        this._SQLEngine.update(sqlUpdate);
-                      // code block
-                      break;
-                    case "insert":
-                     
-                        var cleanCurrentModel = this.returnCopywithoutPrimaryKeyAndVirtual(currentModel);
-                        var insertObj =  tools.getInsertObj(cleanCurrentModel);
-                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, columns: insertObj.columns, values: insertObj.values };
-                        this._SQLEngine.insert(sqlUpdate);
-                      break;
-                    case "delete":
-                        var primaryKey  = tools.getPrimaryKeyObject(currentModel.__entity);
-                        var sqlUpdate = {tableName: currentModel.__entity.__name, primaryKey : primaryKey, value : currentModel[primaryKey] };
-                        this._SQLEngine.delete(sqlUpdate);
-                      break;
-                  }
-            }
-            catch(error){
-                this.__trackedEntities = [];
-                console.log("error", error);
-            }   
+            this.__clearErrorHandler();
+            this._SQLEngine.endTransaction();
         }
-        this.__trackedEntities = [];
+        
+        catch(error){
+            this.__clearErrorHandler();
+            this._SQLEngine.errorTransaction();
+            console.log("error", error);
+            this.__clearTracked();
+            throw error;
+        }
+       
+        this.__clearTracked();
         return true;
     }
 
-    __Track(model){
+    // TODO: WHY WE HAVE DOUBLE TRACKED OBJECTS - LOOP THROUGH ALL TRACKED OBJECTS
+    __track(model){
         this.__trackedEntities.push(model);
         return model;
     }
 
-    __FindTracked(id){
+    __findTracked(id){
         if(id){
             for (var model in this.__trackedEntities) {
                 if(this.__trackedEntities[model].__ID === id){
@@ -168,7 +193,41 @@ class Context {
         }
         return null;
     }
+
+    __clearTracked(){
+        this.__trackedEntities = [];
+    }
 }
 
 
 module.exports = Context;
+
+/*
+
+//Create new standard
+var standard = new Standard();
+standard.StandardName = "Standard1";
+
+//create three new teachers
+var teacher1 = new Teacher();
+teacher1.TeacherName = "New Teacher1";
+
+var teacher2 = new Teacher();
+teacher2.TeacherName = "New Teacher2";
+
+var teacher3 = new Teacher();
+teacher3.TeacherName = "New Teacher3";
+
+//add teachers for new standard
+standard.Teachers.Add(teacher1);
+standard.Teachers.Add(teacher2);
+standard.Teachers.Add(teacher3);
+
+using (var dbCtx = new SchoolDBEntities())
+{
+    //add standard entity into standards entitySet
+    dbCtx.Standards.Add(standard);
+    //Save whole entity graph to the database
+    dbCtx.SaveChanges();
+}
+*/

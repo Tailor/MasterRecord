@@ -1,43 +1,26 @@
 class Tools{
 
-    static buildSQLEqualTo(model){
-        var argument = null;
-        var dirtyFields = model.__dirtyFields;
-        for (var column in dirtyFields) {
-            // column1 = value1, column2 = value2, ...
-            var value = model[dirtyFields[column]];
-            // TODO Boolean value is a string with a letter
-            if(typeof value === "number"){
-                argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
-            }else{
-                argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
-            }
-        }
-        return argument.replace(/,\s*$/, "");
+    static findEntity(name, entityList){
+        return entityList[name];
     }
-    
-    // return columns and value strings
-    static getInsertObj(fields){
-        var columns = null;
-        var values = null;
-        for (var column in fields.__entity) {
-            // column1 = value1, column2 = value2, ...
-            if(column.indexOf("__") === -1 ){
-                if(fields[column] !== undefined){
-                    columns = columns === null ? `${column},` : `${columns} ${column},`;
-                    var fieldColumn = fields[column];
-                    if(fields.__entity[column].type.name === "String"){
-                        fieldColumn = `"${fields[column]}"`;
-                    }
-                    values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
+
+    static removePrimarykeyandVirtual(currentModel, modelEntity){
+        var newCurrentModel = Object.create(currentModel);
+
+        for(var entity in modelEntity) {
+            var currentEntity = modelEntity[entity];
+            if (modelEntity.hasOwnProperty(entity)) {
+                if(currentEntity.primary === true){
+                    delete newCurrentModel[`_${entity}`];
                 }
             }
-        }
+            if(currentEntity.virtual === true){
+                // skip it from the insert
+                delete newCurrentModel[`_${entity}`];
+            }
 
-        return{
-            columns :columns.replace(/,\s*$/, ""),
-            values : values.replace(/,\s*$/, "")
         }
+        return newCurrentModel;
     }
 
     static getPrimaryKeyObject(model){
@@ -50,6 +33,86 @@ class Tools{
                 }
             }
         }
+    }
+
+    static createNewInstance(validModel, type, classModel){
+        return new type(validModel, classModel);
+    }
+
+    static clearAllProto(proto){
+        if(proto.__proto__ ){
+            proto.__proto__ = null;
+            for (var key in proto) {
+                if(!key.startsWith("_")){
+                    var typeObj = typeof(proto[key]);
+                    if(typeObj === "object"){
+                        this.clearAllProto(proto[key]);
+                    }
+                }else{
+                    throw "Cannot add relationship entity model only basic models"
+                }
+            }
+        }
+
+    }
+
+    static getEntity(name, modelEntity){
+        for(var entity in modelEntity) {
+            var currentEntity = modelEntity[entity];
+            if (modelEntity.hasOwnProperty(entity)) {
+                if(currentEntity.__name === name){
+                    return currentEntity;
+                }
+            }
+        }
+        return false;
+    }
+
+    static capitalize = (s) => {
+        if (typeof s !== 'string') return ''
+        return s.charAt(0).toUpperCase() + s.slice(1)
+    }
+
+    static capitalizeFirstLetter(string) {
+        return string.charAt(0).toUpperCase() + string.slice(1);
+      }
+
+             // return randome letter that is not the skip letter
+    static getRandomLetter(length, skip){
+        var result           = '';
+        var characters       = 'abcdefghijklmnopqrstuvwxyz';
+        var charactersLength = characters.length;
+        
+        for ( var i = 0; i < length; i++ ) {
+            result += characters.charAt(Math.floor(Math.random() * charactersLength));
+            if(skip){
+                for ( var b = 0; b < skip.length; b++ ) {
+                    if(result === skip[i].entity){
+                        result = "";
+                        i--;
+                    }
+                }
+            }
+        }
+         
+       return result;
+    }
+
+    // TODO: this should be removed once we create a SQLIte Manager;
+    // converts any object into SQL parameter select string
+
+    static convertEntityToSelectParameterString(obj){
+        // todo: loop throgh object and append string with comma to 
+        var mainString = "";
+        const entries = Object.keys(obj);
+        for (const key of entries) {
+            if(obj[key].type !== 'hasManyThrough' && obj[key].type !== "hasMany" && obj[key].type !== "hasOne"){
+                if(obj[key].name){
+                    mainString = mainString === "" ?  `${obj.__name}.${obj[key].name}` : `${mainString}, ${obj.__name}.${obj[key].name}`;
+                }
+            }
+          }
+        return mainString;;
     }
 }
 

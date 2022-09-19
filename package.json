@@ -1,27 +1,23 @@
 {
   "name": "masterrecord",
-  "version": "0.0.24",
-  "author": "Alexander Batista",
-  "main": "./MasterRecord.js",
-  "bugs": {
-    "url": "https://github.com/Tailor/Masterrecord/issues"
-  },
   "dependencies": {
     "better-sqlite3": "^7.6.2",
     "commander": "^9.4.0"
   },
-  "bin": {
-    "masterrecord": "./migrations/cli.js"
-  },
-  "preferGlobal": true,
+  "version": "0.0.24",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
-  "license": "ISC",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Tailor/Masterrecord.git"
   },
+  "main": "./MasterRecord.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Alexander Rich",
+  "license": "ISC",
+  "bin": {
+    "masterrecord": "migrations/cli.js"
   }
 }
