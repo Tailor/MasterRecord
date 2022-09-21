@@ -3,7 +3,8 @@
   "dependencies": {
     "better-sqlite3": "^7.6.2",
     "commander": "^9.4.0",
-    "glob" : "^8.0.3"
+    "glob" : "^8.0.3",
+    "deep-object-diff" : "1.1.7"
   },
   "version": "0.0.26",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",

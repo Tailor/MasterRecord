@@ -9,16 +9,32 @@ class Schema{
         // add column to database
     }
 
+    createTable(name, columns){
+
+    }
+
     dropColumn(tableName, columnName){
         // drop column 
 
     }
 
-    createTable(name, columns){
+    dropTable(name){
 
     }
 
-    dropTable(name){
+    dropIndex(){
+
+    }
+//"dbo.People", "Location"
+    alterColumn(){
+
+    }
+
+    renameColumn(){
+
+    }
+
+    seed(){
 
     }
 
@@ -27,6 +43,7 @@ class Schema{
 
 
     }
+    
 }
 
 

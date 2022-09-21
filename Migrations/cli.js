@@ -18,8 +18,8 @@ program
   // Instructions : to run command you must go to main project folder is located and run the command using the  context file name.
   program
   .command('enable-migrations <contextFileName>')
-  .alias('am')
-  .description('Enables the migration in your project by creating a Configuration class called ContextModelSnapShot.json')
+  .alias('em')
+  .description('Enables the migration in your project by creating a configuration class called ContextSnapShot.json')
   .action(function(contextFileName){
         var migration = new Migration();
         // location of folder where command is being executed..
@@ -28,13 +28,15 @@ program
         var search = `${executedLocation}/**/*${contextFileName}.js`
 
         var files = globSearch.sync(search, executedLocation);
-
+        var contextInstance = require(file);
+        
         var snap = {
           file : files[0],
           executedLocation : executedLocation,
-          context : require(file),
-          contextFileName: contextFileName
+          context : new contextInstance(),
+          contextFileName: contextFileName.toLowerCase()
         }
+
         migration.createSnapShot(snap);
 
 
@@ -47,42 +49,40 @@ program
   .description('Creates a new migration class')
   .action(function(name, contextFileName){
     var executedLocation = process.cwd();
-    
+    contextFileName = contextFileName.toLowerCase();
+
       try{
-        var contextSnapshot = require(`${executedLocation}/db/migrations/${contextFileName}_contextSnapShot.json`);
+         // find context file from main folder location
+         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`
+
+         var files = globSearch.sync(search, executedLocation);
+        var contextSnapshot = require(files[0]);
         var migration = new Migration();
         var context = require(contextSnapshot.contextLocation);
-        /* SCHEMA FILE SHOULD BE CREATED IN SECTION 
-            var newEntity = migration.schemaCompare(contextSnapshot.schema, context.__entities);
-            if(newEntity.length > 0){
-                var migrationDate = Date.now();
-                migration.migrationCodeGenerator(name, newEntity, migrationDate);
-                console.log(`migration ${name}_${migrationDate} created`);
-            }
-      */
-      
-      // RUN SCHEMA FILE AND UPDATE DATABASE
-
-
-
-
+        var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, context.__entities);
+        var migrationDate = Date.now();
+        var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}.js`
+        fs.writeFile(file, newEntity, 'utf8', function (err) {
+          if (err) return console.log("--- Error running cammand, rlease run command add-migration ---- ", err);
+        });
       }catch (e){
         console.log("Cannot read or find file ", e);
       }
+
+      console.log(`${name} migration file created`);
   });
 
- // will use the database settings to call and get the schema_migration table
- // we will get the list of all migrations that have been ran
- // we will compare that list with the folder of migrations to see if we ran everything 
- // the migrations we missed we will call the up method
- // the up method will run the create database functions
-// then update the database.js schema
-
  program
-  .command('update-database <databaseSettingLocation> <migrationFolderLocation> ')
+  .command('update-database <contextFileName>')
   .alias('ud')
   .description('Apply pending migrations to database')
-  .action(function(cmd){
+  .action(function(contextFileName){
+
+    //TODO
+    // find the snapshot file using the migration name
+    // find the the newest migration file using the context name 
+    // require that file and build
+    // call the up function in the 
       var dir = process.cwd();
       console.log("starting server");
       require(dir + '/server.js');
