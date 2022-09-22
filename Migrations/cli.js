@@ -28,6 +28,7 @@ program
         var search = `${executedLocation}/**/*${contextFileName}.js`
 
         var files = globSearch.sync(search, executedLocation);
+        var file = files[0];
         var contextInstance = require(file);
         
         var snap = {
@@ -38,7 +39,7 @@ program
         }
 
         migration.createSnapShot(snap);
-
+        console.log("Migration enabled")
 
   });
 
@@ -46,27 +47,26 @@ program
   program
   .command('add-migration <name> <contextFileName>')
   .alias('am')
-  .description('Creates a new migration class')
   .action(function(name, contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-
       try{
-         // find context file from main folder location
-         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`
+          // find context file from main folder location
+          var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
 
          var files = globSearch.sync(search, executedLocation);
-        var contextSnapshot = require(files[0]);
-        var migration = new Migration();
-        var context = require(contextSnapshot.contextLocation);
-        var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, context.__entities);
-        var migrationDate = Date.now();
-        var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}.js`
-        fs.writeFile(file, newEntity, 'utf8', function (err) {
-          if (err) return console.log("--- Error running cammand, rlease run command add-migration ---- ", err);
-        });
-      }catch (e){
-        console.log("Cannot read or find file ", e);
+         var contextSnapshot = require(files[0]);
+         var migration = new Migration();
+         var context = require(contextSnapshot.contextLocation);
+         var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, context.__entities);
+         var migrationDate = Date.now();
+         var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
+         fs.writeFile(file, newEntity, 'utf8', function (err) {
+           if (err) return console.log("--- Error running cammand, rlease run command add-migration ---- ", err);
+
+         });
+       }catch (e){
+         console.log("Cannot read or find file ", e);
       }
 
       console.log(`${name} migration file created`);
@@ -77,16 +77,31 @@ program
   .alias('ud')
   .description('Apply pending migrations to database')
   .action(function(contextFileName){
+    var executedLocation = process.cwd();
+    contextFileName = contextFileName.toLowerCase();
 
-    //TODO
-    // find the snapshot file using the migration name
-    // find the the newest migration file using the context name 
-    // require that file and build
-    // call the up function in the 
-      var dir = process.cwd();
-      console.log("starting server");
-      require(dir + '/server.js');
-    //return "node c:\node\server.js"
+      try{
+         // find context file from main folder location
+         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
+         var files = globSearch.sync(search, executedLocation);
+         var file = files[0];
+         var contextSnapshot = require(file);
+         var searchMigration = `**/*_migration.js`
+         var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+         if( migrationFiles){
+            var mFiles = migrationFiles.sort(function(x, y){
+              return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
+            });
+            mFiles = mFiles[0];
+            var migration = require(mFiles);
+            var settings = Migration.getSettings(executedLocation);
+            var newMigrationInstance = new migration(settings);
+            newMigrationInstance.up();
+         }
+        }catch (e){
+          console.log("Cannot read or find file ", e);
+        }
+        console.log("database updated");
   });
 
  // we will find the migration folder inside the nearest app folder if no migration folder is location is added
@@ -95,6 +110,7 @@ program
   .alias('rm')
   .description('Removes the last migration that has not been applied')
   .action(function(name){
+    // remove migrations call the down method of a migration             newMigrationInstance.down();
     // find migration file using name and delete it.
   });
 

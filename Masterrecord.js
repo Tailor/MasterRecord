@@ -10,6 +10,7 @@ var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
 var MYSQLEngine = require('masterrecord/MYSQLEngine');
 var insertManager = require('./InsertManager');
 var deleteManager = require('./DeleteManager');
+var globSearch = require("glob");
 
 class Context {
     _isModelValid = {
@@ -40,7 +41,7 @@ class Context {
     __SQLiteInit(env, sqlName){
         try{
             const sqlite3 = require(sqlName);
-            let DBAddress = `${env.completeConnection}${env.env}.sqlite3`;
+            let DBAddress = env.connection;
             var db = new sqlite3(DBAddress, env);
             db.__name = sqlName;
             this._SQLEngine = new SQLLiteEngine();
@@ -84,34 +85,42 @@ class Context {
             errors: []
         };
     };
-    
-    setup(options, rootFolderLocation){
-        
+
+    useSqlite(rootFolderLocation){
+            var contextName = this.constructor.name;
+            var envType = process.env.master;
+            var search = `${rootFolderLocation}/**/*env.${envType}.json`;
+            var files = globSearch.sync(search, rootFolderLocation);
+            var file = files[0];
+            var settings = require(file);
+            var options = settings[contextName][contextName];
+            this.db = this.__SQLiteInit(options,  "better-sqlite3");
+            this._SQLEngine.setDB(this.db, "better-sqlite3");
+            return this;
+    }
+
+    useSqlite(options){
         if(options !== undefined){
-            if(options.type !== undefined){
-                switch(options.type) {
-                    case "better-sqlite3":
-                        options.completeConnection = rootFolderLocation + options.connection;
-                        this.db = this.__SQLiteInit(options, options.type);
-                        this._SQLEngine.setDB(this.db, "better-sqlite3");
-                        return this;
-                    break;
-                    case "mysql":
-                        this.db = this.__mysqlInit(options, options.type);
-                        this._SQLEngine.setDB(this.db, "mysql");
-                        return this;
-                    break;
-                }
-            }
-            else{
-                console.log("database type not defined - Master Record");
-            }
+            this.db = this.__SQLiteInit(options,  "better-sqlite3");
+            this._SQLEngine.setDB(this.db, "better-sqlite3");
+            return this;
         }
         else{
-            console.log("database information not added - Master Record");
+            console.log("database options not defined - Master Record");
         }
-        
     }
+    
+    useMySql(options, rootFolderLocation){
+        if(options !== undefined){
+            this.db = this.__mysqlInit(options, "mysql");
+            this._SQLEngine.setDB(this.db, "mysql");
+            return this;
+        }
+        else{
+            console.log("database options not defined - Master Record");
+        }
+    }
+
 
     dbset(model, name){
         var validModel = modelBuilder.create(model);

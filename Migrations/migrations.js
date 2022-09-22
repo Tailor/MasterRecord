@@ -1,5 +1,5 @@
 // version 0.0.2
-
+// learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
 var diff = require("deep-object-diff");
@@ -11,6 +11,18 @@ var MigrationTemplate = require("./migrationTemplate");
 // node masterrecord add-migration josh C:\Users\rbatista\Downloads\kollege\freshmen\app\models\context
 class Migrations{
 
+    getSettings(rootLocation){
+        var envType = process.env.master;
+        var search = `${rootFolderLocation}/**/*env.${envType}.json`;
+        var files = globSearch.sync(search, rootFolderLocation);
+        var file = files[0];
+        var settings = require(file);
+        options = settings[contextName];
+        this.db = this.__SQLiteInit(options,  "better-sqlite3");
+        this._SQLEngine.setDB(this.db, "better-sqlite3");
+        return this;
+    }
+
     createSnapShot(snap){
         var migrationsDirectory = `${snap.executedLocation}/db/migrations`;
         if (!fs.existsSync(migrationsDirectory)){
@@ -18,6 +30,9 @@ class Migrations{
         }
     
         var content = {
+            seed : function(seed){
+                this.seed(this);
+            },
             database: {},
             contextLocation: snap.file,
             migrationFolder: `${snap.executedLocation}/db/migrations`,
@@ -128,22 +143,27 @@ class Migrations{
             // add new columns for table
             item.newColumns.forEach(function (column, index) {
                 MT.addColumn();
+                MT.dropColumn("down");
             });
 
             item.deletedColumns.forEach(function (column, index) {
-                MT.dropColumn();
+                MT.dropColumn("up");
+                MT.addColumn("down");
             });
 
             item.updatedColumns.forEach(function (column, index) {
                 MT.alterColumn();
+                MT.alterColumn("down")
             });
 
             if(item.old === null){
                 MT.createTable();
+                MT.dropTable("down");
 
             }
             if(item.new === null){
-                MT.dropTable();
+                MT.dropTable("up");
+                MT.createTable("down");
             }
 
         });

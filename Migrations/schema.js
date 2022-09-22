@@ -2,7 +2,11 @@
 var fs = require('fs');
 
 class Schema{
-
+    
+    constructor(settings){
+        this.settings = settings;
+    }
+    
     // create obj to convert into create sql
     addColumn(tableName, columnName, ){
 
