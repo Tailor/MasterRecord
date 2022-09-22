@@ -12,8 +12,8 @@ class MigrationTemplate {
     get(){
         return ` 
 class ${this.name} extends Schema { 
-    constructor(settings){
-        super(settings);
+    constructor(context){
+        super(context);
     }
 
     up(table){

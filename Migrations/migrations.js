@@ -4,23 +4,19 @@
 var fs = require('fs');
 var diff = require("deep-object-diff");
 var MigrationTemplate = require("./migrationTemplate");
-
+var globSearch = require("glob");
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
 // node masterrecord add-migration josh C:\Users\rbatista\Downloads\kollege\freshmen\app\models\context
 class Migrations{
 
-    getSettings(rootLocation){
-        var envType = process.env.master;
-        var search = `${rootFolderLocation}/**/*env.${envType}.json`;
-        var files = globSearch.sync(search, rootFolderLocation);
+    getContext(executedLocation, contextFileName){
+        var search = `${executedLocation}/**/*${contextFileName}.js`
+        var files = globSearch.sync(search, executedLocation);
         var file = files[0];
-        var settings = require(file);
-        options = settings[contextName];
-        this.db = this.__SQLiteInit(options,  "better-sqlite3");
-        this._SQLEngine.setDB(this.db, "better-sqlite3");
-        return this;
+        var context = require(file);
+        return new context();
     }
 
     createSnapShot(snap){

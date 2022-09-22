@@ -25,11 +25,7 @@ program
         // location of folder where command is being executed..
         var executedLocation = process.cwd();
         // find context file from main folder location
-        var search = `${executedLocation}/**/*${contextFileName}.js`
-
-        var files = globSearch.sync(search, executedLocation);
-        var file = files[0];
-        var contextInstance = require(file);
+        var contextInstance = migration.getContext(executedLocation, contextFileName);
         
         var snap = {
           file : files[0],
@@ -73,10 +69,10 @@ program
   });
 
  program
-  .command('update-database <contextFileName>')
+  .command('update-database <contextFileName> <environment>')
   .alias('ud')
   .description('Apply pending migrations to database')
-  .action(function(contextFileName){
+  .action(function(contextFileName, environment){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
 
@@ -86,16 +82,17 @@ program
          var files = globSearch.sync(search, executedLocation);
          var file = files[0];
          var contextSnapshot = require(file);
-         var searchMigration = `**/*_migration.js`
+         var searchMigration = `**/*_migration.js`;
          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
          if( migrationFiles){
+          // find newest migration file
             var mFiles = migrationFiles.sort(function(x, y){
               return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
             });
             mFiles = mFiles[0];
             var migration = require(mFiles);
-            var settings = Migration.getSettings(executedLocation);
-            var newMigrationInstance = new migration(settings);
+            var context = Migration.getContext(executedLocation, contextFileName);
+            var newMigrationInstance = new migration(context);
             newMigrationInstance.up();
          }
         }catch (e){

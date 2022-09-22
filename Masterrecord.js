@@ -21,6 +21,7 @@ class Context {
     __builderEntities = [];
     __trackedEntities = [];
     __relationshipModels = [];
+    __settings = null;
 
     constructor(){
         // TODO when we build the sql engine it depends on the which type.
@@ -86,29 +87,39 @@ class Context {
         };
     };
 
+  
     useSqlite(rootFolderLocation){
-            var contextName = this.constructor.name;
-            var envType = process.env.master;
-            var search = `${rootFolderLocation}/**/*env.${envType}.json`;
-            var files = globSearch.sync(search, rootFolderLocation);
-            var file = files[0];
-            var settings = require(file);
-            var options = settings[contextName][contextName];
-            this.db = this.__SQLiteInit(options,  "better-sqlite3");
-            this._SQLEngine.setDB(this.db, "better-sqlite3");
-            return this;
-    }
+        var root = process.cwd();
+        var contextName = this.constructor.name;
+        var envType = process.env.master;
+        var rootFolder = `${root}/${rootFolderLocation}`;
+        var search = `${rootFolder}/**/*env.${envType}.json`;
+        var files = globSearch.sync(search,rootFolder);
+        var file = files[0];
+        if(file === undefined){
+            console.log(`could not find file - ${rootFolder}/env.${envType}.json`);
+            throw error(`could not find file - ${rootFolder}/env.${envType}.json`);
+        }
+        var settings = require(file);
+        var options = settings[contextName];
+        options.completeConnection = `${rootFolder}/env.${envType}.json`;
+        this.__settings = options;
+        this.db = this.__SQLiteInit(options,  "better-sqlite3");
+        this._SQLEngine.setDB(this.db, "better-sqlite3");
+        return this;
+}
 
-    useSqlite(options){
-        if(options !== undefined){
-            this.db = this.__SQLiteInit(options,  "better-sqlite3");
-            this._SQLEngine.setDB(this.db, "better-sqlite3");
-            return this;
-        }
-        else{
-            console.log("database options not defined - Master Record");
-        }
-    }
+
+    // useSqlite(options){
+    //     if(options !== undefined){
+    //         this.db = this.__SQLiteInit(options,  "better-sqlite3");
+    //         this._SQLEngine.setDB(this.db, "better-sqlite3");
+    //         return this;
+    //     }
+    //     else{
+    //         console.log("database options not defined - Master Record");
+    //     }
+    // }
     
     useMySql(options, rootFolderLocation){
         if(options !== undefined){
