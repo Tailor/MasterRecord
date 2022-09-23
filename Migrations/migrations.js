@@ -1,4 +1,4 @@
-// version 0.0.2
+// version 0.0.3
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -16,7 +16,10 @@ class Migrations{
         var files = globSearch.sync(search, executedLocation);
         var file = files[0];
         var context = require(file);
-        return new context();
+        return {
+            context : context,
+            fileLocation : file
+            }
     }
 
     createSnapShot(snap){
@@ -29,7 +32,6 @@ class Migrations{
             seed : function(seed){
                 this.seed(this);
             },
-            database: {},
             contextLocation: snap.file,
             migrationFolder: `${snap.executedLocation}/db/migrations`,
             snapShotLocation: `${snap.executedLocation}/db/migrations/${snap.contextFileName}_contextSnapShot.json`,
@@ -129,7 +131,7 @@ class Migrations{
 
       
     buildMigrationTemplate(name, oldSchema, newSchema){
-     
+
         var MT = new MigrationTemplate(name);
         var tables = this.organizeSchemaByTables(oldSchema, newSchema);
         tables = this.findNewColumnsInTables(tables);

@@ -4,6 +4,17 @@ class Tools{
         return entityList[name];
     }
 
+
+    // this will remove everthing from back slash amount
+    static removeBackwardSlashSection(string, amount, type){
+        type = type === undefined ? "\\" : type;
+        var stringArray =  string.split(type);
+        for(var i = 0; i < amount; i++){
+            stringArray.pop();
+        }
+        return stringArray.join(type);
+    }
+
     static removePrimarykeyandVirtual(currentModel, modelEntity){
         var newCurrentModel = Object.create(currentModel);
 

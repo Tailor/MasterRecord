@@ -1,7 +1,7 @@
 
 // https://github.com/kriasoft/node-sqlite
 // https://www.learnentityframeworkcore.com/dbset/deleting-data
-// version 1.0.14
+// version 1.0.16
 
 var modelBuilder  = require('./Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -12,6 +12,7 @@ var insertManager = require('./InsertManager');
 var deleteManager = require('./DeleteManager');
 var globSearch = require("glob");
 
+
 class Context {
     _isModelValid = {
         isValid: true,
@@ -21,13 +22,13 @@ class Context {
     __builderEntities = [];
     __trackedEntities = [];
     __relationshipModels = [];
-    __settings = null;
+    __enviornment = "";
+    __name = "";
 
     constructor(){
-        // TODO when we build the sql engine it depends on the which type.
-
-        this._SQLEngine = "";
+        this. __enviornment = process.env.master;
         this.__name = this.constructor.name;
+        this._SQLEngine = "";
     }
 
         /* 
@@ -42,7 +43,8 @@ class Context {
     __SQLiteInit(env, sqlName){
         try{
             const sqlite3 = require(sqlName);
-            let DBAddress = env.connection;
+            console.log("sdsdsds", env)
+            let DBAddress = env.completeConnection;
             var db = new sqlite3(DBAddress, env);
             db.__name = sqlName;
             this._SQLEngine = new SQLLiteEngine();
@@ -87,39 +89,64 @@ class Context {
         };
     };
 
-  
-    useSqlite(rootFolderLocation){
-        var root = process.cwd();
-        var contextName = this.constructor.name;
-        var envType = process.env.master;
+    __findSettings(root, rootFolderLocation, envType){
+
         var rootFolder = `${root}/${rootFolderLocation}`;
         var search = `${rootFolder}/**/*env.${envType}.json`;
-        var files = globSearch.sync(search,rootFolder);
+        var files = globSearch.sync(search, rootFolder);
         var file = files[0];
         if(file === undefined){
-            console.log(`could not find file - ${rootFolder}/env.${envType}.json`);
-            throw error(`could not find file - ${rootFolder}/env.${envType}.json`);
+            root = tools.removeBackwardSlashSection(root, 1, "/");
+            rootFolder = `${root}/${rootFolderLocation}`;
+            var search = `${rootFolder}/**/*env.${envType}.json`;
+            var files = globSearch.sync(search,rootFolder);
+            file = files[0];
+            if(file === undefined){
+                root = tools.removeBackwardSlashSection(root, 1, "/");
+                rootFolder = `${root}/${rootFolderLocation}`;
+                var search = `${rootFolder}/**/*env.${envType}.json`;
+                var files = globSearch.sync(search,rootFolder);
+                file = files[0];
+                if(file === undefined){
+                    console.log(`could not find file - ${rootFolder}/env.${envType}.json`);
+                    throw error(`could not find file - ${rootFolder}/env.${envType}.json`);
+                }
+
+            }
+        
         }
-        var settings = require(file);
-        var options = settings[contextName];
-        options.completeConnection = `${rootFolder}/env.${envType}.json`;
-        this.__settings = options;
-        this.db = this.__SQLiteInit(options,  "better-sqlite3");
-        this._SQLEngine.setDB(this.db, "better-sqlite3");
-        return this;
-}
+        
+        return {
+            file: file,
+            rootFolder : root
+        };
+    }
 
+    useSqlite(rootFolderLocation){
+            var root =  process.cwd();
+            var envType = this.__enviornment;
+            var contextName = this.__name;
+            var file = this.__findSettings(root, rootFolderLocation, envType);
+            var settings = require(file.file);
+            var options = settings[contextName];
+            if(options === undefined){
+                console.log("settings missing context name settings");
+                throw error("settings missing context name settings");
+            }
+            this.validateSQLiteOptions(options);
+            options.completeConnection = `${file.rootFolder}${options.connection}`;
+            this.db = this.__SQLiteInit(options,  "better-sqlite3");
+            this._SQLEngine.setDB(this.db, "better-sqlite3");
+            return this;
+    }
 
-    // useSqlite(options){
-    //     if(options !== undefined){
-    //         this.db = this.__SQLiteInit(options,  "better-sqlite3");
-    //         this._SQLEngine.setDB(this.db, "better-sqlite3");
-    //         return this;
-    //     }
-    //     else{
-    //         console.log("database options not defined - Master Record");
-    //     }
-    // }
+    validateSQLiteOptions(options){
+        if(options.hasOwnProperty('connect') === undefined){
+            console.log("connnect string settings is missing")
+            throw error("connection string settings is missing");
+        }
+
+    }
     
     useMySql(options, rootFolderLocation){
         if(options !== undefined){

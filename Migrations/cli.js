@@ -21,6 +21,7 @@ program
   .alias('em')
   .description('Enables the migration in your project by creating a configuration class called ContextSnapShot.json')
   .action(function(contextFileName){
+
         var migration = new Migration();
         // location of folder where command is being executed..
         var executedLocation = process.cwd();
@@ -28,9 +29,11 @@ program
         var contextInstance = migration.getContext(executedLocation, contextFileName);
         
         var snap = {
-          file : files[0],
+          file : contextInstance.fileLocation,
           executedLocation : executedLocation,
-          context : new contextInstance(),
+          context : new contextInstance.context({
+            root: executedLocation
+          }),
           contextFileName: contextFileName.toLowerCase()
         }
 
@@ -46,15 +49,16 @@ program
   .action(function(name, contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
+    var migration = new Migration();
       try{
           // find context file from main folder location
           var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
 
          var files = globSearch.sync(search, executedLocation);
          var contextSnapshot = require(files[0]);
-         var migration = new Migration();
          var context = require(contextSnapshot.contextLocation);
-         var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, context.__entities);
+         var contextInstance = new context();
+         var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, contextInstance .__entities);
          var migrationDate = Date.now();
          var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
          fs.writeFile(file, newEntity, 'utf8', function (err) {
@@ -73,6 +77,7 @@ program
   .alias('ud')
   .description('Apply pending migrations to database')
   .action(function(contextFileName, environment){
+    console.log("NODE_ENV", process.NODE_ENV)
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
 
@@ -82,6 +87,7 @@ program
          var files = globSearch.sync(search, executedLocation);
          var file = files[0];
          var contextSnapshot = require(file);
+
          var searchMigration = `**/*_migration.js`;
          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
          if( migrationFiles){
@@ -91,7 +97,8 @@ program
             });
             mFiles = mFiles[0];
             var migration = require(mFiles);
-            var context = Migration.getContext(executedLocation, contextFileName);
+            var context = require(contextSnapshot.contextLocation);
+            var contextInstance = new context();
             var newMigrationInstance = new migration(context);
             newMigrationInstance.up();
          }
