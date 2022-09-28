@@ -1,15 +1,41 @@
 // version 1
 var fs = require('fs');
 
-class Schema{
-    
-    constructor(settings){
-        this.settings = settings;
+var table = {
+    email : {
+        name: "auth", 
+        column : "email",
+        rules: { 
+            "type": "integer",
+        "primary": true,
+        "nullable": false,
+        "unique": true,
+        "auto": true,
+        "cascadeOnDelete": true,
+        "lazyLoading": true,
+        "isNavigational": false
+
+    }
+   }
+}
+
+
+class schema{
+    // TODO : check what database we are using
+    // based on the database you can make the call to update the database.
+
+
+    constructor(context){
+        this.context = context;
     }
     
     // create obj to convert into create sql
-    addColumn(tableName, columnName, ){
-
+    addColumn(table){
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var query = sqliteQuery.addColumn(table);
+            this.context.db.prepare(query).all();
+        }
         // add column to database
     }
 

@@ -28,48 +28,48 @@ module.exports = ${this.name};
         `
     }
 
-    alterColumn(){
+    alterColumn(type, name){
         if(type === "up"){
-            this.up += os.EOL + `     this.alterColumn(table.name, table.column);` 
+            this.up += os.EOL + `     this.alterColumn(table.${name});` 
         }
         else{
-            this.down += os.EOL + `     this.alterColumn(table.name, table.column);` 
+            this.down += os.EOL + `     this.alterColumn(table.${name});` 
         }
     }
-    createTable(){
+    createTable(type, name){
         if(type === "up"){
-            this.up += os.EOL + `     this.createTable(table.name);` 
+            this.up += os.EOL + `     this.createTable(table.${name});` 
         }
         else{
-            this.down += os.EOL + `     this.createTable(table.name);` 
+            this.down += os.EOL + `     this.createTable(table.${name});` 
         }
     }
 
-    addColumn(type){
+    addColumn(type, name){
         if(type === "up"){
-            this.up += os.EOL + `     this.addColumn(table.name, table.column);`
+            this.up += os.EOL + `     this.addColumn(table.${name});`
         }
         else{
-            this.down += os.EOL + `     this.addColumn(table.name, table.column);`
+            this.down += os.EOL + `     this.addColumn(table.${name});`
         }
     }
     
    
-    dropTable(type){
+    dropTable(type, name){
         if(type === "up"){
-            this.down += os.EOL + `    this.droptable(table.name);`
+            this.down += os.EOL + `    this.droptable(table.${name});`
         }
         else{
-            this.down += os.EOL + `    this.droptable(table.name);`
+            this.down += os.EOL + `    this.droptable(table.${name});`
         }
     }
 
-    dropColumn(type){
+    dropColumn(type, name){
         if(type === "up"){
-            this.up += os.EOL + `     this.dropColumn(table.name, table.column);`
+            this.up += os.EOL + `     this.dropColumn(table.${name});`
         }
         else{
-            this.down += os.EOL + `     this.dropColumn(table.name, table.column);`
+            this.down += os.EOL + `     this.dropColumn(table.${name});`
         }
     }
 

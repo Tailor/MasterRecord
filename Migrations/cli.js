@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-  // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
+
+// version 0.0.4
+// https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
+// how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
+
 const program = require('commander');
 let fs = require('fs');
 let path = require('path');
@@ -12,7 +16,7 @@ const [,, ...args] = process.argv
 
 program
   .version('0.0.2')
-  .option('-v, --version', '0.0.2') 
+  .option('-v, --version', '0.0.30') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
   // Instructions : to run command you must go to main project folder is located and run the command using the  context file name.
@@ -31,9 +35,7 @@ program
         var snap = {
           file : contextInstance.fileLocation,
           executedLocation : executedLocation,
-          context : new contextInstance.context({
-            root: executedLocation
-          }),
+          context : new contextInstance.context(),
           contextFileName: contextFileName.toLowerCase()
         }
 
@@ -73,14 +75,13 @@ program
   });
 
  program
-  .command('update-database <contextFileName> <environment>')
+  .command('update-database <contextFileName>')
   .alias('ud')
   .description('Apply pending migrations to database')
-  .action(function(contextFileName, environment){
-    console.log("NODE_ENV", process.NODE_ENV)
+  .action(function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-
+    var migration = new Migration();
       try{
          // find context file from main folder location
          var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
@@ -88,24 +89,29 @@ program
          var file = files[0];
          var contextSnapshot = require(file);
 
-         var searchMigration = `**/*_migration.js`;
+         var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
          if( migrationFiles){
           // find newest migration file
             var mFiles = migrationFiles.sort(function(x, y){
               return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
             });
-            mFiles = mFiles[0];
-            var migration = require(mFiles);
+
+            var mFile = mFiles[0];
+            console.log("ontextSnapshot -------------",mFile);
+            var migrationFile = require(mFile);
             var context = require(contextSnapshot.contextLocation);
             var contextInstance = new context();
-            var newMigrationInstance = new migration(context);
-            newMigrationInstance.up();
+
+            var newMigrationInstance = new migrationFile(context);
+    
+            var tableList = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
+            //newMigrationInstance.up(tableList);
          }
         }catch (e){
           console.log("Cannot read or find file ", e);
         }
-        console.log("database updated");
+        console.log("databasedsdsd updated");
   });
 
  // we will find the migration folder inside the nearest app folder if no migration folder is location is added

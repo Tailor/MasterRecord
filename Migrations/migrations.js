@@ -1,4 +1,4 @@
-// version 0.0.3
+// version 0.0.4
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -29,9 +29,6 @@ class Migrations{
         }
     
         var content = {
-            seed : function(seed){
-                this.seed(this);
-            },
             contextLocation: snap.file,
             migrationFolder: `${snap.executedLocation}/db/migrations`,
             snapShotLocation: `${snap.executedLocation}/db/migrations/${snap.contextFileName}_contextSnapShot.json`,
@@ -129,39 +126,76 @@ class Migrations{
             return tables;
     }
 
-      
-    buildMigrationTemplate(name, oldSchema, newSchema){
-
-        var MT = new MigrationTemplate(name);
+    // build table to build new migration snapshot
+    buildMigrationObject(oldSchema, newSchema){
         var tables = this.organizeSchemaByTables(oldSchema, newSchema);
         tables = this.findNewColumnsInTables(tables);
         tables = this.findDeletedColumnsInTables(tables);
         tables = this.findUpdatedColumns(tables);
+        return tables;
+    }
+
+    //
+    callMigrationUp(oldSchema, newSchema){
+        var tableArray =[];
+        var tables = this.buildMigrationObject(oldSchema, newSchema);
+        tables.forEach(function (item, index) {
+
+                    // add new columns for table
+                    item.newColumns.forEach(function (column, index) {
+                        tableArray.push(tables[column]);
+                    });
+
+                    item.deletedColumns.forEach(function (column, index) {
+                        tableArray.push(tables[column]);
+                    });
+
+                    item.updatedColumns.forEach(function (column, index) {
+                        tableArray.push(tables[column]);
+                    });
+
+                    if(item.old === null){
+                        tableArray.push(tables[column]);
+
+                    }
+                    if(item.new === null){
+                        tableArray.push(tables[column]);
+                    }
+
+                });
+
+                return tableArray;
+    }
+
+    buildMigrationTemplate(name, oldSchema, newSchema){
+
+        var MT = new MigrationTemplate(name);
+        var tables = this.buildMigrationObject(oldSchema, newSchema);
         tables.forEach(function (item, index) {
             // add new columns for table
             item.newColumns.forEach(function (column, index) {
-                MT.addColumn();
-                MT.dropColumn("down");
+                MT.addColumn("up", column);
+                MT.dropColumn("down", column);
             });
 
             item.deletedColumns.forEach(function (column, index) {
-                MT.dropColumn("up");
-                MT.addColumn("down");
+                MT.dropColumn("up", column);
+                MT.addColumn("down",column);
             });
 
             item.updatedColumns.forEach(function (column, index) {
-                MT.alterColumn();
-                MT.alterColumn("down")
+                MT.alterColumn("up", column);
+                MT.alterColumn("down", column)
             });
 
             if(item.old === null){
-                MT.createTable();
-                MT.dropTable("down");
+                MT.createTable("up", column);
+                MT.dropTable("down", column);
 
             }
             if(item.new === null){
-                MT.dropTable("up");
-                MT.createTable("down");
+                MT.dropTable("up", column);
+                MT.createTable("down", column);
             }
 
         });

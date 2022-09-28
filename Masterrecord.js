@@ -24,6 +24,8 @@ class Context {
     __relationshipModels = [];
     __enviornment = "";
     __name = "";
+    isSQite = false;
+    isMySQL = false;
 
     constructor(){
         this. __enviornment = process.env.master;
@@ -42,7 +44,6 @@ class Context {
     */
     __SQLiteInit(env, sqlName){
         try{
-            console.log("===========+++++++++++++++")
             const sqlite3 = require(sqlName);
             let DBAddress = env.completeConnection;
             var db = new sqlite3(DBAddress, env);
@@ -123,6 +124,7 @@ class Context {
     }
 
     useSqlite(rootFolderLocation){
+            this.isSQite = true;
             var root =  process.cwd();
             var envType = this.__enviornment;
             var contextName = this.__name;
