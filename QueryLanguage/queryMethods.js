@@ -1,7 +1,7 @@
 // ALL THIS SHOULD DO IS BUILD A SQL QUERY
 // version 1.0.222
 // TODO: change name of queryManager to select manager;
-var entityTrackerModel = require('masterrecord/Entity/EntityTrackerModel');
+var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 

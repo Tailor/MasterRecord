@@ -87,4 +87,4 @@ class schema{
 
 */
 
-module.exports = Schema;
+module.exports = schema;
