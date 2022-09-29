@@ -1,24 +1,5 @@
-// version 1
+// version 0.0.1
 var fs = require('fs');
-
-var table = {
-    email : {
-        name: "auth", 
-        column : "email",
-        rules: { 
-            "type": "integer",
-        "primary": true,
-        "nullable": false,
-        "unique": true,
-        "auto": true,
-        "cascadeOnDelete": true,
-        "lazyLoading": true,
-        "isNavigational": false
-
-    }
-   }
-}
-
 
 class schema{
     // TODO : check what database we are using
@@ -26,11 +7,12 @@ class schema{
 
 
     constructor(context){
-        this.context = context;
+        this.context = new context();
     }
     
     // create obj to convert into create sql
     addColumn(table){
+
         if(this.context.isSQite){
             var sqliteQuery = require("./migrationSQLiteQuery");
             var query = sqliteQuery.addColumn(table);
@@ -39,16 +21,21 @@ class schema{
         // add column to database
     }
 
-    createTable(name, columns){
+    createTable(table){
 
     }
 
-    dropColumn(tableName, columnName){
+    dropColumn(table){
         // drop column 
-
+        if(this.context.isSQite){
+            var sqlite = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqlite();
+            var query = queryBuilder.dropColumn(table);
+            this.context._execute(query);
+        }
     }
 
-    dropTable(name){
+    dropTable(table){
 
     }
 

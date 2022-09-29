@@ -137,34 +137,38 @@ class Migrations{
 
     //
     callMigrationUp(oldSchema, newSchema){
-        var tableArray =[];
+        var tableObj = {}
         var tables = this.buildMigrationObject(oldSchema, newSchema);
         tables.forEach(function (item, index) {
-
                     // add new columns for table
                     item.newColumns.forEach(function (column, index) {
-                        tableArray.push(tables[column]);
+                        tables[index].new[column].tableName = item.name;
+                        tableObj[column] = tables[index].new[column];
                     });
 
                     item.deletedColumns.forEach(function (column, index) {
-                        tableArray.push(tables[column]);
+                        tables[index].old[column].tableName = item.name;
+                        tableObj[column] =tables[index].old[column];
                     });
 
                     item.updatedColumns.forEach(function (column, index) {
-                        tableArray.push(tables[column]);
+                        tables[index].new[column].tableName = item.name;
+                        tableObj[column] = tables[index].new[column];
                     });
 
                     if(item.old === null){
-                        tableArray.push(tables[column]);
-
+                        tables[index].new.tableName = item.name;
+                        tableObj[column] = tables[index].new;
                     }
+
                     if(item.new === null){
-                        tableArray.push(tables[column]);
+                        tables[index].old.tableName = item.name;
+                        tableObj[column] = tables[index].old;
                     }
 
                 });
 
-                return tableArray;
+                return tableObj;
     }
 
     buildMigrationTemplate(name, oldSchema, newSchema){

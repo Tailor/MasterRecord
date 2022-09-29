@@ -11,7 +11,10 @@ class MigrationTemplate {
 
     get(){
         return ` 
-class ${this.name} extends Schema { 
+         
+var masterrecord = require('masterrecord');
+
+class ${this.name} extends masterrecord.schema { 
     constructor(context){
         super(context);
     }

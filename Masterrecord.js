@@ -14,7 +14,7 @@ class masterrecord{
 }
 
 
-module.exports = masterrecord;
+module.exports = new masterrecord();
 
 
 

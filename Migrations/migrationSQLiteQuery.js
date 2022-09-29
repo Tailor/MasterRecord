@@ -1,5 +1,5 @@
 
-
+// verison 0.0.1
 class migrationSQLiteQuery {
 
     addColum(table){
@@ -15,6 +15,16 @@ class migrationSQLiteQuery {
             INTEGER,
             real
         */
+    }
+
+    dropColumn(table){
+        /*
+        COLUMNS CANNOT BE DROPPED - RULES
+        has unique constraint
+        is indexed
+        appears in a view
+        */
+            return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`
     }
 
     buildDefinations(definations){
@@ -63,6 +73,9 @@ class migrationSQLiteQuery {
 
     
 }
+
+
+module.exports = migrationSQLiteQuery; 
 
 
 /*

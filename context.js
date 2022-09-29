@@ -1,3 +1,4 @@
+// Version 0.0.1
 
 var modelBuilder  = require('./Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -9,7 +10,7 @@ var deleteManager = require('./DeleteManager');
 var globSearch = require("glob");
 
 
-class Context {
+class context {
     _isModelValid = {
         isValid: true,
         errors: []
@@ -68,7 +69,7 @@ class Context {
             const connection = mysql.createConnection(env);
             connection.connect();
             db.__name = sqlName;
-            this._SQLEngine = new MYSQLEngine();
+            this._MYSQLEngine = new MYSQLEngine();
             return connection;
 
         }
@@ -149,7 +150,7 @@ class Context {
     useMySql(options, rootFolderLocation){
         if(options !== undefined){
             this.db = this.__mysqlInit(options, "mysql");
-            this._SQLEngine.setDB(this.db, "mysql");
+            this._MYSQLEngine.setDB(this.db, "mysql");
             return this;
         }
         else{
@@ -175,39 +176,41 @@ class Context {
         try{
             var tracked = this.__trackedEntities;
             // start transaction
-            this._SQLEngine.startTransaction();
-            for (var model in tracked) {
-                var currentModel = tracked[model];
-                    switch(currentModel.__state) {
-                        case "insert": 
-                            var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                            insert.init(currentModel);
-                            
-                        break;
-                        case "modified":
-                            if(currentModel.__dirtyFields.length > 0){
-                                var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
-                                // build columns equal to value string 
-                                var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
-                                var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                                var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
-                                this._SQLEngine.update(sqlUpdate);
-                            }
-                            else{
-                                console.log("Tracked entity modified with no values being changed");
-                            }
+            if(this.isSQite){
+                this._SQLEngine.startTransaction();
+                for (var model in tracked) {
+                    var currentModel = tracked[model];
+                        switch(currentModel.__state) {
+                            case "insert": 
+                                var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                                insert.init(currentModel);
+                                
+                            break;
+                            case "modified":
+                                if(currentModel.__dirtyFields.length > 0){
+                                    var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                    // build columns equal to value string 
+                                    var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                    var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                    var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                    this._SQLEngine.update(sqlUpdate);
+                                }
+                                else{
+                                    console.log("Tracked entity modified with no values being changed");
+                                }
 
-                          // code block
-                          break;
-                        case "delete":
-                            var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
-                            deleteObject.init(currentModel);
-                            
-                          break;
-                    } 
+                            // code block
+                            break;
+                            case "delete":
+                                var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                                deleteObject.init(currentModel);
+                                
+                            break;
+                        } 
+                }
+                this.__clearErrorHandler();
+                this._SQLEngine.endTransaction();
             }
-            this.__clearErrorHandler();
-            this._SQLEngine.endTransaction();
         }
         
         catch(error){
@@ -220,6 +223,13 @@ class Context {
        
         this.__clearTracked();
         return true;
+    }
+
+
+    _execute(query){
+        if(this.isSQite){
+            this._SQLEngine._execute(query);
+        }
     }
 
     // TODO: WHY WE HAVE DOUBLE TRACKED OBJECTS - LOOP THROUGH ALL TRACKED OBJECTS
@@ -245,4 +255,4 @@ class Context {
 }
 
 
-module.exports = Context;
+module.exports = context;

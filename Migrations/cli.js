@@ -9,6 +9,7 @@ let fs = require('fs');
 let path = require('path');
 var Migration = require('./migrations');
 var globSearch = require("glob");
+const { table } = require('console');
 
 const [,, ...args] = process.argv
 
@@ -98,15 +99,14 @@ program
             });
 
             var mFile = mFiles[0];
-            console.log("ontextSnapshot -------------",mFile);
             var migrationFile = require(mFile);
             var context = require(contextSnapshot.contextLocation);
             var contextInstance = new context();
 
             var newMigrationInstance = new migrationFile(context);
     
-            var tableList = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
-            //newMigrationInstance.up(tableList);
+            var tableObj = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
+            newMigrationInstance.up(tableObj);
          }
         }catch (e){
           console.log("Cannot read or find file ", e);
