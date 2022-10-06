@@ -17,10 +17,10 @@ const [,, ...args] = process.argv
 
 program
   .version('0.0.2')
-  .option('-v, --version', '0.0.31') 
+  .option('-v, --version', '0.0.32') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
-  // Instructions : to run command you must go to main project folder is located and run the command using the  context file name.
+  // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
   program
   .command('enable-migrations <contextFileName>')
   .alias('em')
@@ -55,30 +55,33 @@ program
     var migration = new Migration();
       try{
           // find context file from main folder location
-          var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-
-         var files = globSearch.sync(search, executedLocation);
-         var contextSnapshot = require(files[0]);
-         var context = require(contextSnapshot.contextLocation);
-         var contextInstance = new context();
-         var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, contextInstance .__entities);
-         var migrationDate = Date.now();
-         var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
-         fs.writeFile(file, newEntity, 'utf8', function (err) {
-           if (err) return console.log("--- Error running cammand, rlease run command add-migration ---- ", err);
-
-         });
+        var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
+        var files = globSearch.sync(search, executedLocation);
+        var file = files[0];
+        if(file){
+          var contextSnapshot = require(files[0]);
+          var context = require(contextSnapshot.contextLocation);
+          var contextInstance = new context();
+          var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, contextInstance .__entities);
+          var migrationDate = Date.now();
+          var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
+          fs.writeFile(file, newEntity, 'utf8', function (err) {
+            if (err) return console.log("--- Error running cammand, rlease run command add-migration ---- ", err);
+          });
+          console.log(`${name} migration file created`);
+        }
+        else{
+          console.log("Error - Cannot read or find Context file");
+        }
        }catch (e){
-         console.log("Cannot read or find file ", e);
+         console.log("Error - Cannot read or find file ", e);
       }
-
-      console.log(`${name} migration file created`);
   });
 
  program
   .command('update-database <contextFileName>')
   .alias('ud')
-  .description('Apply pending migrations to database')
+  .description('Apply pending migrations to database - up method call')
   .action(function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
@@ -88,53 +91,84 @@ program
          var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
          var files = globSearch.sync(search, executedLocation);
          var file = files[0];
-         var contextSnapshot = require(file);
+         if(file){
+          var contextSnapshot = require(file);
+          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+          if( migrationFiles){
+            
+           // find newest migration file
+             var mFiles = migrationFiles.sort(function(x, y){
+               return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
+             });
+ 
+             var mFile = mFiles[0];
+             var migrationFile = require(mFile);
+             var context = require(contextSnapshot.contextLocation);
+             var contextInstance = new context();
+             var newMigrationInstance = new migrationFile(context);
+     
+             var tableObj = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
+             newMigrationInstance.up(tableObj);
+             // TODO create a new snapshot
+              
+             var snap = {
+               file : contextInstance.fileLocation,
+               executedLocation : executedLocation,
+               context : contextInstance,
+               contextFileName: contextFileName
+             }
+ 
+             migration.createSnapShot(snap);
+             console.log("database updated");
+          }
+          else{
+           console.log("Error - Cannot read or find migration file");
+          }
 
-         var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-         var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-         if( migrationFiles){
-          // find newest migration file
-            var mFiles = migrationFiles.sort(function(x, y){
-              return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
-            });
-
-            var mFile = mFiles[0];
-            var migrationFile = require(mFile);
-            var context = require(contextSnapshot.contextLocation);
-            var contextInstance = new context();
-
-            var newMigrationInstance = new migrationFile(context);
-    
-            var tableObj = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
-            newMigrationInstance.up(tableObj);
          }
+         else{
+           console.log("Error - Cannot read or find Context file");
+          }
         }catch (e){
-          console.log("Cannot read or find file ", e);
+          console.log("Error - Cannot read or find file ", e);
         }
-        console.log("databasedsdsd updated");
   });
 
- // we will find the migration folder inside the nearest app folder if no migration folder is location is added
+
+ program
+ .command('get-migrations <contextFileName>')
+ .alias('gm')
+ .description('Get a list of migration file names using the context')
+ .action(function(contextFileName){
+      var executedLocation = process.cwd();
+      contextFileName = contextFileName.toLowerCase();
+      var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
+      var files = globSearch.sync(search, executedLocation);
+      var file = files[0];
+      if(file){
+          var contextSnapshot = require(file);
+          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+          if( migrationFiles){
+            console.log("MIgration File List", migrationFiles);
+            return migrationFiles;
+          }
+      }
+      else{
+        console.log("Error - Cannot read or find Context file");
+      }
+ });
+
+  // we will find the migration folder inside the nearest app folder if no migration folder is location is added
   program
-  .command('remove-migration <name> <migrationFolderLocation>')
-  .alias('rm')
-  .description('Removes the last migration that has not been applied')
-  .action(function(name){
-    // remove migrations call the down method of a migration             newMigrationInstance.down();
-    // find migration file using name and delete it.
+  .command('update-database-target <migrationFileName>')
+  .alias('udt')
+  .description('Apply pending migrations to database - down method call')
+  .action(function(migrationFileName){
+  // this will call all the down methods until it gets to the one your looking for. First it needs to validate that there is such a file. 
   });
 
 
- // we will find the migration folder inside the nearest app folder if no migration folder is location is added
-  program
-  .command('revert-migration <name> <migrationFolderLocation>')
-  .alias('rm')
-  .description('Reverts back to the last migration with given name')
-  .action(function(cmd){
-      var dir = process.cwd();
-      console.log("starting server");
-      require(dir + '/server.js');
-    //return "node c:\node\server.js"
-  });
 
 program.parse(process.argv);

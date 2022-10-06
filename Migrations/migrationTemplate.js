@@ -20,10 +20,12 @@ class ${this.name} extends masterrecord.schema {
     }
 
     up(table){
+        this.addTable(table);
         ${this.up}
     }
 
     down(table){
+        this.addTable(table);
         ${this.down}
     }
 }

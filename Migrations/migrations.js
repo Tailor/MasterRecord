@@ -5,6 +5,7 @@ var fs = require('fs');
 var diff = require("deep-object-diff");
 var MigrationTemplate = require("./migrationTemplate");
 var globSearch = require("glob");
+const { table } = require('console');
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
@@ -97,7 +98,14 @@ class Migrations{
             var UD = diff.updatedDiff(item.old, item.new);
             const isEmpty = Object.keys(UD).length === 0;
             if(!isEmpty){
-                item.updatedColumns.push(diff.updatedDiff(item.old, item.new));
+                for (var key in UD) {
+                    var tableChanges = {
+                        changes : UD[key],
+                        table : item.new[key],
+                        tableName : item.name
+                    };
+                    item.updatedColumns.push(tableChanges);
+                }
             }
            
         });
@@ -141,33 +149,32 @@ class Migrations{
         var tables = this.buildMigrationObject(oldSchema, newSchema);
         tables.forEach(function (item, index) {
                     // add new columns for table
-                    item.newColumns.forEach(function (column, index) {
-                        tables[index].new[column].tableName = item.name;
-                        tableObj[column] = tables[index].new[column];
+                    var columnInfo = tables[index];
+                    item.newColumns.forEach(function (column, ind) {
+                        columnInfo.new[column].tableName = item.name;
+                        tableObj[column] = columnInfo.new[column];
                     });
 
-                    item.deletedColumns.forEach(function (column, index) {
-                        tables[index].old[column].tableName = item.name;
-                        tableObj[column] =tables[index].old[column];
+                    item.deletedColumns.forEach(function (column, ind) {
+                        columnInfo.old[column].tableName = item.name;
+                        tableObj[column] = columnInfo.old[column];
                     });
 
-                    item.updatedColumns.forEach(function (column, index) {
-                        tables[index].new[column].tableName = item.name;
-                        tableObj[column] = tables[index].new[column];
+                    item.updatedColumns.forEach(function (column, ind) {
+                        tableObj[column.table.name] = column;
                     });
 
                     if(item.old === null){
-                        tables[index].new.tableName = item.name;
-                        tableObj[column] = tables[index].new;
+                        columnInfo.new.tableName = item.name;
+                        tableObj[column] = columnInfo.new;
                     }
 
                     if(item.new === null){
-                        tables[index].old.tableName = item.name;
-                        tableObj[column] = tables[index].old;
+                        columnInfo.old.tableName = item.name;
+                        tableObj[column] = columnInfo.old;
                     }
-
+                    tableObj.___table = item;
                 });
-
                 return tableObj;
     }
 
@@ -188,8 +195,11 @@ class Migrations{
             });
 
             item.updatedColumns.forEach(function (column, index) {
-                MT.alterColumn("up", column);
-                MT.alterColumn("down", column)
+                const isEmpty = Object.keys(column).length === 0;
+                if(!isEmpty){
+                    MT.alterColumn("up", column.table.name);
+                    MT.alterColumn("down", column.table.name);
+                }
             });
 
             if(item.old === null){

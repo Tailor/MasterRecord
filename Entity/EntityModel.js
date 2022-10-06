@@ -17,7 +17,7 @@
 
 */
 
-// version 1.0.16
+// version 0.0.2
 class EntityModel {
     
     constructor(name){

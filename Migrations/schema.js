@@ -1,22 +1,21 @@
-// version 0.0.1
-var fs = require('fs');
+// version 1
 
 class schema{
-    // TODO : check what database we are using
-    // based on the database you can make the call to update the database.
-
 
     constructor(context){
         this.context = new context();
     }
+
+
+    addTable(table){
+        this.fullTable = table.___table;
+    }
     
     // create obj to convert into create sql
     addColumn(table){
-
+        console.log("----------addColumn ------");
         if(this.context.isSQite){
             var sqliteQuery = require("./migrationSQLiteQuery");
-            var query = sqliteQuery.addColumn(table);
-            this.context.db.prepare(query).all();
         }
         // add column to database
     }
@@ -26,12 +25,16 @@ class schema{
     }
 
     dropColumn(table){
-        // drop column 
-        if(this.context.isSQite){
-            var sqlite = require("./migrationSQLiteQuery");
-            var queryBuilder = new sqlite();
-            var query = queryBuilder.dropColumn(table);
-            this.context._execute(query);
+        if(this.fullTable){
+            // drop column 
+            if(this.context.isSQite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.dropColumn(table);
+                this.context._execute(query);
+            }
+        }else{
+            console.log("Must call the addTable function.");
         }
     }
 
@@ -42,9 +45,21 @@ class schema{
     dropIndex(){
 
     }
-//"dbo.People", "Location"
-    alterColumn(){
-
+   //"dbo.People", "Location"
+    alterColumn(table){
+        if(this.fullTable){
+            if(this.context.isSQite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
+                for (var key in queryObj) {
+                    var query = queryObj[key];
+                    this.context._execute(query);
+                }
+            }
+        }else{
+            console.log("Must call the addTable function.");
+        }
     }
 
     renameColumn(){

@@ -1,11 +1,28 @@
 
-// verison 0.0.1
+// verison 0.0.2
 class migrationSQLiteQuery {
 
+    tempTableName = "_temp_alter_column_update"
+        
+    alterColumn(fullTable, table){
+        if(table){
+            table.newName = this.tempTableName;
+            return {
+                1 : this.renameTable(table),
+                2 : this.createTable(table.tableName, fullTable),
+                3 : this.insertInto(table.tableName, fullTable),
+                4 : this.dropTable(this.tempTableName)
+            }
+        }
+        else{
+            console.log("table information is null")
+        }
+    }
+
+
     addColum(table){
-        var buildDefinations = this.buildDefinations(table);
-        return `ALTER TABLE ${table.name}
-        ADD ${table.column} ${buildDefinations}`;
+        return `ALTER TABLE ${table.tableName}
+        ADD COLUMN ${table.name}`;
 
         /*
             column definations
@@ -17,6 +34,11 @@ class migrationSQLiteQuery {
         */
     }
 
+    insertInto(name, table){
+        return `INSERT INTO ${name} (${this.getTableColumns(table)})
+        SELECT ${this.getTableColumns(table)} FROM ${this.tempTableName}`;
+    }
+
     dropColumn(table){
         /*
         COLUMNS CANNOT BE DROPPED - RULES
@@ -24,19 +46,54 @@ class migrationSQLiteQuery {
         is indexed
         appears in a view
         */
-            return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`
+        return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`
     }
 
-    buildDefinations(definations){
-        return "";
+    columnMapping(table){
+        /*
+        var mapping = {
+            "name": "id", // if this chnages then call rename column
+            "type": "integer", // if this changes then call altercolumn 
+            "primary": false, // is primary key 
+            "nullable": false, // is nullable 
+            "unique": true, // vlaue has to be uniqe
+            "auto": true, // sets the value to AUTOINCREMENT
+            "cascadeOnDelete": true,
+            "lazyLoading": true,
+            "isNavigational": false
+        
+        }
+        */
+        // name TEXT NOT NULL,
+
+        var auto = table.auto ? " AUTOINCREMENT":"";
+        var primaryKey = table.primary ? " PRIMARY KEY" : "";
+        var nullName = table.nullable ? "" : " NOT NULL";
+        var unique = table.unique ? " UNIQUE" : "";
+        var type = this.typeManager(table.type);
+
+        return `${table.name} ${type}${nullName}${unique}${primaryKey}${auto}`;
     }
 
-    createTable(){
-            `CREATE TABLE devices (
-                name TEXT NOT NULL,
-                model TEXT NOT NULL,
-                Serial INTEGER NOT NULL UNIQUE
-            );`
+    getTableColumns(table){
+        var columnList = [];
+        for (var key in table) {
+            if(typeof table[key] === "object"){
+                columnList.push(table[key].name);
+            }
+        }
+        return columnList.join(',');;
+    }
+
+    createTable(name, table){
+        var queryVar = "";
+        for (var key in table) {
+            if(typeof table[key] === "object"){
+                queryVar += `${this.columnMapping(table[key])}, `;
+            }
+        }
+     
+        return `CREATE TABLE ${name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
             INTEGER PRIMARY KEY AUTOINCREMENT
@@ -55,21 +112,38 @@ class migrationSQLiteQuery {
 
 
     dropTable(name){
-
+        return `DROP TABLE ${name}`
     }
 
     dropIndex(){
 
     }
-//"dbo.People", "Location"
-    alterColumn(){
 
+    renameTable(table){
+        return `ALTER TABLE ${table.tableName} RENAME TO ${table.newName}`;
     }
 
-    renameColumn(){
-        `ALTER TABLE existing_table
-        RENAME TO new_table;`
+    renameColumn(table){
+        return `ALTER TABLE ${table.tableName} RENAME COLUMN ${table.name} TO ${table.newName}`
     }
+
+    typeManager(type){
+        switch(type) {
+            case "string":
+                return "TEXT"
+              break;
+            case "time":
+                return "TEXT"
+              break;
+              case "boolean":
+                return "INTEGER"
+              break;
+              case "integer":
+                return "INTEGER"
+              break;
+          }
+          
+    }  
 
     
 }
