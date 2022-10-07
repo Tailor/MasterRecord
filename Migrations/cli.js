@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// version 0.0.4
+// version 0.0.5
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
@@ -9,7 +9,6 @@ let fs = require('fs');
 let path = require('path');
 var Migration = require('./migrations');
 var globSearch = require("glob");
-const { table } = require('console');
 
 const [,, ...args] = process.argv
 
@@ -17,7 +16,7 @@ const [,, ...args] = process.argv
 
 program
   .version('0.0.2')
-  .option('-v, --version', '0.0.32') 
+  .option('-v, --version', '0.0.33') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
   // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
@@ -31,12 +30,13 @@ program
         // location of folder where command is being executed..
         var executedLocation = process.cwd();
         // find context file from main folder location
-        var contextInstance = migration.getContext(executedLocation, contextFileName);
-        
+        var contextInstance = migration.findContext(executedLocation, contextFileName);
+       var context =  new contextInstance.context();
         var snap = {
           file : contextInstance.fileLocation,
           executedLocation : executedLocation,
-          context : new contextInstance.context(),
+          context : context,
+          contextEntities : [],
           contextFileName: contextFileName.toLowerCase()
         }
 
@@ -62,7 +62,7 @@ program
           var contextSnapshot = require(files[0]);
           var context = require(contextSnapshot.contextLocation);
           var contextInstance = new context();
-          var newEntity = migration.buildMigrationTemplate(name, contextSnapshot.schema, contextInstance .__entities);
+          var newEntity = migration.template(name, contextSnapshot.schema, contextInstance .__entities);
           var migrationDate = Date.now();
           var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
           fs.writeFile(file, newEntity, 'utf8', function (err) {
@@ -107,15 +107,15 @@ program
              var context = require(contextSnapshot.contextLocation);
              var contextInstance = new context();
              var newMigrationInstance = new migrationFile(context);
-     
-             var tableObj = migration.callMigrationUp(contextSnapshot.schema, contextInstance.__entities);
+        
+             var tableObj = migration.up(contextSnapshot.schema, contextInstance.__entities);
              newMigrationInstance.up(tableObj);
-             // TODO create a new snapshot
-              
+            
              var snap = {
-               file : contextInstance.fileLocation,
+               file : contextSnapshot.contextLocation,
                executedLocation : executedLocation,
                context : contextInstance,
+               contextEntities : contextInstance.__entities,
                contextFileName: contextFileName
              }
  

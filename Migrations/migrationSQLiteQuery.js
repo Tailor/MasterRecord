@@ -1,9 +1,63 @@
 
-// verison 0.0.2
+// verison 0.0.3
 class migrationSQLiteQuery {
 
-    tempTableName = "_temp_alter_column_update"
+    #tempTableName = "_temp_alter_column_update"
+    
+    #getTableColumns(table){
+        var columnList = [];
+        for (var key in table) {
+            if(typeof table[key] === "object"){
+                columnList.push(table[key].name);
+            }
+        }
+        return columnList.join(',');;
+    }
+
+    #columnMapping(table){
+        /*
+        var mapping = {
+            "name": "id", // if this chnages then call rename column
+            "type": "integer", // if this changes then call altercolumn 
+            "primary": false, // is primary key 
+            "nullable": false, // is nullable 
+            "unique": true, // vlaue has to be uniqe
+            "auto": true, // sets the value to AUTOINCREMENT
+            "cascadeOnDelete": true,
+            "lazyLoading": true,
+            "isNavigational": false
         
+        }
+        */
+        // name TEXT NOT NULL,
+
+        var auto = table.auto ? " AUTOINCREMENT":"";
+        var primaryKey = table.primary ? " PRIMARY KEY" : "";
+        var nullName = table.nullable ? "" : " NOT NULL";
+        var unique = table.unique ? " UNIQUE" : "";
+        var type = this.#typeManager(table.type);
+
+        return `${table.name} ${type}${nullName}${unique}${primaryKey}${auto}`;
+    }
+
+    #typeManager(type){
+        switch(type) {
+            case "string":
+                return "TEXT"
+              break;
+            case "time":
+                return "TEXT"
+              break;
+              case "boolean":
+                return "INTEGER"
+              break;
+              case "integer":
+                return "INTEGER"
+              break;
+          }
+          
+    }  
+
     alterColumn(fullTable, table){
         if(table){
             table.newName = this.tempTableName;
@@ -34,11 +88,6 @@ class migrationSQLiteQuery {
         */
     }
 
-    insertInto(name, table){
-        return `INSERT INTO ${name} (${this.getTableColumns(table)})
-        SELECT ${this.getTableColumns(table)} FROM ${this.tempTableName}`;
-    }
-
     dropColumn(table){
         /*
         COLUMNS CANNOT BE DROPPED - RULES
@@ -49,51 +98,20 @@ class migrationSQLiteQuery {
         return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`
     }
 
-    columnMapping(table){
-        /*
-        var mapping = {
-            "name": "id", // if this chnages then call rename column
-            "type": "integer", // if this changes then call altercolumn 
-            "primary": false, // is primary key 
-            "nullable": false, // is nullable 
-            "unique": true, // vlaue has to be uniqe
-            "auto": true, // sets the value to AUTOINCREMENT
-            "cascadeOnDelete": true,
-            "lazyLoading": true,
-            "isNavigational": false
-        
-        }
-        */
-        // name TEXT NOT NULL,
-
-        var auto = table.auto ? " AUTOINCREMENT":"";
-        var primaryKey = table.primary ? " PRIMARY KEY" : "";
-        var nullName = table.nullable ? "" : " NOT NULL";
-        var unique = table.unique ? " UNIQUE" : "";
-        var type = this.typeManager(table.type);
-
-        return `${table.name} ${type}${nullName}${unique}${primaryKey}${auto}`;
+    insertInto(name, table){
+        return `INSERT INTO ${name} (${this.#getTableColumns(table)})
+        SELECT ${this.#getTableColumns(table)} FROM ${this.tempTableName}`;
     }
 
-    getTableColumns(table){
-        var columnList = [];
-        for (var key in table) {
-            if(typeof table[key] === "object"){
-                columnList.push(table[key].name);
-            }
-        }
-        return columnList.join(',');;
-    }
-
-    createTable(name, table){
+    createTable(table){
         var queryVar = "";
         for (var key in table) {
             if(typeof table[key] === "object"){
-                queryVar += `${this.columnMapping(table[key])}, `;
+                queryVar += `${this.#columnMapping(table[key])}, `;
             }
         }
      
-        return `CREATE TABLE ${name} (${queryVar.replace(/,\s*$/, "")});`;
+        return `CREATE TABLE ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
             INTEGER PRIMARY KEY AUTOINCREMENT
@@ -115,10 +133,6 @@ class migrationSQLiteQuery {
         return `DROP TABLE ${name}`
     }
 
-    dropIndex(){
-
-    }
-
     renameTable(table){
         return `ALTER TABLE ${table.tableName} RENAME TO ${table.newName}`;
     }
@@ -126,24 +140,6 @@ class migrationSQLiteQuery {
     renameColumn(table){
         return `ALTER TABLE ${table.tableName} RENAME COLUMN ${table.name} TO ${table.newName}`
     }
-
-    typeManager(type){
-        switch(type) {
-            case "string":
-                return "TEXT"
-              break;
-            case "time":
-                return "TEXT"
-              break;
-              case "boolean":
-                return "INTEGER"
-              break;
-              case "integer":
-                return "INTEGER"
-              break;
-          }
-          
-    }  
 
     
 }

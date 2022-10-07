@@ -1,5 +1,4 @@
-// version 1
-
+// version 0.0.3
 class schema{
 
     constructor(context){
@@ -7,21 +6,22 @@ class schema{
     }
 
 
-    addTable(table){
+    init(table){
         this.fullTable = table.___table;
     }
     
     // create obj to convert into create sql
     addColumn(table){
-        console.log("----------addColumn ------");
         if(this.context.isSQite){
             var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
+            for (var key in queryObj) {
+                var query = queryObj[key];
+                this.context._execute(query);
+            }
         }
         // add column to database
-    }
-
-    createTable(table){
-
     }
 
     dropColumn(table){
@@ -37,14 +37,27 @@ class schema{
             console.log("Must call the addTable function.");
         }
     }
+    
+    createTable(table){
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var query = queryBuilder.createTable(table);
+            this.context._execute(query);
+        }
+    }
+
 
     dropTable(table){
-
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var query = queryBuilder.dropTable(table.__name);
+            this.context._execute(query);
+        }
     }
 
-    dropIndex(){
 
-    }
    //"dbo.People", "Location"
     alterColumn(table){
         if(this.fullTable){
@@ -69,24 +82,8 @@ class schema{
     seed(){
 
     }
-
-    // will get the data and create the file
-    done(){
-
-
-    }
     
 }
 
-
-/*
-    up and down function..
-    on commmand line call of run migrations with folder location of context. it will
-    load context and all the objects.
-    it will then match objects with migration data. 
-    if it's a new item it will generate a new migration dependent on what comes from migration. 
-    
-
-*/
 
 module.exports = schema;

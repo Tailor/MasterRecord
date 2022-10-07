@@ -1,13 +1,17 @@
-const os = require('os');
+
 
 // https://channel9.msdn.com/Blogs/EF/Migrations-Under-the-Hood
+// version 0.0.3
 
+const os = require('os');
 class MigrationTemplate {
-    up = ''
-    down = ''
+
     constructor(name) {
-      this.name = name;
+        this.name = name;
     }
+
+    #up = ''
+    #down = ''
 
     get(){
         return ` 
@@ -20,61 +24,61 @@ class ${this.name} extends masterrecord.schema {
     }
 
     up(table){
-        this.addTable(table);
-        ${this.up}
+        this.init(table);
+        ${this.#up}
     }
 
     down(table){
-        this.addTable(table);
-        ${this.down}
+        this.init(table);
+        ${this.#down}
     }
 }
 module.exports = ${this.name};
         `
     }
 
-    alterColumn(type, name){
+    alterColumn(type, name, parent){
         if(type === "up"){
-            this.up += os.EOL + `     this.alterColumn(table.${name});` 
+            this.#up += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
         }
         else{
-            this.down += os.EOL + `     this.alterColumn(table.${name});` 
+            this.#down += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
         }
     }
     createTable(type, name){
         if(type === "up"){
-            this.up += os.EOL + `     this.createTable(table.${name});` 
+            this.#up += os.EOL + `     this.createTable(table.${name});` 
         }
         else{
-            this.down += os.EOL + `     this.createTable(table.${name});` 
+            this.#down += os.EOL + `     this.createTable(table.${name});` 
         }
     }
 
-    addColumn(type, name){
+    addColumn(type, name, parent){
         if(type === "up"){
-            this.up += os.EOL + `     this.addColumn(table.${name});`
+            this.#up += os.EOL + `     this.addColumn(table.${parent}.${name});`
         }
         else{
-            this.down += os.EOL + `     this.addColumn(table.${name});`
+            this.#down += os.EOL + `     this.addColumn(table.${parent}.${name});`
         }
     }
     
    
     dropTable(type, name){
         if(type === "up"){
-            this.down += os.EOL + `    this.droptable(table.${name});`
+            this.#down += os.EOL + `    this.droptable(table.${name});`
         }
         else{
-            this.down += os.EOL + `    this.droptable(table.${name});`
+            this.#down += os.EOL + `    this.droptable(table.${name});`
         }
     }
 
-    dropColumn(type, name){
+    dropColumn(type, name, parent){
         if(type === "up"){
-            this.up += os.EOL + `     this.dropColumn(table.${name});`
+            this.#up += os.EOL + `     this.dropColumn(table.${parent}.${name});`
         }
         else{
-            this.down += os.EOL + `     this.dropColumn(table.${name});`
+            this.#down += os.EOL + `     this.dropColumn(table.${parent}.${name});`
         }
     }
 
