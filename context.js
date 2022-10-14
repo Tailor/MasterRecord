@@ -1,4 +1,4 @@
-// Version 0.0.1
+// Version 0.0.3
 
 var modelBuilder  = require('./Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -8,7 +8,7 @@ var MYSQLEngine = require('masterrecord/MYSQLEngine');
 var insertManager = require('./InsertManager');
 var deleteManager = require('./DeleteManager');
 var globSearch = require("glob");
-
+var fs = require('fs');
 
 class context {
     _isModelValid = {
@@ -41,6 +41,7 @@ class context {
     */
     __SQLiteInit(env, sqlName){
         try{
+           
             const sqlite3 = require(sqlName);
             let DBAddress = env.completeConnection;
             var db = new sqlite3(DBAddress, env);
@@ -65,6 +66,7 @@ class context {
           */
     __mysqlInit(env, sqlName){
         try{
+            
             const mysql = require(sqlName);
             const connection = mysql.createConnection(env);
             connection.connect();
@@ -121,22 +123,26 @@ class context {
     }
 
     useSqlite(rootFolderLocation){
-            this.isSQite = true;
-            var root =  process.cwd();
-            var envType = this.__enviornment;
-            var contextName = this.__name;
-            var file = this.__findSettings(root, rootFolderLocation, envType);
-            var settings = require(file.file);
-            var options = settings[contextName];
-            if(options === undefined){
-                console.log("settings missing context name settings");
-                throw error("settings missing context name settings");
-            }
-            this.validateSQLiteOptions(options);
-            options.completeConnection = `${file.rootFolder}${options.connection}`;
-            this.db = this.__SQLiteInit(options,  "better-sqlite3");
-            this._SQLEngine.setDB(this.db, "better-sqlite3");
-            return this;
+        this.isSQite = true;
+        var root =  process.cwd();
+        var envType = this.__enviornment;
+        var contextName = this.__name;
+        var file = this.__findSettings(root, rootFolderLocation, envType);
+        var settings = require(file.file);
+        var options = settings[contextName];
+        if(options === undefined){
+            console.log("settings missing context name settings");
+            throw error("settings missing context name settings");
+        }
+        this.validateSQLiteOptions(options);
+        options.completeConnection = `${file.rootFolder}${options.connection}`;
+        var dbDirectory = options.completeConnection.substr(0, options.completeConnection.lastIndexOf("\/"));
+        if (!fs.existsSync(dbDirectory)){
+            fs.mkdirSync(dbDirectory);
+        }
+        this.db = this.__SQLiteInit(options,  "better-sqlite3");
+        this._SQLEngine.setDB(this.db, "better-sqlite3");
+        return this;
     }
 
     validateSQLiteOptions(options){

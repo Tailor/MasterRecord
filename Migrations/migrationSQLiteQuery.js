@@ -1,5 +1,5 @@
 
-// verison 0.0.3
+// verison 0.0.5
 class migrationSQLiteQuery {
 
     #tempTableName = "_temp_alter_column_update"
@@ -60,12 +60,12 @@ class migrationSQLiteQuery {
 
     alterColumn(fullTable, table){
         if(table){
-            table.newName = this.tempTableName;
+            table.newName = this.#tempTableName;
             return {
                 1 : this.renameTable(table),
-                2 : this.createTable(table.tableName, fullTable),
+                2 : this.createTable(fullTable),
                 3 : this.insertInto(table.tableName, fullTable),
-                4 : this.dropTable(this.tempTableName)
+                4 : this.dropTable(this.#tempTableName)
             }
         }
         else{
@@ -100,7 +100,7 @@ class migrationSQLiteQuery {
 
     insertInto(name, table){
         return `INSERT INTO ${name} (${this.#getTableColumns(table)})
-        SELECT ${this.#getTableColumns(table)} FROM ${this.tempTableName}`;
+        SELECT ${this.#getTableColumns(table)} FROM ${this.#tempTableName}`;
     }
 
     createTable(table){
@@ -110,21 +110,21 @@ class migrationSQLiteQuery {
                 queryVar += `${this.#columnMapping(table[key])}, `;
             }
         }
-     
+    
         return `CREATE TABLE ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
-            INTEGER PRIMARY KEY AUTOINCREMENT
-                all these are equal to interger
-            INT
-            INTEGER
-            TINYINT
-            SMALLINT
-            MEDIUMINT
-            BIGINT
-            UNSIGNED BIG INT
-            INT2
-            INT8 
+                INTEGER PRIMARY KEY AUTOINCREMENT
+                    all these are equal to interger
+                INT
+                INTEGER
+                TINYINT
+                SMALLINT
+                MEDIUMINT
+                BIGINT
+                UNSIGNED BIG INT
+                INT2
+                INT8 
             */
     }
 

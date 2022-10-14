@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// version 0.0.5
+// version 0.0.7
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
@@ -16,7 +16,7 @@ const [,, ...args] = process.argv
 
 program
   .version('0.0.2')
-  .option('-v, --version', '0.0.33') 
+  .option('-v, --version', '0.0.34') 
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
   // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
@@ -46,7 +46,7 @@ program
   });
 
   // Instructions : to run command you must go to folder where migration file is located.
-  program
+  program //// TODO ---- WHY MIGRATION IS CREATING ADD COLUMSN AS WELL AS NEW TABLE
   .command('add-migration <name> <contextFileName>')
   .alias('am')
   .action(function(name, contextFileName){
@@ -62,7 +62,7 @@ program
           var contextSnapshot = require(files[0]);
           var context = require(contextSnapshot.contextLocation);
           var contextInstance = new context();
-          var newEntity = migration.template(name, contextSnapshot.schema, contextInstance .__entities);
+          var newEntity = migration.template(name, contextSnapshot.schema, contextInstance.__entities);
           var migrationDate = Date.now();
           var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
           fs.writeFile(file, newEntity, 'utf8', function (err) {
@@ -103,13 +103,12 @@ program
              });
  
              var mFile = mFiles[0];
-             var migrationFile = require(mFile);
+             var migrationProjectFile = require(mFile);
              var context = require(contextSnapshot.contextLocation);
              var contextInstance = new context();
-             var newMigrationInstance = new migrationFile(context);
-        
-             var tableObj = migration.up(contextSnapshot.schema, contextInstance.__entities);
-             newMigrationInstance.up(tableObj);
+             var newMigrationProjectInstance = new migrationProjectFile(context);
+             var tableObj = migration.buildUpObject(contextSnapshot.schema, contextInstance.__entities);
+             newMigrationProjectInstance.up(tableObj);
             
              var snap = {
                file : contextSnapshot.contextLocation,

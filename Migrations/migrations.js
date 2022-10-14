@@ -1,4 +1,4 @@
-// version 0.0.5
+// version 0.0.7
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -186,20 +186,20 @@ class Migrations{
     }
 
     //
-    up(oldSchema, newSchema){
+    buildUpObject(oldSchema, newSchema){
         var tableObj = {}
         var tables = this.#buildMigrationObject(oldSchema, newSchema); 
         tables.forEach(function (item, index) {
                     // add new columns for table
                     var columnInfo = tables[index];
                     
+                    item.newTables.forEach(function (column, ind) {
+                        tableObj[item.name] = columnInfo.new;
+                    });
+
                     item.newColumns.forEach(function (column, ind) {
                         columnInfo.new[column].tableName = item.name;
                         tableObj[column] = columnInfo.new[column];
-                    });
-
-                    item.newTables.forEach(function (column, ind) {
-                        tableObj[item.name] = columnInfo.new;
                     });
 
                     item.deletedColumns.forEach(function (column, ind) {
@@ -218,22 +218,33 @@ class Migrations{
 
                     tableObj.___table = item;
                 });
-                return tableObj;
+        return tableObj;
     }
 
     template(name, oldSchema, newSchema){
+        
         var MT = new MigrationTemplate(name);
         var tables = this.#buildMigrationObject(oldSchema, newSchema);
         tables.forEach(function (item, index) {
-            // add new columns for table
-            item.newColumns.forEach(function (column, index) {
-                MT.addColumn("up", column, item.name);
-                MT.dropColumn("down", column, item.name);
-            });
+            if(item.old === null){
+                MT.createTable("up", column, item.name);
+                MT.dropTable("down", column, item.name);
+            }
+            
+            if(item.new === null){
+                MT.dropTable("up", column, item.name);
+                MT.createTable("down", column, item.name);
+            }
 
             item.newTables.forEach(function (column, ind) {
                 MT.createTable("up", item.name);
                 MT.dropTable("down", item.name);
+            });
+
+            // add new columns for table
+            item.newColumns.forEach(function (column, index) {
+                MT.addColumn("up", column, item.name);
+                MT.dropColumn("down", column, item.name);
             });
 
             item.deletedColumns.forEach(function (column, index) {
@@ -248,16 +259,6 @@ class Migrations{
                     MT.alterColumn("down", column.table.name, item.name);
                 }
             });
-
-            if(item.old === null){
-                MT.createTable("up", column, item.name);
-                MT.dropTable("down", column, item.name);
-
-            }
-            if(item.new === null){
-                MT.dropTable("up", column, item.name);
-                MT.createTable("down", column, item.name);
-            }
 
         });
 
