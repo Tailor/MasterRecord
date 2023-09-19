@@ -1,9 +1,9 @@
+// Version 0.0.1
 class Tools{
 
     static findEntity(name, entityList){
         return entityList[name];
     }
-
 
     // this will remove everthing from back slash amount
     static removeBackwardSlashSection(string, amount, type){
@@ -48,6 +48,15 @@ class Tools{
 
     static createNewInstance(validModel, type, classModel){
         return new type(validModel, classModel);
+    }
+
+    static findTrackedObject(obj, name){
+        for (const property in obj) {
+            if(obj[property].__name === name){
+                return obj[property];
+            }
+        }
+        return {};
     }
 
     static clearAllProto(proto){

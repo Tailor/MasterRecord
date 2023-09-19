@@ -1,4 +1,4 @@
-// Version 0.0.3
+// Version 0.0.5
 
 var modelBuilder  = require('./Entity/EntityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -21,7 +21,7 @@ class context {
     __relationshipModels = [];
     __enviornment = "";
     __name = "";
-    isSQite = false;
+    isSQLite = false;
     isMySQL = false;
 
     constructor(){
@@ -80,8 +80,6 @@ class context {
         }
     }
 
-
-
     __clearErrorHandler(){
         this._isModelValid = {
             isValid: true,
@@ -123,7 +121,7 @@ class context {
     }
 
     useSqlite(rootFolderLocation){
-        this.isSQite = true;
+        this.isSQLite = true;
         var root =  process.cwd();
         var envType = this.__enviornment;
         var contextName = this.__name;
@@ -181,41 +179,47 @@ class context {
     saveChanges(){
         try{
             var tracked = this.__trackedEntities;
-            // start transaction
-            if(this.isSQite){
-                this._SQLEngine.startTransaction();
-                for (var model in tracked) {
-                    var currentModel = tracked[model];
-                        switch(currentModel.__state) {
-                            case "insert": 
-                                var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                                insert.init(currentModel);
-                                
-                            break;
-                            case "modified":
-                                if(currentModel.__dirtyFields.length > 0){
-                                    var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
-                                    // build columns equal to value string 
-                                    var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
-                                    var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                                    var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
-                                    this._SQLEngine.update(sqlUpdate);
-                                }
-                                else{
-                                    console.log("Tracked entity modified with no values being changed");
-                                }
 
-                            // code block
-                            break;
-                            case "delete":
-                                var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
-                                deleteObject.init(currentModel);
-                                
-                            break;
-                        } 
+            if(tracked.length > 0){
+                // start transaction
+                if(this.isSQLite){
+                    this._SQLEngine.startTransaction();
+                    for (var model in tracked) {
+                        var currentModel = tracked[model];
+                            switch(currentModel.__state) {
+                                case "insert": 
+                                    var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                                    insert.init(currentModel);
+                                    
+                                break;
+                                case "modified":
+                                    if(currentModel.__dirtyFields.length > 0){
+                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                        // build columns equal to value string 
+                                        var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                        var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                        this._SQLEngine.update(sqlUpdate);
+                                    }
+                                    else{
+                                        console.log("Tracked entity modified with no values being changed");
+                                    }
+
+                                // code block
+                                break;
+                                case "delete":
+                                    var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                                    deleteObject.init(currentModel);
+                                    
+                                break;
+                            } 
+                    }
+                    this.__clearErrorHandler();
+                    this._SQLEngine.endTransaction();
                 }
-                this.__clearErrorHandler();
-                this._SQLEngine.endTransaction();
+            }
+            else{
+                console.log("save changes has no tracked entities");
             }
         }
         
@@ -233,12 +237,11 @@ class context {
 
 
     _execute(query){
-        if(this.isSQite){
+        if(this.isSQLite){
             this._SQLEngine._execute(query);
         }
     }
 
-    // TODO: WHY WE HAVE DOUBLE TRACKED OBJECTS - LOOP THROUGH ALL TRACKED OBJECTS
     __track(model){
         this.__trackedEntities.push(model);
         return model;

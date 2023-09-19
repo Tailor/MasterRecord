@@ -1,7 +1,7 @@
 
 // https://github.com/kriasoft/node-sqlite
 // https://www.learnentityframeworkcore.com/dbset/deleting-data
-// version 1.0.19
+// version 1.0.20
 var context = require("./context");
 var schema = require("./Migrations/schema");
 
