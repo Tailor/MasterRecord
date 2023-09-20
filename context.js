@@ -5,8 +5,8 @@ var query = require('masterrecord/QueryLanguage/queryMethods');
 var tools =  require('./Tools');
 var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
 var MYSQLEngine = require('masterrecord/MYSQLEngine');
-var insertManager = require('./InsertManager');
-var deleteManager = require('./DeleteManager');
+var insertManager = require('./insertManager');
+var deleteManager = require('./deleteManager');
 var globSearch = require("glob");
 var fs = require('fs');
 
