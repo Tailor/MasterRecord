@@ -1,6 +1,6 @@
 // Version 0.0.5
 
-var modelBuilder  = require('./Entity/EntityModelBuilder');
+var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
 var tools =  require('./Tools');
 var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
