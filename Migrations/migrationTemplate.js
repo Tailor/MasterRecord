@@ -1,64 +1,88 @@
-var Schema = require('./schema');
 
 
 // https://channel9.msdn.com/Blogs/EF/Migrations-Under-the-Hood
+// version 0.0.3
 
+const os = require('os');
+class MigrationTemplate {
 
-// migration Logic
-// using the command line run the command - "add migration 'name' 'context file location' ";
-// this will call the context which will return on object of entities
-// then call the previous migration and pass that model object and the context object to the EDMModelDiffer
-// the EDMModelDiffer function to calculate database changes
-// EDMModelDiffer will return only database changes model that have not been implemented already
-// we then create the miration using function 'migrationCodeGenerator' based on the model that was provided by EDMModelDiffer
-// js date stamp Date.now()
-
-class Migration extends Schema {
-
-    constructor() {
-        super();
+    constructor(name) {
+        this.name = name;
     }
 
-    static up(){
+    #up = ''
+    #down = ''
 
-        this.createTable("user", {
-            id : {
-                type : "integer",
-                primary : true,
-                unique : true,
-                nullable : false
-            },
-            user_id : {
-                type : "integer",
-                required : true, // SQL Data Constraints
-                foreignKey : "user" // SQL Data Constraints
-            },
-            website_url : {
-                type : "string",
-                required : true,
-                maxLength : 60
-            },
-            website_type : {
-                type : "string",
-                required : true
-            }
-        });
+    get(){
+        return ` 
+         
+var masterrecord = require('masterrecord');
 
-        this.addColumn("blog", "url", {
-            type : "string",
-            required : true
-        });
-
-        this.done();
+class ${this.name} extends masterrecord.schema { 
+    constructor(context){
+        super(context);
     }
 
-    static down(){
-        this.dropTable("user");
+    up(table){
+        this.init(table);
+        ${this.#up}
+    }
 
-        this.dropColumn("blog", "url");
-
-        this.done();      
+    down(table){
+        this.init(table);
+        ${this.#down}
     }
 }
+module.exports = ${this.name};
+        `
+    }
 
-module.exports = Migration;
+    alterColumn(type, name, parent){
+        if(type === "up"){
+            this.#up += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
+        }
+        else{
+            this.#down += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
+        }
+    }
+    createTable(type, name){
+        if(type === "up"){
+            this.#up += os.EOL + `     this.createTable(table.${name});` 
+        }
+        else{
+            this.#down += os.EOL + `     this.createTable(table.${name});` 
+        }
+    }
+
+    addColumn(type, name, parent){
+        if(type === "up"){
+            this.#up += os.EOL + `     this.addColumn(table.${parent}.${name});`
+        }
+        else{
+            this.#down += os.EOL + `     this.addColumn(table.${parent}.${name});`
+        }
+    }
+    
+   
+    dropTable(type, name){
+        if(type === "up"){
+            this.#down += os.EOL + `    this.droptable(table.${name});`
+        }
+        else{
+            this.#down += os.EOL + `    this.droptable(table.${name});`
+        }
+    }
+
+    dropColumn(type, name, parent){
+        if(type === "up"){
+            this.#up += os.EOL + `     this.dropColumn(table.${parent}.${name});`
+        }
+        else{
+            this.#down += os.EOL + `     this.dropColumn(table.${parent}.${name});`
+        }
+    }
+
+}
+
+module.exports = MigrationTemplate;
+

@@ -1,43 +1,89 @@
-// version 1
-var fs = require('fs');
+// version 0.0.3
+class schema{
 
-class Schema{
+    constructor(context){
+        this.context = new context();
+    }
 
+
+    init(table){
+        this.fullTable = table.___table;
+    }
+    
     // create obj to convert into create sql
-    addColumn(tableName, columnName, ){
-
+    addColumn(table){
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
+            for (var key in queryObj) {
+                var query = queryObj[key];
+                this.context._execute(query);
+            }
+        }
         // add column to database
     }
 
-    dropColumn(tableName, columnName){
-        // drop column 
+    dropColumn(table){
+        if(this.fullTable){
+            // drop column 
+            if(this.context.isSQite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.dropColumn(table);
+                this.context._execute(query);
+            }
+        }else{
+            console.log("Must call the addTable function.");
+        }
+    }
+    
+    createTable(table){
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var query = queryBuilder.createTable(table);
+            this.context._execute(query);
+        }
+    }
+
+
+    dropTable(table){
+        if(this.context.isSQite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            var query = queryBuilder.dropTable(table.__name);
+            this.context._execute(query);
+        }
+    }
+
+
+   //"dbo.People", "Location"
+    alterColumn(table){
+        if(this.fullTable){
+            if(this.context.isSQite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
+                for (var key in queryObj) {
+                    var query = queryObj[key];
+                    this.context._execute(query);
+                }
+            }
+        }else{
+            console.log("Must call the addTable function.");
+        }
+    }
+
+    renameColumn(){
 
     }
 
-    createTable(name, columns){
+    seed(){
 
     }
-
-    dropTable(name){
-
-    }
-
-    // will get the data and create the file
-    done(){
-
-
-    }
+    
 }
 
 
-/*
-    up and down function..
-    on commmand line call of run migrations with folder location of context. it will
-    load context and all the objects.
-    it will then match objects with migration data. 
-    if it's a new item it will generate a new migration dependent on what comes from migration. 
-    
-
-*/
-
-module.exports = Schema;
+module.exports = schema;

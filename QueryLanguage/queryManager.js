@@ -64,3 +64,16 @@ Last()
 LastOrDefault()
 Average()
 */
+/*
+
+LINQ Extension Methods
+First()
+FirstOrDefault()
+SingleOrDefault()
+Count()
+Min()
+Max()
+Last()
+LastOrDefault()
+Average()
+*/

@@ -1,4 +1,4 @@
-// version 1.0.1
+// version 0.0.3
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -10,10 +10,15 @@ class queryScript{
     script = {
         select : false,
         where: false,
+        and : [],
         include : [],
         raw: false,
         entity : "",
-        entityMap : []
+        entityMap : [],
+        take : 0,
+        skip: 0,
+        orderBy : false,
+        orderByDesc : false
     };
 
 
@@ -21,10 +26,15 @@ class queryScript{
         this.script = {
             select : false,
             where: false,
+            and : [],
             include : [],
             raw: false,
             entity : "",
-            entityMap : []
+            entityMap : [],
+            take : 0,
+            skip: 0,
+            orderBy : false,
+            orderByDesc : false
         };
     }
 
@@ -34,6 +44,21 @@ class queryScript{
 
     raw(query){
         this.script.raw = query;
+        return this.script;
+    }
+
+    orderBy(text, entityName){
+        this.buildScript(text, "orderBy", this.script, entityName);
+        return this.script;
+    }
+
+    orderByDesc(text, entityName){
+        this.buildScript(text, "orderByDesc", this.script, entityName);
+        return this.script;
+    }
+
+    and(text, entityName){
+        this.buildScript(text, "and", this.script, entityName);
         return this.script;
     }
 
@@ -52,73 +77,65 @@ class queryScript{
         return this.script;
     }
 
-    count(queryString){
-        var matched = queryString.match(/(?<=select)(.*?)from/gmi );
-        matched[0] = matched[0].replace("from", "");
-        var cleanQuery = queryString.replace(/^(.*?)from/gmi, "");
-        var str = `Select Count(${matched[0]}) from ${cleanQuery}`
-
-        return str;
+    count(text, entityName){
+        this.buildScript(text, "count", this.script, entityName);
+        return this.script;
     }
 
     buildScript(text, type, obj, entityName){
 
-        var groups = this.splitByFunctions(text);
-        var cachedExpr = {}; // this function will just get the high leve
-        if(groups.length > 0){
-          
-            cachedExpr.entity = this.getEntity(text);
-            
-            if(!this.isMapped(entityName, obj.entityMap)){
+        var cachedExpr = {}; // this function will just get the high level
 
-                obj.entityMap.push({
-                    name: entityName,
-                    entity : cachedExpr.entity
-                });
-            }
-            obj.entity = cachedExpr.entity
-            //tools.getRandomLetter(1)
-            cachedExpr[entityName] = this.splitGroupsByLogicalOperators(groups);
+        /// first we find all the groups in the query string
+        var querySections = this.getFunctionsInQuery(text);
 
+        // remove spaces from query and get the Entity
+        cachedExpr.entity = this.getEntity(text);
+        
 
-            // lets break the string into a list of functions
-            this.buildFields(text, cachedExpr);
+        if(!this.isMapped(entityName, obj.entityMap)){
 
-            if(type === "include"){
-                if(cachedExpr.selectFields){
-                    if(!this.isMapped(cachedExpr.selectFields[0], obj.entityMap)){
-                        obj.entityMap.push({
-                            name: tools.capitalizeFirstLetter(cachedExpr.selectFields[0]),
-                            entity : tools.getRandomLetter(1, obj.entityMap)
-                        });
-                    }
-                };
-            }
+            obj.entityMap.push({
+                name: entityName,
+                entity : cachedExpr.entity
+            });
+        }
 
-            this.describeExpressionParts(cachedExpr[entityName], cachedExpr.selectFields[0], obj.entityMap);
-            if(type === "include"){
-                obj[type].push(cachedExpr)
-            }
-            else{
-                obj[type] = cachedExpr;
-            }
-            obj.parentName = entityName;
-            return cachedExpr;
-            
+        // attach the entity name to the main Object
+        obj.entity = cachedExpr.entity
+
+        cachedExpr[entityName] = this.splitGroupsByLogicalOperators(querySections.query);
+        
+        // lets break the string into a list of functions
+        this.buildFields(text, cachedExpr);
+
+        if(type === "include"){
+            if(cachedExpr.selectFields){
+                if(!this.isMapped(cachedExpr.selectFields[0], obj.entityMap)){
+                    obj.entityMap.push({
+                        name: tools.capitalizeFirstLetter(cachedExpr.selectFields[0]),
+                        entity : tools.getRandomLetter(1, obj.entityMap)
+                    });
+                }
+            };
+        }
+
+        this.describeExpressionParts(cachedExpr[entityName]);
+        this.describeExpressionPartsFunctions(cachedExpr[entityName], querySections.functions);
+        if(type === "include" || type === "and"){
+            obj[type].push(cachedExpr);
         }
         else{
-            // this means cachedExpr is not formated as: a => a
-            if(type === "select"){
-                obj.select = {
-                   "selectFields": JSON.parse(text)
-                }
-                return obj.select;
-            }
-            return null;
+            obj[type] = cachedExpr;
         }
 
+        obj.parentName = entityName;
+        return cachedExpr;
     }
 
+   
+
+    // look and grab all fields
     buildFields(text, desc){
         var match = text.match(/^([\w\d$_]+?)\s*=>((?:\{\sreturn\s)?[\s\S]*(?:\})?)/);
         if(match){
@@ -130,8 +147,8 @@ class queryScript{
                 if (!fields.includes(field)) fields.push(field);
             });
 
-            desc.expr = exprStr.trim()
-            desc.selectFields = fields
+            desc.expr = exprStr.trim();
+            desc.selectFields = fields;
             return desc;
         }
         else{
@@ -149,35 +166,38 @@ class queryScript{
         + "\\.((?:\\.?[\\w\\d_\\$]+)+)(?:\\((.*?)\\))?(?:\\s*(>|<|(?:===)|(?:!==)|(?:==)|(?:!=)|(?:=)|(?:<=)|(?:>=)|(?:in))\\s*(.*))?")
     }
 
-    splitGroupsByLogicalOperators(groups, nested = false) {
-        let parts = {}, tmp;
-        for (let part of groups) {
 
-                //tmp = this.splitByLogicalOperators(part.query, entityRegExp)
-                tmp = this.extractInside(part.query, part.name);
-                if(tmp){
-                    part.inside = tmp;
-                    parts[part.name] = part;
-                }
-                else{
-                    part.inside = part.query;
-                    parts[part.name] = part;
-                }
-                part.inside = part.inside.replace("&&", "and");
-                part.query = part.query.replace("&&", "and");
-                part.inside = part.inside.replace("||", "or");
-                part.query = part.query.replace("||", "or");
+    splitGroupsByLogicalOperators(text) {
+        let parts = {}, tmp;
+        var part = {query : text, name : "query"}
+
+        //tmp = this.splitByLogicalOperators(part.query, entityRegExp)
+        tmp = this.extractInside(part.query, part.name);
+        if(tmp){
+            part.inside = tmp;
+            parts[part.name] = part;
         }
- 
+        else{
+            part.inside = part.query;
+            parts[part.name] = part;
+        }
+        part.inside = part.inside.replaceAll("&&", "and");
+        part.query = part.query.replaceAll("&&", "and");
+        part.inside = part.inside.replaceAll("||", "or");
+        part.query = part.query.replaceAll("||", "or");
+
         return parts;
     }
 
 
-    splitByFunctions(str) {
+    // find all functions from querySections
+    getFunctionsInQuery(text) {
+
         const regex = /(?<=\.(?=[A-z]+\())([^(]+)\((.+?)\)(?!\))/g;
         let m;
         const items = [];
-        while ((m = regex.exec(str)) !== null) {
+        
+        while ((m = regex.exec(text)) !== null) {
             // This is necessary to avoid infinite loops with zero-width matches
             if (m.index === regex.lastIndex) {
                 regex.lastIndex++;
@@ -185,94 +205,171 @@ class queryScript{
             
             const [, fName, query] = m;
             items.push(
-                {name: fName, query: `${fName}(${query})`}
-            )
+                {name: fName, query: query, inside : query, parentFeild : this.getParentField(text, m[0]), input: m.input}
+            );
+
+           text = text.replace(`${fName}(${query})`, `func`);
+
         }
-        if(items.length === 0){
-            items.push({name: "NOFUNCTIONS", query: str})
-        }
-        return items;
+
+        //items.push({name: "NOFUNCTIONS", query: str})
+        
+        return {
+            functions: items,
+            query : text
+        };
     }
 
+    getParentField(text, funcName){
+       var split = text.split(".");
+       for (let i = 0; i < split.length; i++) {
 
-    describeExpressionParts(parts, parentField, entityMap) {
-        
+            if(split[i].includes(funcName)){
+                return split[i -1];
+            }
+        }
+        return "";
+    }
 
-            for (let item in parts) {
-                        let  match, fields, func, arg;
-                        var part = parts[item];
-                        part.expressions = [];
-                        var partQuery = part.inside;
-                        var entity =  this.getEntity(partQuery);
-                        var exprPartRegExp = this.OPERATORS_REGEX(entity);
-                            // check if query contains an AND.
-                           var splitByAnd = partQuery.split("and");
-                           for (let splitAnds in splitByAnd) {
-               
-                                if (match = splitByAnd[splitAnds].match(exprPartRegExp)) {
-                                    fields = match[1].split(".");
-                                    func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
-                                    
-                                    if (func == "==" || func == "===") {
-                                        func = "=";
-                                    }
-                                    else if (func == "!==") {
-                                        func = "!=";
-                                    }
-        
-                                    arg = match[2] || match[4];
-                                    if (arg == "true" || arg == "false") {
-                                        arg = arg == "true";
-                                    }
-                                    else if (arg && arg.charAt(0) == arg.charAt(arg.length - 1) && (arg.charAt(0) == "'" || arg.charAt(0) == '"')) {
-                                        arg = arg.slice(1, -1);
-                                    }
-        
-                                    part.entity = entity;
-                                    if(this.isFunction(part.name)){
-                                        var scriptInner = {
-                                            include : [],
-                                            entityMap : entityMap
-                                        };
-                                        this.buildScript(part.inside, part.name, scriptInner, parentField, true);
-                                        parts.parentName = scriptInner.parentName;
-                                        part[scriptInner.parentName] = {};
-                                        if(part.name === "where"){
-                                            part.parentName = scriptInner.parentName;
-                                            part.entity = scriptInner.where.entity;
-                                            part.expr = scriptInner.where.expr;
-                                            part.selectFields = scriptInner.where.selectFields;
-                                            part[scriptInner.parentName] = scriptInner.where[scriptInner.parentName];
-                                        }
-                                        if(part.name === "include"){
-                                            part.parentName = scriptInner.parentName;
-                                            part.entity = scriptInner.include.entity;
-                                            part.expr = scriptInner.include.expr;
-                                            part.selectFields = scriptInner.include.selectFields;
-                                            part[scriptInner.parentName] = scriptInner.include[scriptInner.parentName];
-        
-                                        }
-                                        if(part.name === "select"){
-                                            part.parentName = scriptInner.parentName;
-                                            part.entity = scriptInner.select.entity;
-                                            part.expr = scriptInner.select.expr;
-                                            part.selectFields = scriptInner.select.selectFields;
-                                            part[scriptInner.parentName] = scriptInner.select[scriptInner.parentName];
-                                        }
-                                        //part.inner = scriptInner;
-                                    }
-                                    else{
-                                        part.expressions.push({
-                                            field: fields[0],
-                                            func : func.toLowerCase(),
-                                            arg : arg
-                                        });
-                                    }
-                                }
-                           }
-                  
+    findExpression(fieldName, expression){
+        // loop through and find expression
+        for (const key in expression) {
+
+           if(expression[key].field === fieldName){
+            return expression[key]
+           }
+        }
+    }
+
+    describeExpressionPartsFunctions(cachedExpr, functions){
+        cachedExpr.functions = [];
+        if(functions.length > 0){
+            for (let item in functions) {
+
+                var part = functions[item];
+                var partQuery = part.inside;
+                // get entity of inside function
+                var entity =  this.getEntity(partQuery);
+                
+                part.entity = entity;
+
+                // is the function name white listed
+                if(this.isFunction(part.name)){
+                    var scriptInner =  {
+                        select : false,
+                        where: false,
+                        and : [],
+                        include : [],
+                        raw: false,
+                        entity : "",
+                        entityMap : [],
+                        take : 0,
+                        skip: 0,
+                        orderBy : false,
+                        orderByDesc : false
+                    };
                     
+                    if(part.name === "where"){
+                        // TODO: we need to Get this working 
+                        // recall to parse inner query of function that is being called 
+                        this.buildScript(part.inside, part.name, scriptInner, part.parentFeild);
+                        part.parentName = scriptInner.parentName;
+                        part.entity = scriptInner.where.entity;
+                        part.expr = scriptInner.where.expr;
+                        part.selectFields = scriptInner.where.selectFields;
+                        part[scriptInner.parentName] = scriptInner.where[scriptInner.parentName];
+                    }
+                    if(part.name === "include"){
+                        // TODO: we need to Get this working 
+                        // recall to parse inner query of function that is being called 
+                        this.buildScript(part.inside, part.name, scriptInner, part.parentFeild);
+                        part.parentName = scriptInner.parentName;
+                        part.entity = scriptInner.include.entity;
+                        part.expr = scriptInner.include.expr;
+                        part.selectFields = scriptInner.include.selectFields;
+                        part[scriptInner.parentName] = scriptInner.include[scriptInner.parentName];
+    
+                    }
+                    if(part.name === "select"){
+                        // TODO: we need to Get this working 
+                        // recall to parse inner query of function that is being called 
+                        this.buildScript(part.inside, part.name, scriptInner, part.parentFeild);
+                        part.parentName = scriptInner.parentName;
+                        part.entity = scriptInner.select.entity;
+                        part.expr = scriptInner.select.expr;
+                        part.selectFields = scriptInner.select.selectFields;
+                        part[scriptInner.parentName] = scriptInner.select[scriptInner.parentName];
+                    }
+
+                    // will search multiple values in a field
+                    if(part.name === "any"){
+                        // var members = data.memberContext.Member.where(r => r.first_name.any($$), "Rich, james, Oliver" ).toList();
+                        var expre = this.findExpression(part.parentFeild, cachedExpr.query.expressions)
+                        expre.func = "IN";
+                        expre.arg = `(${part.query})`;
+                        expre.isFunction = true;
+                    }
+
+                    if(part.name === "like"){
+                        // var members = data.memberContext.Member.where(r => r.space_id == $$ && r.user_id != null && r.first_name.like($$),data.params.query.id, "r" ).toList();
+                        var expre = this.findExpression(part.parentFeild, cachedExpr.query.expressions)
+                        expre.func = part.name;
+                        expre.arg = part.query;
+                        expre.isFunction = true;
+                    }
+
                 }
+                else{
+                throw "Cannot have inner functions unless its a Where, Include, Select or Like caluse"
+                }  
+            }
+        }
+        
+    }
+
+    describeExpressionParts(parts) {
+        if(parts.query) {
+            let  match, fields, func, arg;
+            var part = {};
+            part.inside = parts.query.query;
+            part.expressions = [];
+            var partQuery = part.inside;
+            var entity =  this.getEntity(partQuery);
+            var exprPartRegExp = this.OPERATORS_REGEX(entity);
+            // check if query contains an AND.
+           var splitByAnd = partQuery.split("and");
+           for (let splitAnds in splitByAnd) {
+
+                if (match = splitByAnd[splitAnds].match(exprPartRegExp)) {
+                    fields = match[1].split(".");
+                    func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
+                    
+                    if (func == "==" || func == "===") {
+                        func = "=";
+                    }
+                    else if (func == "!==") {
+                        func = "!=";
+                    }
+
+                    arg = match[2] || match[4];
+                    if (arg == "true" || arg == "false") {
+                        arg = arg == "true";
+                    }
+                    else if (arg && arg.charAt(0) == arg.charAt(arg.length - 1) && (arg.charAt(0) == "'" || arg.charAt(0) == '"')) {
+                        arg = arg.slice(1, -1);
+                    }
+
+                    part.entity = entity;
+                
+                    part.expressions.push({
+                        field: fields[0],
+                        func : func.toLowerCase(),
+                        arg : arg
+                    });
+                    parts.query =  part;
+                }
+           }
+        }
 
         return parts;
     }
@@ -317,7 +414,7 @@ class queryScript{
     }
     
     isFunction(func){
-        var funcList = ["where", "select", "include"]
+        var funcList = [ "include", "like", "any"]
         for(var i =0; i < funcList.length; i++){
             if(funcList[i] === func){
                 return true
