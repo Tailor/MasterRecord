@@ -6,7 +6,7 @@
     "glob" : "^10.3.10",
     "deep-object-diff" : "^1.1.9"
   },
-  "version": "0.0.39",
+  "version": "0.0.40",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
   "repository": {
