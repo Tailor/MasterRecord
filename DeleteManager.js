@@ -1,5 +1,5 @@
-// version 0.0.2
 var tools =  require('./Tools');
+
 class DeleteManager{
     constructor(sqlEngine, entities){
         this._SQLEngine = sqlEngine;
@@ -24,17 +24,7 @@ class DeleteManager{
             for (const property of entityKeys) {
                 // cascade delete
                 if(currentModel.__entity[property].type === "hasOne" || currentModel.__entity[property].type === "hasMany"){
-                    var curModel = currentModel[property];
-                    if(curModel === null){
-                     // check if state is nullable - if so and nothing comes back dont call cascadeDelete
-                     var prp = currentModel.__entity[property];
-                     if(!prp.nullable){
-                        throw "No relationship record found - please set hasOne or hasMany to nullable. "
-                     }
-                    }
-                    else{
-                        $that.cascadeDelete( currentModel[property]);
-                    }
+                    $that.cascadeDelete( currentModel[property]);
                 }
             }
             this._SQLEngine.delete(currentModel);

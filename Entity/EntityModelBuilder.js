@@ -1,4 +1,4 @@
-var modelDB  = require('./entityModel');
+var modelDB  = require('./EntityModel');
 
 // creates new instance if entity model and calls inner functions to build out a valid entity
 class EntityModelBuilder {

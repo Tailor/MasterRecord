@@ -17,7 +17,7 @@
 
 */
 
-// version 0.0.3
+// version 0.0.1
 class EntityModel {
     
     constructor(name){
@@ -137,11 +137,9 @@ class EntityModel {
         this.obj.foreignTable = foreignTable;
         this.obj.foreignKey = foreignKey;
         this.obj.isNavigational = true;
-        this.obj.nullable = false;
         return this;
     }
 
-    // DB must have a record or exception will be thrown unless set to nullable
     hasOne(foreignTable, foreignKey){
         if(foreignKey === undefined){
             foreignKey = `${this.obj.name.toLowerCase()}_id`;
@@ -150,7 +148,6 @@ class EntityModel {
         this.obj.foreignTable = foreignTable;
         this.obj.foreignKey = foreignKey;
         this.obj.isNavigational = true;
-        this.obj.nullable = false;
         return this;
     }
 

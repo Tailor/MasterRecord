@@ -1,4 +1,4 @@
-// version 0.0.2
+// version 1.0.1
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -10,15 +10,10 @@ class queryScript{
     script = {
         select : false,
         where: false,
-        and : [],
         include : [],
         raw: false,
         entity : "",
-        entityMap : [],
-        take : 0,
-        skip: 0,
-        orderBy : false,
-        orderByDesc : false
+        entityMap : []
     };
 
 
@@ -26,15 +21,10 @@ class queryScript{
         this.script = {
             select : false,
             where: false,
-            and : [],
             include : [],
             raw: false,
             entity : "",
-            entityMap : [],
-            take : 0,
-            skip: 0,
-            orderBy : false,
-            orderByDesc : false
+            entityMap : []
         };
     }
 
@@ -47,23 +37,7 @@ class queryScript{
         return this.script;
     }
 
-    orderBy(text, entityName){
-        this.buildScript(text, "orderBy", this.script, entityName);
-        return this.script;
-    }
-
-    orderByDesc(text, entityName){
-        this.buildScript(text, "orderByDesc", this.script, entityName);
-        return this.script;
-    }
-
-    and(text, entityName){
-        this.buildScript(text, "and", this.script, entityName);
-        return this.script;
-    }
-
     where(text, entityName){
-
         this.buildScript(text, "where", this.script, entityName);
         return this.script;
     }
@@ -78,9 +52,13 @@ class queryScript{
         return this.script;
     }
 
-    count(text, entityName){
-        this.buildScript(text, "count", this.script, entityName);
-        return this.script;
+    count(queryString){
+        var matched = queryString.match(/(?<=select)(.*?)from/gmi );
+        matched[0] = matched[0].replace("from", "");
+        var cleanQuery = queryString.replace(/^(.*?)from/gmi, "");
+        var str = `Select Count(${matched[0]}) from ${cleanQuery}`
+
+        return str;
     }
 
     buildScript(text, type, obj, entityName){
@@ -118,7 +96,7 @@ class queryScript{
             }
 
             this.describeExpressionParts(cachedExpr[entityName], cachedExpr.selectFields[0], obj.entityMap);
-            if(type === "include" || type === "and"){
+            if(type === "include"){
                 obj[type].push(cachedExpr)
             }
             else{
@@ -152,8 +130,8 @@ class queryScript{
                 if (!fields.includes(field)) fields.push(field);
             });
 
-            desc.expr = exprStr.trim();
-            desc.selectFields = fields;
+            desc.expr = exprStr.trim()
+            desc.selectFields = fields
             return desc;
         }
         else{

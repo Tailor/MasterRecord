@@ -1,25 +1,55 @@
 {
-  "name": "masterrecord",
-  "dependencies": {
-    "better-sqlite3": "^8.6.0",
-    "commander": "^11.0.0",
-    "glob" : "^10.3.4",
-    "deep-object-diff" : "^1.1.9"
+  "_from": "masterrecord@0.0.23",
+  "_id": "masterrecord@0.0.23",
+  "_inBundle": false,
+  "_integrity": "sha512-8k4qfOuUYb86+bh4hmRMHAtbkAJOEg5N3xMqpQI9h1SU7Vf06XjihmBdQU2zSEC9XKEBQgoe/lKQLijwUWko3Q==",
+  "_location": "/masterrecord",
+  "_phantomChildren": {},
+  "_requested": {
+    "type": "version",
+    "registry": true,
+    "raw": "masterrecord@0.0.23",
+    "name": "masterrecord",
+    "escapedName": "masterrecord",
+    "rawSpec": "0.0.23",
+    "saveSpec": null,
+    "fetchSpec": "0.0.23"
   },
-  "version": "0.0.38",
+  "_requiredBy": [
+    "#USER",
+    "/"
+  ],
+  "_resolved": "https://registry.npmjs.org/masterrecord/-/masterrecord-0.0.23.tgz",
+  "_shasum": "3757848bc6e6307f40ee0c3d0fe2b072f8303aa8",
+  "_spec": "masterrecord@0.0.23",
+  "_where": "C:\\Users\\rbatista\\Downloads\\kollege\\freshmen",
+  "author": {
+    "name": "Alexander Batista"
+  },
+  "bin": {
+    "masterrecord": "migrations/cli.js"
+  },
+  "bugs": {
+    "url": "https://github.com/Tailor/Masterrecord/issues"
+  },
+  "bundleDependencies": [],
+  "dependencies": {
+    "better-sqlite3": "^7.6.2",
+    "commander": "^9.4.0"
+  },
+  "deprecated": false,
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
+  "license": "ISC",
+  "main": "./MasterRecord.js",
+  "name": "masterrecord",
+  "preferGlobal": true,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Tailor/Masterrecord.git"
   },
-  "main": "Masterrecord.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "Alexander Rich",
-  "license": "ISC",
-  "bin": {
-    "masterrecord": "./migrations/cli.js"
-  }
+  "version": "0.0.23"
 }

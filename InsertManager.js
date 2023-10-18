@@ -1,9 +1,7 @@
 
-// version 0.0.4
 var tools =  require('./Tools');
-
 class InsertManager {
-
+// TODO: WE are using the relationshipTable and the object name stick to one so that hasMany doesnt have to give a name
     constructor(sqlEngine, errorModel, allEntities ){
         this._SQLEngine = sqlEngine;
         this._errorModel = errorModel;
@@ -82,7 +80,7 @@ class InsertManager {
             if(modelEntity[entity].type === "belongsTo"){
                 var foreignKey = modelEntity[entity].foreignKey === undefined ? modelEntity[entity].name : modelEntity[entity].foreignKey;
                 var newPropertyModel = currentModel[foreignKey];
-                // check if model is a an object. If so insert the child first then the parent. 
+                // check if model is a value because if so then skip we dont need to make an ajax call
                 if(typeof newPropertyModel === 'object'){
                     newPropertyModel.__entity = tools.getEntity(entity, $that._allEntities);
                     var propertyCleanCurrentModel = tools.removePrimarykeyandVirtual(newPropertyModel, newPropertyModel.__entity);
@@ -112,11 +110,11 @@ class InsertManager {
                 }
             
                 // SKIP belongs too
-                if(currentEntity.type !== "belongsTo" && currentEntity.type !== "hasMany"){
+                if(currentEntity.type !== "belongsTo"){
                     // primary is always null in an insert so validation insert must be null
                     if(currentEntity.nullable === false && !currentEntity.primary){
                         // if it doesnt have a get method then call error
-                        if(currentEntity.set === undefined){
+                        if(currentEntity.get === undefined){
                             if(currentModel[entity] === undefined || currentModel[entity] === null || currentModel[entity] === "" ){
                                 this._errorModel.isValid = false;
                                 var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
@@ -125,7 +123,7 @@ class InsertManager {
                             }
                         }
                         else{
-                            currentRealModel[entity] = currentEntity.set(currentModel[entity]);
+                            currentRealModel[entity] = currentEntity.get(currentModel[entity]);
                         }
                     }
                 }

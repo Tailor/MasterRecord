@@ -1,6 +1,7 @@
-
-// version 0.0.7
-var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
+// ALL THIS SHOULD DO IS BUILD A SQL QUERY
+// version 1.0.222
+// TODO: change name of queryManager to select manager;
+var entityTrackerModel = require('masterrecord/Entity/EntityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -44,88 +45,9 @@ class queryMethods{
         this.__queryObject.reset();
     }
 
-
-    // do join on two tables = inner join
-    join(){
-
-    }
-
-    groupBy(){
-        
-    }
-
-    contains(){
-            // https://entityframework.net/knowledge-base/3491721/linq-to-entities---where-in-clause-in-query
-    }
-
-    // do join on two tables = inner join
-    _____leftJoin(){
-
-    }
-
-    ______orderByCount(query,  ...args){
-        var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-        this.__queryObject.orderByCount(str, this.__entity.__name);
-        return this;
-    }
-
-    ______orderByCountDescending(query,  ...args){
-        var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-        this.__queryObject.orderByCountDesc(str, this.__entity.__name);
-        return this;
-    }
-
-    orderBy(query,  ...args){
-        var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-        this.__queryObject.orderBy(str, this.__entity.__name);
-        return this;
-    }
-
-    orderByDescending(query,  ...args){
-        var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-        this.__queryObject.orderByDesc(str, this.__entity.__name);
-        return this;
-    }
-
     raw(query){
-        this.__queryObject.raw(query);
-        return this;
-    }
 
-    /* WHERE and AND work together its a way to add to the WHERE CLAUSE DYNAMICALLY */
-    and(query,  ...args){
-        var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-        this.__queryObject.and(str, this.__entity.__name);
+        this.__queryObject.raw(query);
         return this;
     }
 
@@ -168,68 +90,65 @@ class queryMethods{
         return this;
     }
 
-    take(number){
-        this.__queryObject.script.take = number;
-        return this;
+
+
+    // do join on two tables = inner join
+    join(){
+
     }
 
-    skip(number){
-        this.__queryObject.script.skip = number;
-        return this;
+    skip(){
+
     }
 
-    
-    // ------------------------------- FUNCTIONS THAT MAKE THE SQL CALL START FROM HERE ON -----------------------------------------------------
-    // ---------------------------------------------------------------------------------------------------------------------------------------
+    limit(){
 
-    count(query,  ...args){
-        if(query){
-            var str = query.toString();
-            if(args){
-                for(let argument in args){
-                    var item = args[argument];
-                    str = str.replace("$$", item);
-                }
-            }
-            this.__queryObject.count(str, this.__entity.__name);
-        }
+    }
 
-        if(this.__context.isSQLite){
-            // trying to match string select and relace with select Count(*);
-            var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
-            var val = entityValue[Object.keys(entityValue)[0]];
-            this.__reset();
-            return val;
-        }
+    oderBy(){
+
+    }
+
+    groupBy(){
+        
+    }
+
+    contains(){
+            // https://entityframework.net/knowledge-base/3491721/linq-to-entities---where-in-clause-in-query
+    }
+
+    count(){
+        // trying to match string select and relace with select Count(*);
+        var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+        var val = entityValue[Object.keys(entityValue)[0]];
+        this.__reset();
+        return val;
     }
 
     single(){
-        if(this.__context.isSQLite){
-            var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            var sing = this.__singleEntityBuilder(entityValue, this._queryBuilder);
-            this.__reset();
-            return sing;
-        }
+        var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+        var sing = this.__singleEntityBuilder(entityValue, this._queryBuilder);
+        this.__reset();
+        return sing;
     }
 
     toList(){
-        if(this.__context.isSQLite){
-            var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
-            var toLi = this.__multipleEntityBuilder(entityValue, this._queryBuilder);
-            this.__reset();
-            return toLi;
-        }
+        var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+        var toLi = this.__multipleEntityBuilder(entityValue, this._queryBuilder);
+        this.__reset();
+        return toLi;
     }
 
-      // ------------------------------- FUNCTIONS THAT UPDATE SQL START FROM HERE  -----------------------------------------------------
-    // ---------------------------------------------------------------------------------------------------------------------------------------
+    asQueryable(){
+        // returns the sql created and does not make a call to DB
+    }
+
     add(entityValue){
         // This will call context API to REMOVE entity to update list
         tools.clearAllProto(entityValue);
         entityValue.__state = "insert";
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
-        entityValue.__name = this.__entity.__name;
         this.__context.__track(entityValue);
     }
     
@@ -237,14 +156,6 @@ class queryMethods{
         entityValue.__state = "delete";
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
-    }
-
-    removeRange(entityValues){
-        for (const property in entityValues) {
-            entityValues[property].__state = "delete";
-            entityValues[property].__entity = this.__entity;
-            entityValues[property].__context = this.__context;
-        }
     }
 
     track(entityValue){

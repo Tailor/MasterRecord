@@ -1,5 +1,3 @@
-
-// version : 0.0.1
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -110,13 +108,21 @@ class EntityTrackerModel {
                     
                     if(currentEntity[entityField].type === "belongsTo"){
                         if(currentEntity[entityField].lazyLoading){
-                             // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
-                        
-                            var priKey = tools.getPrimaryKeyObject(ent.__entity);
+                            var priKey = tools.getPrimaryKeyObject(this.__entity);
+                            var currentValue = this.__proto__[`_${entityField}`];
+                            if(currentValue){
+                                // CHECK to see if you got the info already
+                                if(typeof currentValue === 'object'){
+                                    currentValue = currentValue[priKey];
+                                }    
+                            }
+                            else{
+                                var idValue = currentEntity[entityField].foreignTable;
+                                currentValue = this.__proto__[`_${idValue}`];
+                            }
 
-                            var idValue = currentEntity[entityField].foreignKey;
-                            var currentValue = this.__proto__[`_${idValue}`];
-                            var modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
+                            //var modelValue = ent.raw(`select * from ${ent.__entity.__name} where ${priKey} = ${ currentValue }`).single();
+                            var modelValue = ent.where(`r => r. ${priKey} == ${ currentValue }`)
                             this[entityField] = modelValue;
                         }
                         else{
