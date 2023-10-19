@@ -1,4 +1,4 @@
-// version 0.0.3
+// version 0.0.4
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -337,7 +337,8 @@ class queryScript{
             var entity =  this.getEntity(partQuery);
             var exprPartRegExp = this.OPERATORS_REGEX(entity);
             // check if query contains an AND.
-           var splitByAnd = partQuery.split("and");
+            var trimmedQuery = partQuery.replace(/\s/g, '');
+           var splitByAnd = trimmedQuery.split("and");
            for (let splitAnds in splitByAnd) {
 
                 if (match = splitByAnd[splitAnds].match(exprPartRegExp)) {
