@@ -4,7 +4,7 @@ var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
 var tools =  require('./Tools');
 var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
-var MYSQLEngine = require('masterrecord/MYSQLEngine');
+var MYSQLEngine = require('masterrecord/mySQLEngine');
 var insertManager = require('./insertManager');
 var deleteManager = require('./deleteManager');
 var globSearch = require("glob");
@@ -23,6 +23,7 @@ class context {
     __name = "";
     isSQLite = false;
     isMySQL = false;
+    isPostgres = false;
 
     constructor(){
         this. __enviornment = process.env.master;
@@ -128,16 +129,20 @@ class context {
         var file = this.__findSettings(root, rootFolderLocation, envType);
         var settings = require(file.file);
         var options = settings[contextName];
+        
         if(options === undefined){
             console.log("settings missing context name settings");
             throw error("settings missing context name settings");
         }
+
         this.validateSQLiteOptions(options);
         options.completeConnection = `${file.rootFolder}${options.connection}`;
         var dbDirectory = options.completeConnection.substr(0, options.completeConnection.lastIndexOf("\/"));
+        
         if (!fs.existsSync(dbDirectory)){
             fs.mkdirSync(dbDirectory);
         }
+
         this.db = this.__SQLiteInit(options,  "better-sqlite3");
         this._SQLEngine.setDB(this.db, "better-sqlite3");
         return this;
@@ -151,8 +156,9 @@ class context {
 
     }
     
-    useMySql(options, rootFolderLocation){
+    useMySql(options){
         if(options !== undefined){
+            this.isMySQL = true;
             this.db = this.__mysqlInit(options, "mysql");
             this._MYSQLEngine.setDB(this.db, "mysql");
             return this;
@@ -183,6 +189,41 @@ class context {
             if(tracked.length > 0){
                 // start transaction
                 if(this.isSQLite){
+                    this._SQLEngine.startTransaction();
+                    for (var model in tracked) {
+                        var currentModel = tracked[model];
+                            switch(currentModel.__state) {
+                                case "insert": 
+                                    var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                                    insert.init(currentModel);
+                                    
+                                break;
+                                case "modified":
+                                    if(currentModel.__dirtyFields.length > 0){
+                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                        // build columns equal to value string 
+                                        var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                        var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                        this._SQLEngine.update(sqlUpdate);
+                                    }
+                                    else{
+                                        console.log("Tracked entity modified with no values being changed");
+                                    }
+
+                                // code block
+                                break;
+                                case "delete":
+                                    var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                                    deleteObject.init(currentModel);
+                                    
+                                break;
+                            } 
+                    }
+                    this.__clearErrorHandler();
+                    this._SQLEngine.endTransaction();
+                }
+                if(this.isMySQL){
                     this._SQLEngine.startTransaction();
                     for (var model in tracked) {
                         var currentModel = tracked[model];

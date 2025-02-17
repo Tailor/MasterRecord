@@ -5,9 +5,10 @@
     "commander": "^11.1.0",
     "glob" : "^10.3.10",
     "deep-object-diff" : "^1.1.9",
-    "pg" : "^8.13.3"
+    "pg" : "^8.13.3",
+    "mysql" : "^2.18.1"
   },
-  "version": "0.0.45",
+  "version": "0.0.46",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
   "repository": {
