@@ -1,7 +1,6 @@
 {
   "name": "masterrecord",
   "dependencies": {
-    "better-sqlite3": "^9.0.0",
     "commander": "^11.1.0",
     "glob" : "^10.3.10",
     "deep-object-diff" : "^1.1.9",

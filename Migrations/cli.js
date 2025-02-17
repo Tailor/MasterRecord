@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// version 0.0.7
+// version 0.0.s
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
