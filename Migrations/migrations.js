@@ -1,4 +1,4 @@
-// version 0.0.7
+// version 0.0.8
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -164,6 +164,12 @@ class Migrations{
     }
 
     createSnapShot(snap){
+        
+        var dbFolder = `${snap.executedLocation}/db`;
+        if (!fs.existsSync(dbFolder)){
+            fs.mkdirSync(dbFolder);
+        }
+
         var migrationsDirectory = `${snap.executedLocation}/db/migrations`;
         if (!fs.existsSync(migrationsDirectory)){
             fs.mkdirSync(migrationsDirectory);
@@ -222,7 +228,6 @@ class Migrations{
     }
 
     template(name, oldSchema, newSchema){
-        
         var MT = new MigrationTemplate(name);
         var tables = this.#buildMigrationObject(oldSchema, newSchema);
         tables.forEach(function (item, index) {
