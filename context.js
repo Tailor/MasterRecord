@@ -242,8 +242,28 @@ class context {
         }
     }
 
+    // __track(model){
+    //     this.__trackedEntities.push(model);
+    //     return model;
+    // }
+
     __track(model){
-        this.__trackedEntities.push(model);
+        var add = true;
+        for (var mod in this.__trackedEntities) {
+            var id = this.__trackedEntities[mod].__ID;
+            if(id === model.__ID){
+                add = false;
+            }
+        }
+        if(this.__trackedEntities.length === 0){
+            this.__trackedEntities.push(model);
+        }
+        else{
+            if(add){
+                this.__trackedEntities.push(model);
+            }
+        }
+
         return model;
     }
 

@@ -1,5 +1,5 @@
 
-// version 0.0.8
+// version 0.0.10
 var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
@@ -203,7 +203,7 @@ class queryMethods{
     single(){
         if(this.__context.isSQLite){
             var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            var sing = this.__singleEntityBuilder(entityValue, this._queryBuilder);
+            var sing = this.__singleEntityBuilder(entityValue);
             this.__reset();
             return sing;
         }
@@ -211,8 +211,11 @@ class queryMethods{
 
     toList(){
         if(this.__context.isSQLite){
+            if(this.__queryObject.script.entityMap.length === 0){
+                this.__queryObject.skipClause( this.__entity.__name);
+            }
             var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
-            var toLi = this.__multipleEntityBuilder(entityValue, this._queryBuilder);
+            var toLi = this.__multipleEntityBuilder(entityValue);
             this.__reset();
             return toLi;
         }

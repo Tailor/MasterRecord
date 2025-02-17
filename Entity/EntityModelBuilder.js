@@ -1,3 +1,5 @@
+// version 0.0.3
+
 var modelDB  = require('./entityModel');
 
 // creates new instance if entity model and calls inner functions to build out a valid entity

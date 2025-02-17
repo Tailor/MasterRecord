@@ -1,4 +1,4 @@
-// Version 0.0.1
+// Version 0.0.3
 class Tools{
 
     static findEntity(name, entityList){
@@ -44,6 +44,19 @@ class Tools{
                 }
             }
         }
+    }
+
+    static findForeignTable(name, model){
+        for (var key in model) {
+            if (model.hasOwnProperty(key)) {
+                if(model[key].foreignTable){
+                    if(model[key].foreignTable === name){
+                        return model[key];
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     static createNewInstance(validModel, type, classModel){
@@ -134,6 +147,11 @@ class Tools{
           }
         return mainString;;
     }
+
+    static convertBooleanToNumber(num) {
+        num = num === 'true' ? true : (num === 'false' ? false : num);
+        return num ? 1 : 0;
+   }
 }
 
 module.exports = Tools;

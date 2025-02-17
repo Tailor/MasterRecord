@@ -1,5 +1,5 @@
 
-// version : 0.0.1
+// version : 0.0.5
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -39,11 +39,19 @@ class EntityTrackerModel {
 
                 // Getter
                 modelClass.__defineGetter__(modelField, function(){
-                    if(typeof currentEntity[modelField].get === "function"){
-                        return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
+                    // TODO: fix only when updating
+                    if(currentEntity[modelField]){
+                        if(!currentEntity[modelField].skipGetFunction){
+                            if(typeof currentEntity[modelField].get === "function"){
+                                return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
+                            }else{
+                                return this["__proto__"]["_" + modelField];
+                            }
+                        }
                     }else{
                         return this["__proto__"]["_" + modelField];
                     }
+                
                 
                 });
             }   
@@ -87,6 +95,12 @@ class EntityTrackerModel {
  
                 // Setter
                 modelClass.__defineSetter__(entityField, function(value){
+                   
+                    if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" ){
+                        modelClass.__state = "modified";
+                        modelClass.__dirtyFields.push(entityField);
+                         modelClass.__context.__track(modelClass);
+                    }
                     this["__proto__"]["_" + entityField] = value;
                 });
 
@@ -97,7 +111,7 @@ class EntityTrackerModel {
                     if(!ent){
                         var parentEntity = tools.findEntity(this.__name, this.__context);
                         if(parentEntity){
-                            ent = tools.findEntity(parentEntity.__entity[entityField].foreignKey, this.__context);
+                            ent = tools.findEntity(parentEntity.__entity[entityField].foreignTable, this.__context);
                             if(!ent){
                                 return  `Error - Entity ${parentEntity.__entity[entityField].foreignTable} not found. Please check your context for proper name.`
                             }
@@ -162,8 +176,9 @@ class EntityTrackerModel {
                                     */
                                     break;
                                     case "hasOne" : 
-                                        if(ent.__entity[this.__entity.__name]){
-                                            tableName = ent.__entity[this.__entity.__name].foreignKey;
+                                        var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
+                                        if(entityName){
+                                            tableName = entityName.foreignKey;
                                         }
                                         else{
                                             return `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
@@ -174,8 +189,9 @@ class EntityTrackerModel {
                                         this[entityField] = modelValue;
                                     break;
                                     case "hasMany" : 
-                                        if(ent.__entity[this.__entity.__name]){
-                                            tableName = ent.__entity[this.__entity.__name].foreignKey;
+                                        var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
+                                        if(entityName){
+                                            tableName = entityName.foreignKey;
                                         }
                                         else{
                                             return  `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;

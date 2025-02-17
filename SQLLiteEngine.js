@@ -1,4 +1,4 @@
-// Version 0.0.8
+// Version 0.0.12
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -473,15 +473,38 @@ class SQLLiteEngine {
         var $that = this;
         var argument = null;
         var dirtyFields = model.__dirtyFields;
-        
+
         for (var column in dirtyFields) {
+
             // TODO Boolean value is a string with a letter
             switch(model.__entity[dirtyFields[column]].type){
-                case "integer" :
+                 case "integer" :
+                    //model.__entity[dirtyFields[column]].skipGetFunction = true;
                     argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
+                    //model.__entity[dirtyFields[column]].skipGetFunction = false;
                 break;
                 case "string" :
                     argument = argument === null ? `[${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} [${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
+                break;
+                case "boolean" :
+                    var bool = "";
+                    if(model.__entity[dirtyFields[column]].valueConversion){
+                        bool = tools.convertBooleanToNumber(model[dirtyFields[column]]);
+                    }
+                    else{
+                        bool = model[dirtyFields[column]];
+                    }
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${bool}',` : `${argument} [${dirtyFields[column]}] = ${bool},`;
+                break;
+                case "time" :
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
+                break;
+                case "belongsTo" :
+                    var fore = `_${dirtyFields[column]}`;
+                    argument = argument === null ? `[${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',` : `${argument} [${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',`;
+                break;
+                case "hasMany" :
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
                 break;
                 default:
                     argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
@@ -555,7 +578,13 @@ class SQLLiteEngine {
 
     // will add double single quotes to allow sting to be saved.
     _santizeSingleQuotes(string){
-        return string.replace(/'/g, "''");
+        if (typeof string === 'string' || string instanceof String){
+            return string.replace(/'/g, "''");
+        }
+    else{
+        console.log("warning - Field being passed is not a string");
+        throw "warning - Field being passed is not a string";
+    }
     }
 
     // converts any object into SQL parameter select string

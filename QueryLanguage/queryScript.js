@@ -1,4 +1,4 @@
-// version 0.0.4
+// version 0.0.5
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -18,7 +18,8 @@ class queryScript{
         take : 0,
         skip: 0,
         orderBy : false,
-        orderByDesc : false
+        orderByDesc : false,
+        parentName : ""
     };
 
 
@@ -64,6 +65,17 @@ class queryScript{
 
     where(text, entityName){
         this.buildScript(text, "where", this.script, entityName);
+        return this.script;
+    }
+
+    // this gets called when you skip a where clause
+    skipClause(entityName){
+        //this.buildScript(text, "skipClause", this.script, entityName);
+        this.script.entityMap.push({
+            name: entityName,
+            entity : "ran"
+        });
+        this.script.parentName = entityName;
         return this.script;
     }
 

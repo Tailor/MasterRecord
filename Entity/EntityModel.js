@@ -17,7 +17,7 @@
 
 */
 
-// version 0.0.3
+// version 0.0.5
 class EntityModel {
     
     constructor(name){
@@ -34,7 +34,9 @@ class EntityModel {
             auto : false,
             cascadeOnDelete : true,
             lazyLoading : true,
-            isNavigational : false
+            isNavigational : false,
+            skipGetFunction :false,
+            valueConversion : true
             
         }
     }
@@ -120,6 +122,11 @@ class EntityModel {
     //allows you to stop lazy loading because lazy loading is added by default
     lazyLoadingOff(){
         this.obj.lazyLoading = false;
+        return this;
+    }
+
+    valueConversion(bool){
+        this.obj.valueConversion = bool;
         return this;
     }
 

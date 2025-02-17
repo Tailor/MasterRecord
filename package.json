@@ -4,9 +4,10 @@
     "better-sqlite3": "^9.0.0",
     "commander": "^11.1.0",
     "glob" : "^10.3.10",
-    "deep-object-diff" : "^1.1.9"
+    "deep-object-diff" : "^1.1.9",
+    "pg" : "^8.13.3"
   },
-  "version": "0.0.43",
+  "version": "0.0.44",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
   "repository": {
