@@ -1,1 +1,1 @@
-local install of CLI package run code in terminal - "npm install -g ./"
+local install of CLI package run code in terminal - "npm install -g ./" master

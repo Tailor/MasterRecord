@@ -1,4 +1,4 @@
-// Version 0.0.5
+// Version 0.0.6
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -9,6 +9,8 @@ var insertManager = require('./insertManager');
 var deleteManager = require('./deleteManager');
 var globSearch = require("glob");
 var fs = require('fs');
+const appRoot = require('app-root-path');
+const MySQLClient = require('masterrecord/mySQLSyncConnect');
 
 class context {
     _isModelValid = {
@@ -19,14 +21,14 @@ class context {
     __builderEntities = [];
     __trackedEntities = [];
     __relationshipModels = [];
-    __enviornment = "";
+    __environment = "";
     __name = "";
     isSQLite = false;
     isMySQL = false;
     isPostgres = false;
 
     constructor(){
-        this. __enviornment = process.env.master;
+        this. __environment = process.env.master;
         this.__name = this.constructor.name;
         this._SQLEngine = "";
     }
@@ -67,12 +69,11 @@ class context {
           */
     __mysqlInit(env, sqlName){
         try{
-            
-            const mysql = require(sqlName);
-            const connection = mysql.createConnection(env);
-            connection.connect();
-            db.__name = sqlName;
-            this._MYSQLEngine = new MYSQLEngine();
+ 
+            //const mysql = require(sqlName);
+            const connection = new MySQLClient(env);
+            this._SQLEngine = new MYSQLEngine();
+            this._SQLEngine.__name = sqlName;
             return connection;
 
         }
@@ -124,7 +125,7 @@ class context {
     useSqlite(rootFolderLocation){
         this.isSQLite = true;
         var root =  process.cwd();
-        var envType = this.__enviornment;
+        var envType = this.__environment;
         var contextName = this.__name;
         var file = this.__findSettings(root, rootFolderLocation, envType);
         var settings = require(file.file);
@@ -156,16 +157,25 @@ class context {
 
     }
     
-    useMySql(options){
-        if(options !== undefined){
+    useMySql(rootFolderLocation){
+        
             this.isMySQL = true;
-            this.db = this.__mysqlInit(options, "mysql");
-            this._MYSQLEngine.setDB(this.db, "mysql");
+            var envType = this.__environment;
+            var contextName = this.__name;
+            var root = appRoot.path;
+            var file = this.__findSettings(root, rootFolderLocation, envType);
+            var settings = require(file.file);
+            var options = settings[contextName];
+            
+            if(options === undefined){
+                console.log("settings missing context name settings");
+                throw error("settings missing context name settings");
+            }
+
+            this.db = this.__mysqlInit(options, "mysql2");
+            this._SQLEngine.setDB(this.db, "mysql");
             return this;
-        }
-        else{
-            console.log("database options not defined - Master Record");
-        }
+       
     }
 
 
@@ -224,7 +234,7 @@ class context {
                     this._SQLEngine.endTransaction();
                 }
                 if(this.isMySQL){
-                    this._SQLEngine.startTransaction();
+                    //this._SQLEngine.startTransaction();
                     for (var model in tracked) {
                         var currentModel = tracked[model];
                             switch(currentModel.__state) {
@@ -256,7 +266,7 @@ class context {
                             } 
                     }
                     this.__clearErrorHandler();
-                    this._SQLEngine.endTransaction();
+                    //this._SQLEngine.endTransaction();
                 }
             }
             else{
@@ -266,7 +276,7 @@ class context {
         
         catch(error){
             this.__clearErrorHandler();
-            this._SQLEngine.errorTransaction();
+            //this._SQLEngine.errorTransaction();
             console.log("error", error);
             this.__clearTracked();
             throw error;
@@ -278,9 +288,7 @@ class context {
 
 
     _execute(query){
-        if(this.isSQLite){
-            this._SQLEngine._execute(query);
-        }
+        this._SQLEngine._execute(query);
     }
 
     // __track(model){

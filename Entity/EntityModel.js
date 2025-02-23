@@ -24,11 +24,12 @@ class EntityModel {
         this.obj = {
             name: name,
             type: null,
+            relationshipType: null,
+            typeSize : null,
             primary : null,
             default : null,
             virtual : null,
             foreignKey : null,
-            maxLength : null,
             nullable : true, // no
             unique : false,
             auto : false,
@@ -39,6 +40,12 @@ class EntityModel {
             valueConversion : true
             
         }
+    }
+
+    type(type, size){
+        this.obj.type = type;
+        this.obj.typeSize = size;
+        return this;
     }
 
     string(){
@@ -61,10 +68,10 @@ class EntityModel {
         return this;
     }
 
-    maxLength(amount){
-        this.obj.maxLength = amount;
-        return this;
-    }
+    // maxLength(amount){
+    //     this.obj.maxLength = amount;
+    //     return this;
+    // }
 
     // will stop cascade delete which means it will stop not auto delete relationship
     stopCascadeOnDelete(){
@@ -140,6 +147,7 @@ class EntityModel {
         if(foreignKey === undefined){
             foreignKey = `${this.obj.name.toLowerCase()}_id`;
         }
+        this.obj.relationshipType = "hasMany";
         this.obj.type = "hasMany";
         this.obj.foreignTable = foreignTable;
         this.obj.foreignKey = foreignKey;
@@ -153,6 +161,7 @@ class EntityModel {
         if(foreignKey === undefined){
             foreignKey = `${this.obj.name.toLowerCase()}_id`;
         }
+        this.obj.relationshipType = "hasOne";
         this.obj.type = "hasOne";
         this.obj.foreignTable = foreignTable;
         this.obj.foreignKey = foreignKey;
@@ -166,7 +175,8 @@ class EntityModel {
     hasManyThrough(foreignTable,  foreignKey ){
         if(foreignKey === undefined){
             foreignKey = `${this.obj.name.toLowerCase()}_id`;
-        }
+        };
+        this.obj.relationshipType = "hasManyThrough";
         this.obj.type = "hasManyThrough";
         this.obj.foreignTable = foreignTable;// if joinKey is undefined then use name of object. 
         this.obj.foreignKey = foreignKey; // Foreign Key table
@@ -181,7 +191,8 @@ class EntityModel {
             foreignKey = `${foreignTable.toLowerCase()}_id`;
         }
         // will use table name to find forien key
-        this.obj.type = "belongsTo";
+        this.obj.type = "integer";
+        this.obj.relationshipType = "belongsTo";
         this.obj.foreignTable = foreignTable; // this is the table name of the current table if diffrent from the object name
         this.obj.foreignKey = foreignKey; // this is the table name of the joining table
         this.obj.nullable = false; // this means it cannot be null

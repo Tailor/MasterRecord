@@ -39,10 +39,10 @@ module.exports = ${this.name};
 
     alterColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
+            this.#up += os.EOL + `     this.alterColumn(table.${name});` 
         }
         else{
-            this.#down += os.EOL + `     this.alterColumn(table.${parent}.${name});` 
+            this.#down += os.EOL + `     this.alterColumn(table.${name});` 
         }
     }
     createTable(type, name){
@@ -56,13 +56,13 @@ module.exports = ${this.name};
 
     addColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.addColumn(table.${parent}.${name});`
+            this.#up += os.EOL + `     this.addColumn(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.addColumn(table.${parent}.${name});`
+            this.#down += os.EOL + `     this.addColumn(table.${name});`
         }
     }
-    
+    //this.addColumn(table.${parent}.${name});`
    
     dropTable(type, name){
         if(type === "up"){
@@ -75,10 +75,10 @@ module.exports = ${this.name};
 
     dropColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.dropColumn(table.${parent}.${name});`
+            this.#up += os.EOL + `     this.dropColumn(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.dropColumn(table.${parent}.${name});`
+            this.#down += os.EOL + `     this.dropColumn(table.${name});`
         }
     }
 

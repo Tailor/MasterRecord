@@ -1,6 +1,7 @@
 
 // version 0.0.4
 var tools =  require('./Tools');
+var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
 class InsertManager {
 
@@ -8,6 +9,7 @@ class InsertManager {
         this._SQLEngine = sqlEngine;
         this._errorModel = errorModel;
         this._allEntities = allEntities;
+        this.__queryObject = new queryScript();
     }
 
     init(currentModel){
@@ -27,8 +29,10 @@ class InsertManager {
                 var primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
                 // return all fields that have auto and dont have a value to the current model on insert
                 if(currentModel.__entity[primaryKey].auto === true){
-                    var getQueryModel = this._SQLEngine.get(`select * from ${currentModel.__entity.__name} where ${primaryKey} = ${ SQL.id }`);
-                    currentModel[primaryKey] = getQueryModel[primaryKey];
+                    var query = `select * from ${currentModel.__entity.__name} where ${primaryKey} = ${ SQL.id }`;
+                    var jj = this.__queryObject.raw(query);
+                    var getQueryModel = this._SQLEngine.get(jj, currentModel.__entity, currentModel.__context );
+                    currentModel[primaryKey] = getQueryModel[0][primaryKey];
                 }
 
                 const modelKeys = Object.keys(currentModel);
@@ -79,7 +83,7 @@ class InsertManager {
     belongsToInsert(currentModel, modelEntity){
         var $that = this;
         for(var entity in modelEntity) {
-            if(modelEntity[entity].type === "belongsTo"){
+            if(modelEntity[entity].relationshipType === "belongsTo"){
                 var foreignKey = modelEntity[entity].foreignKey === undefined ? modelEntity[entity].name : modelEntity[entity].foreignKey;
                 var newPropertyModel = currentModel[foreignKey];
                 // check if model is a an object. If so insert the child first then the parent. 
@@ -113,21 +117,24 @@ class InsertManager {
             
                 // SKIP belongs too
                 if(currentEntity.type !== "belongsTo" && currentEntity.type !== "hasMany"){
-                    // primary is always null in an insert so validation insert must be null
-                    if(currentEntity.nullable === false && !currentEntity.primary){
-                        // if it doesnt have a get method then call error
-                        if(currentEntity.set === undefined){
-                            if(currentModel[entity] === undefined || currentModel[entity] === null || currentModel[entity] === "" ){
-                                this._errorModel.isValid = false;
-                                var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
-                                this._errorModel.errors.push(errorMessage);
-                                throw errorMessage;
+                    if(currentEntity.relationshipType !== "belongsTo"){
+                        // primary is always null in an insert so validation insert must be null
+                        if(currentEntity.nullable === false && !currentEntity.primary){
+                            // if it doesnt have a get method then call error
+                            if(currentEntity.set === undefined){
+                                if(currentModel[entity] === undefined || currentModel[entity] === null || currentModel[entity] === "" ){
+                                    this._errorModel.isValid = false;
+                                    var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
+                                    this._errorModel.errors.push(errorMessage);
+                                    throw errorMessage;
+                                }
+                            }
+                            else{
+                                currentRealModel[entity] = currentEntity.set(currentModel[entity]);
                             }
                         }
-                        else{
-                            currentRealModel[entity] = currentEntity.set(currentModel[entity]);
-                        }
                     }
+                   
                 }
             }
 

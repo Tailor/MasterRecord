@@ -74,7 +74,7 @@ class EntityTrackerModel {
 
     _isRelationship(entity){
         if(entity){
-            if(entity.type === "hasOne" || entity.type === "hasMany" || entity.type === "belongsTo" || entity.type === "hasManyThrough"){ 
+            if(entity.type === "hasOne" || entity.type === "hasMany" || entity.relationshipType === "belongsTo" || entity.type === "hasManyThrough"){ 
                 return true;
             }
             else{
@@ -122,7 +122,7 @@ class EntityTrackerModel {
                     }
 
                     
-                    if(currentEntity[entityField].type === "belongsTo"){
+                    if(currentEntity[entityField].relationshipType === "belongsTo"){
                         if(currentEntity[entityField].lazyLoading){
                              // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
                         
@@ -216,7 +216,7 @@ class EntityTrackerModel {
                 //return console.log("make db call to get value", entityField);
                 });
 
-                if(currentEntity[entityField].type === "belongsTo"){
+                if(currentEntity[entityField].relationshipType === "belongsTo"){
                     // check if entity has a value if so then return that value
                     if(currentModel[entityField]){
                         modelClass[entityField] = currentModel[entityField];

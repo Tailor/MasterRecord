@@ -1,29 +1,28 @@
 var tools =  require('masterrecord/Tools');
+var util = require('util');
 
 class SQLLiteEngine {
 
     unsupportedWords = ["order"]
 
     update(query){
-        var sqlQuery = ` UPDATE [${query.tableName}]
-        SET ${query.arg}
-        WHERE [${query.tableName}].[${query.primaryKey}] = ${query.primaryKeyValue}` // primary key for that table = 
+        var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = ${query.primaryKeyValue}` // primary key for that table = 
         return this._run(sqlQuery);
     }
 
     delete(queryObject){
        var sqlObject = this._buildDeleteObject(queryObject);
-       var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ${sqlObject.value}`;
-       return this._execute(sqlQuery);
+       var sqlQuery = `DELETE FROM ${sqlObject.tableName} WHERE ${sqlObject.tableName}.${sqlObject.primaryKey} = ${sqlObject.value}`;
+       return this._run(sqlQuery);
     }
 
     insert(queryObject){
         var sqlObject = this._buildSQLInsertObject(queryObject, queryObject.__entity);
-        var query = `INSERT INTO [${sqlObject.tableName}] (${sqlObject.columns})
-        VALUES (${sqlObject.values})`;
+        var query = `INSERT INTO ${sqlObject.tableName} (${sqlObject.columns}) VALUES (${sqlObject.values})`;
         var queryObj = this._run(query);
+        // return 
         var open = {
-            "id": queryObj.lastInsertRowid
+            "id": queryObj.insertId
         };
         return open;
     }
@@ -39,8 +38,10 @@ class SQLLiteEngine {
             }
             if(queryString.query){
                 console.log("SQL:", queryString.query);
-                var queryReturn = this.db.prepare(queryString.query).get();
-                return queryReturn;
+                this.db.connect(this.db);
+                const result = this.db.query(queryString.query);
+                console.log("results:", result);
+                return result;
             }
             return null;
         } catch (err) {
@@ -73,18 +74,20 @@ class SQLLiteEngine {
     }
 
     all(query, entity, context){
-        var selectQuery = {};
+        var queryString = {};
         try {
             if(query.raw){
-                selectQuery.query = query.raw;
+                queryString.query = query.raw;
             }
             else{
-                selectQuery = this.buildQuery(query, entity, context);
+                queryString = this.buildQuery(query, entity, context);
             }
-            if(selectQuery.query){
-                console.log("SQL:", selectQuery.query);
-                var queryReturn = this.db.prepare(selectQuery.query).all();
-                return queryReturn;
+            if(queryString.query){
+                console.log("SQL:", queryString.query);
+                this.db.connect(this.db);
+                const result = this.db.query(queryString.query);
+                console.log("results:", result);
+                return result;
             }
             return null;
         } catch (err) {
@@ -97,17 +100,23 @@ class SQLLiteEngine {
     buildQuery(query, entity, context){
 
         var queryObject = {};
-        queryObject.entity = this.getEntity(entity.__name, query.entityMap);
-        queryObject.select = this.buildSelect(query, entity);
-        queryObject.from = this.buildFrom(query, entity);
-        queryObject.include = this.buildInclude(query, entity, context, queryObject);
-        queryObject.where = this.buildWhere(query, entity);
-
-        var queryString = `${queryObject.select} ${queryObject.from} ${queryObject.include} ${queryObject.where}`;
-        return { 
-                query : queryString,
-                entity : this.getEntity(entity.__name, query.entityMap)
+        if(entity){
+            queryObject.entity = this.getEntity(entity.__name, query.entityMap);
+            queryObject.select = this.buildSelect(query, entity);
+            queryObject.from = this.buildFrom(query, entity);
+            queryObject.include = this.buildInclude(query, entity, context, queryObject);
+            queryObject.where = this.buildWhere(query, entity);
+    
+            var queryString = `${queryObject.select} ${queryObject.from} ${queryObject.include} ${queryObject.where}`;
+            return { 
+                    query : queryString,
+                    entity : this.getEntity(entity.__name, query.entityMap)
+            }
         }
+        else{
+            console.log("Error: Entity object is blank");
+        }
+       
 
     }
 
@@ -314,18 +323,36 @@ class SQLLiteEngine {
         
         for (var column in dirtyFields) {
             // TODO Boolean value is a string with a letter
-            switch(model.__entity[dirtyFields[column]].type){
+            var type = model.__entity[dirtyFields[column]].type;
+            switch(type){
                 case "integer" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
+                    argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
                 break;
                 case "string" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} [${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
+                    argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
+                break;
+                case "boolean" :
+                    argument = argument === null ? `${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',`;
                 break;
                 default:
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
+                    argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
             }
         }
         return argument.replace(/,\s*$/, "");
+    }
+
+    boolType(type){
+        var jj = String(type);
+        switch(jj) {
+            case "true":
+                return 1
+              break;
+              case "false":
+                return 0
+              break;
+              default:
+                return type;
+        }
     }
 
     
@@ -349,12 +376,11 @@ class SQLLiteEngine {
                 var fieldColumn = "";
                 // check if get function is avaliable if so use that
                 fieldColumn = fields[column];
+                
+                
 
                 if((fieldColumn !== undefined && fieldColumn !== null && fieldColumn !== "" ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
-                        case "belongsTo" :
-                            column = modelEntity[column].relationshipTable === undefined ? column : modelEntity[column].relationshipTable;
-                        break;
                         case "string" : 
                             fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;
                         break;
@@ -362,20 +388,32 @@ class SQLLiteEngine {
                             fieldColumn = fields[column];
                         break;
                     }
+                    
+                    var relationship = modelEntity[column].relationshipType
+                    if(relationship === "belongsTo"){
+                        column = modelEntity[column].foreignKey
+                    }
 
-                    columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
+
+                    columns = columns === null ? `${column},` : `${columns} ${column},`;
                     values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
 
                 }
             }
         }
+
         return {tableName: modelEntity.__name, columns: columns.replace(/,\s*$/, ""), values: values.replace(/,\s*$/, "")};
 
     }
 
     // will add double single quotes to allow sting to be saved.
     _santizeSingleQuotes(string){
-        return string.replace(/'/g, "''");
+
+        if(typeof string === "string"){
+            return string.replace(/'/g, "''");
+        }else{
+            return `${string}`;
+        }
     }
 
     // converts any object into SQL parameter select string
@@ -392,12 +430,23 @@ class SQLLiteEngine {
 
     _execute(query){
         console.log("SQL:", query);
-        return this.db.exec(query);
+        this.db.connect(this.db);
+        return this.db.query(query);
     }
 
-    _run(query){
-        console.log("SQL:", query);
-        return this.db.prepare(query).run();
+     _run(query){
+        try{        
+            
+            console.log("SQL:", query);
+            this.db.connect(this.db);
+            const result = this.db.query(query);
+    
+            return result;}
+        catch (error) {
+            console.error(error);
+            // Expected output: ReferenceError: nonExistentFunction is not defined
+            // (Note: the exact output may be browser-dependent)
+          }
     }
 
     setDB(db, type){
@@ -407,3 +456,37 @@ class SQLLiteEngine {
 }
 
 module.exports = SQLLiteEngine;
+
+
+
+
+/***
+ * 
+ * 
+ * 
+ * const mysql = require('mysql2/promise');
+
+class MySQLClient {
+    constructor(config) {
+        this.config = config;
+        this.pool = mysql.createPool(config);
+    }
+
+    async query(sql, params = []) {
+        const connection = await this.pool.getConnection();
+        try {
+            const [results] = await connection.execute(sql, params);
+            return results;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async close() {
+        await this.pool.end();
+    }
+}
+
+module.exports = MySQLClient;
+
+ */

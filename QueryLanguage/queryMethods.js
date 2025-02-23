@@ -198,6 +198,14 @@ class queryMethods{
             this.__reset();
             return val;
         }
+        
+        if(this.__context.isMySQL){
+            // trying to match string select and relace with select Count(*);
+            var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var val = entityValue[Object.keys(entityValue)[0]];
+            this.__reset();
+            return val;
+        }
     }
 
     single(){
@@ -207,10 +215,27 @@ class queryMethods{
             this.__reset();
             return sing;
         }
+        
+        if(this.__context.isMySQL){
+            var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var sing = this.__singleEntityBuilder(entityValue[0]);
+            this.__reset();
+            return sing;
+        }
     }
 
     toList(){
         if(this.__context.isSQLite){
+            if(this.__queryObject.script.entityMap.length === 0){
+                this.__queryObject.skipClause( this.__entity.__name);
+            }
+            var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var toLi = this.__multipleEntityBuilder(entityValue);
+            this.__reset();
+            return toLi;
+        }
+
+        if(this.__context.isMySQL){
             if(this.__queryObject.script.entityMap.length === 0){
                 this.__queryObject.skipClause( this.__entity.__name);
             }

@@ -76,7 +76,10 @@ class Migrations{
     }
 
     #findUpdatedColumns(tables){
+
+
         tables.forEach(function (item, index) {
+           
             var UD = diff.updatedDiff(item.old, item.new);
             const isEmpty = Object.keys(UD).length === 0;
             if(!isEmpty){
@@ -111,8 +114,15 @@ class Migrations{
                             });
 
                             if(columnNotFound === false){
-                                // this means it did not find the column 
-                                item.newColumns.push(value);
+                                // this means it did not find the column
+                                
+                                if(item.new[key].type !== "hasOne" && item.new[key].type !== "hasMany" && item.new[key].type !== "hasManyThrough"){
+                                    // if you have to create a new table no need to create the columns
+                                    if(item.newTables.length === 0){
+                                        item.newColumns.push(value);
+                                    }
+                                
+                                }
                             }
                         }
                         
@@ -142,7 +152,9 @@ class Migrations{
 
     // build table to build new migration snapshot
     #buildMigrationObject(oldSchema, newSchema){
+
         var tables = this.#organizeSchemaByTables(oldSchema, newSchema);
+        
         tables = this.#findNewTables(tables);
         tables = this.#findNewColumns(tables);
         tables = this.#findDeletedColumns(tables);
@@ -161,6 +173,30 @@ class Migrations{
             context : context,
             fileLocation : file
             }
+    }
+
+    // remove hasMany and hasOne and hasManyThrough
+    cleanEntities(entities){
+        var newEntity = [];
+        for (let i = 0; i < entities.length; i++) {
+            var entity = entities[i];
+            var newObj = {}
+
+            for (let key in entity) {
+                if (entity.hasOwnProperty(key)) {
+              
+                    if(entity[key].type !== "hasOne" && entity[key].type  !== "hasMany" && entity[key].type  !== "hasManyThrough"){
+                        // if(entity[key].relationshipType == "belongsTo" ){
+                        //     entity[key].name = entity[key].foreignKey;
+                        // }
+                        newObj[key] = entity[key];
+                    }
+                }
+            }
+            newEntity.push(newObj);
+        }
+
+        return newEntity;
     }
 
     createSnapShot(snap){
@@ -191,10 +227,11 @@ class Migrations{
         }
     }
 
-    //
+    // validate if schema has changed based on new and old
     buildUpObject(oldSchema, newSchema){
         var tableObj = {}
-        var tables = this.#buildMigrationObject(oldSchema, newSchema); 
+        var tables = this.#buildMigrationObject(oldSchema, newSchema);
+
         tables.forEach(function (item, index) {
                     // add new columns for table
                     var columnInfo = tables[index];
@@ -219,9 +256,9 @@ class Migrations{
 
                     if(item.new === null){
                         columnInfo.old.tableName = item.name;
-                        tableObj[column] = columnInfo.old;
+                        tableObj["new"] = columnInfo.old;
                     }
-
+                
                     tableObj.___table = item;
                 });
         return tableObj;
@@ -230,6 +267,7 @@ class Migrations{
     template(name, oldSchema, newSchema){
         var MT = new MigrationTemplate(name);
         var tables = this.#buildMigrationObject(oldSchema, newSchema);
+    
         tables.forEach(function (item, index) {
             if(item.old === null){
                 MT.createTable("up", column, item.name);
