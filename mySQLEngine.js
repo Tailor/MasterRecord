@@ -1,3 +1,4 @@
+// version : 0.0.1
 var tools =  require('masterrecord/Tools');
 var util = require('util');
 
@@ -324,7 +325,16 @@ class SQLLiteEngine {
         for (var column in dirtyFields) {
             // TODO Boolean value is a string with a letter
             var type = model.__entity[dirtyFields[column]].type;
+            
+            if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){
+                type = "belongsTo";
+            }
+
             switch(type){
+                case "belongsTo" :
+                    var foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    argument = `${foreignKey} = ${model[dirtyFields[column]]},`;
+                break;
                 case "integer" :
                     argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
                 break;

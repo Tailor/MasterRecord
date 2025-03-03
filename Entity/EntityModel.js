@@ -193,6 +193,7 @@ class EntityModel {
         // will use table name to find forien key
         this.obj.type = "integer";
         this.obj.relationshipType = "belongsTo";
+        
         this.obj.foreignTable = foreignTable; // this is the table name of the current table if diffrent from the object name
         this.obj.foreignKey = foreignKey; // this is the table name of the joining table
         this.obj.nullable = false; // this means it cannot be null

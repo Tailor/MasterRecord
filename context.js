@@ -1,4 +1,4 @@
-// Version 0.0.6
+// Version 0.0.7
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');

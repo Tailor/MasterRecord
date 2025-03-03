@@ -1,5 +1,5 @@
 
-// version : 0.0.5
+// version : 0.0.6
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -128,10 +128,10 @@ class EntityTrackerModel {
                         
                             var priKey = tools.getPrimaryKeyObject(ent.__entity);
 
-                            var idValue = currentEntity[entityField].foreignKey;
-                            var currentValue = this.__proto__[`_${idValue}`];
-                            var modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
-                            this[entityField] = modelValue;
+                            //var idValue = currentEntity[entityField].foreignKey;
+                            var currentValue = this.__proto__[`_${entityField}`];
+                            //var modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
+                            this[entityField] = currentValue;
                         }
                         else{
                             return this["__proto__"]["_" + entityField];

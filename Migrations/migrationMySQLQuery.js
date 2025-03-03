@@ -1,5 +1,5 @@
 
-// verison 0.0.1
+// verison 0.0.2
 class migrationMySQLQuery {
 
     #tempTableName = "_temp_alter_column_update"
@@ -38,7 +38,8 @@ class migrationMySQLQuery {
         var type = this.typeManager(table.type);
         var tableName = table.name;
         var defaultValue  = "";
-        if(table.default){
+        if(table.default != null){
+
             defaultValue = ` DEFAULT ${this.boolType(table.default)}`
         }
         if(table.relationshipType === 'belongsTo'){
@@ -54,6 +55,12 @@ class migrationMySQLQuery {
                 return "1"
               break;
               case "false":
+                return "0"
+              break;
+              case true:
+                return "1"
+              break;
+              case false:
                 return "0"
               break;
               default:

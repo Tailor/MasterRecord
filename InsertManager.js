@@ -1,5 +1,5 @@
 
-// version 0.0.4
+// version 0.0.5
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
