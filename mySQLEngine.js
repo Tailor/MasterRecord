@@ -290,6 +290,21 @@ class SQLLiteEngine {
                             }
                         }
                     }
+                    else{
+                        
+                        if(entity[ent].relationshipType === "belongsTo"){
+                            var name = entity[ent].foreignKey;
+                            if($that.chechUnsupportedWords(name)){
+                                entitiesList.push(`'${name}'`);
+                                //entitiesList.push(`'${ent}'`);
+                            }
+                            else{
+                                entitiesList.push(name);
+                                //entitiesList.push(ent);
+                            }
+                        }
+                        
+                    }
                 }
             }
         return entitiesList

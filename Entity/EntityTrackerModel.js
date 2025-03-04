@@ -1,5 +1,5 @@
 
-// version : 0.0.6
+// version : 0.0.7
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -25,35 +25,32 @@ class EntityTrackerModel {
                 // current entity has a value then add
                 modelClass["__proto__"]["_" + modelField] = modelFieldValue;
 
-                // Setter
-                modelClass.__defineSetter__(modelField, function(value){
-                    modelClass.__state = "modified";
-                    modelClass.__dirtyFields.push(modelField);
-                    if(typeof currentEntity[modelField].set === "function"){
-                        this["__proto__"]["_" + modelField] = currentEntity[modelField].set(value);
-                    }else{
-                        // Then it will add name to dirty fields
-                        this["__proto__"]["_" + modelField] = value;
-                    }
-                });
-
-                // Getter
-                modelClass.__defineGetter__(modelField, function(){
-                    // TODO: fix only when updating
-                    if(currentEntity[modelField]){
-                        if(!currentEntity[modelField].skipGetFunction){
-                            if(typeof currentEntity[modelField].get === "function"){
-                                return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
-                            }else{
-                                return this["__proto__"]["_" + modelField];
-                            }
+                Object.defineProperty(modelClass,modelField, {
+                    set: function(value) {
+                        modelClass.__state = "modified";
+                        modelClass.__dirtyFields.push(modelField);
+                        if(typeof currentEntity[modelField].set === "function"){
+                            this["__proto__"]["_" + modelField] = currentEntity[modelField].set(value);
+                        }else{
+                            // Then it will add name to dirty fields
+                            this["__proto__"]["_" + modelField] = value;
                         }
-                    }else{
-                        return this["__proto__"]["_" + modelField];
+                    },
+                    get:function(){
+                        // TODO: fix only when updating
+                        if(currentEntity[modelField]){
+                            if(!currentEntity[modelField].skipGetFunction){
+                                if(typeof currentEntity[modelField].get === "function"){
+                                    return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
+                                }else{
+                                    return this["__proto__"]["_" + modelField];
+                                }
+                            }
+                        }else{
+                            return this["__proto__"]["_" + modelField];
+                        }
                     }
-                
-                
-                });
+                  });
             }   
         }
         
@@ -93,128 +90,135 @@ class EntityTrackerModel {
           
             if($that._isRelationship(currentEntity[entityField])){ 
  
-                // Setter
-                modelClass.__defineSetter__(entityField, function(value){
-                   
-                    if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" ){
-                        modelClass.__state = "modified";
-                        modelClass.__dirtyFields.push(entityField);
-                         modelClass.__context.__track(modelClass);
-                    }
-                    this["__proto__"]["_" + entityField] = value;
-                });
-
-                // Getter
-                modelClass.__defineGetter__(entityField, function(){
-
-                    var ent = tools.findEntity(entityField, this.__context);
-                    if(!ent){
-                        var parentEntity = tools.findEntity(this.__name, this.__context);
-                        if(parentEntity){
-                            ent = tools.findEntity(parentEntity.__entity[entityField].foreignTable, this.__context);
-                            if(!ent){
-                                return  `Error - Entity ${parentEntity.__entity[entityField].foreignTable} not found. Please check your context for proper name.`
-                            }
+                
+                Object.defineProperty(modelClass, entityField, {
+                    set: function(value) {
+                        if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" ){
+                            modelClass.__state = "modified";
+                            modelClass.__dirtyFields.push(entityField);
+                             modelClass.__context.__track(modelClass);
                         }
-                        else{
-                            return  `Error - Entity ${parentEntity} not found. Please check your context for proper name.`
-                        }
-                    }
-
-                    
-                    if(currentEntity[entityField].relationshipType === "belongsTo"){
-                        if(currentEntity[entityField].lazyLoading){
-                             // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
-                        
-                            var priKey = tools.getPrimaryKeyObject(ent.__entity);
-
-                            //var idValue = currentEntity[entityField].foreignKey;
-                            var currentValue = this.__proto__[`_${entityField}`];
-                            //var modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
-                            this[entityField] = currentValue;
-                        }
-                        else{
-                            return this["__proto__"]["_" + entityField];
-                        }
-                    }
-                    else{
-                        // user.tags = gets all tags related to user
-                        // tag.users = get all users related to tags
-                        if(currentEntity[entityField].lazyLoading){
-                            var priKey = tools.getPrimaryKeyObject(this.__entity);
-                            var entityName = currentEntity[entityField].foreignTable === undefined ? entityField : currentEntity[entityField].foreignTable;
-                            var tableName = "";
-                            if(entityName){
-                                switch(currentEntity[entityField].type){
-                                    // TODO: move the SQL generation part to the SQL builder so that we can later on use many diffrent types of SQL databases. 
-                                    case "hasManyThrough" :
-                                        try{
-                                            var joiningEntity = this.__context[tools.capitalize(entityName)];
-                                            var entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
-                                            var thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
-                                            var firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
-                                            var secondJoiningID = joiningEntity.__entity[entityField].foreignTable;
-                                            if(firstJoiningID && secondJoiningID )
-                                            {
-                                                var modelValue = ent.include(`p => p.${entityFieldJoinName}.select(j => j.${joiningEntity.__entity[this.__entity.__name].foreignKey})`).include(`p =>p.${this.__entity.__name}`).where(`r =>r.${this.__entity.__name}.${priKey} = ${this[priKey]}`).toList();
-                                                // var modelQuery = `select ${selectParameter} from ${this.__entity.__name} INNER JOIN ${entityName} ON ${this.__entity.__name}.${priKey} = ${entityName}.${firstJoiningID} INNER JOIN ${entityField} ON ${entityField}.${joinTablePriKey} = ${entityName}.${secondJoiningID} WHERE ${this.__entity.__name}.${priKey} = ${ this[priKey]}`;
-                                                // var modelValue = ent.raw(modelQuery).toList();
-                                                this[entityField] = modelValue;
-                                            }
-                                            else{
-                                                return "Joining table must declaire joining table names"
-                                            }
-                                        }
-                                        catch(error){
-                                            return error;
-                                        }
-                                    /*
-                                    select * from User 
-                                    INNER JOIN Tagging ON User.id = Tagging.user_id
-                                    INNER JOIN Tag ON Tag.id = Tagging.tag_id
-                                    WHERE Tagging.user_id = 13
-                                    */
-                                    break;
-                                    case "hasOne" : 
-                                        var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
-                                        if(entityName){
-                                            tableName = entityName.foreignKey;
-                                        }
-                                        else{
-                                            return `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
-                                        }
-
-                                        //var jj = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).single();
-                                        var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).single();
-                                        this[entityField] = modelValue;
-                                    break;
-                                    case "hasMany" : 
-                                        var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
-                                        if(entityName){
-                                            tableName = entityName.foreignKey;
-                                        }
-                                        else{
-                                            return  `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
-                                        }
-                                        //var modelValue = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).toList();
-                                        var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).toList();
-                                        this[entityField] = modelValue;
-                                    break;
+                        this["__proto__"]["_" + entityField] = value;
+                    },
+                    get : function(){
+                        var ent = tools.findEntity(entityField, this.__context);
+                        if(!ent){
+                            var parentEntity = tools.findEntity(this.__name, this.__context);
+                            if(parentEntity){
+                                ent = tools.findEntity(parentEntity.__entity[entityField].foreignTable, this.__context);
+                                if(!ent){
+                                    return  `Error - Entity ${parentEntity.__entity[entityField].foreignTable} not found. Please check your context for proper name.`
                                 }
                             }
                             else{
-                                return  "Entity name must be defined"
+                                return  `Error - Entity ${parentEntity} not found. Please check your context for proper name.`
+                            }
+                        }
+    
+                        
+                        if(currentEntity[entityField].relationshipType === "belongsTo"){
+                            if(currentEntity[entityField].lazyLoading){
+                                 // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
+                            
+                                 var name = currentEntity[entityField].foreignKey;
+                                 var priKey = tools.getPrimaryKeyObject(ent.__entity);
+     
+                                 //var idValue = currentEntity[entityField].foreignKey;
+                                 var currentValue = this.__proto__[`_${name}`];
+                                 var val = this["__proto__"]["_"+entityField];
+                                 var modelValue = null;
+                                 if(!val){
+                                    modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
+                                     
+                                 }
+                                 else{
+                                    modelValue = val;
+                                 }
+     
+                                 this[entityField] = modelValue;
+                            }
+                            else{
+                                return this["__proto__"]["_" + entityField];
                             }
                         }
                         else{
-                            return this["__proto__"]["_" + entityField];
+                            // user.tags = gets all tags related to user
+                            // tag.users = get all users related to tags
+                            if(currentEntity[entityField].lazyLoading){
+                                var priKey = tools.getPrimaryKeyObject(this.__entity);
+                                var entityName = currentEntity[entityField].foreignTable === undefined ? entityField : currentEntity[entityField].foreignTable;
+                                var tableName = "";
+                                if(entityName){
+                                    switch(currentEntity[entityField].type){
+                                        // TODO: move the SQL generation part to the SQL builder so that we can later on use many diffrent types of SQL databases. 
+                                        case "hasManyThrough" :
+                                            try{
+                                                var joiningEntity = this.__context[tools.capitalize(entityName)];
+                                                var entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
+                                                var thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
+                                                var firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
+                                                var secondJoiningID = joiningEntity.__entity[entityField].foreignTable;
+                                                if(firstJoiningID && secondJoiningID )
+                                                {
+                                                    var modelValue = ent.include(`p => p.${entityFieldJoinName}.select(j => j.${joiningEntity.__entity[this.__entity.__name].foreignKey})`).include(`p =>p.${this.__entity.__name}`).where(`r =>r.${this.__entity.__name}.${priKey} = ${this[priKey]}`).toList();
+                                                    // var modelQuery = `select ${selectParameter} from ${this.__entity.__name} INNER JOIN ${entityName} ON ${this.__entity.__name}.${priKey} = ${entityName}.${firstJoiningID} INNER JOIN ${entityField} ON ${entityField}.${joinTablePriKey} = ${entityName}.${secondJoiningID} WHERE ${this.__entity.__name}.${priKey} = ${ this[priKey]}`;
+                                                    // var modelValue = ent.raw(modelQuery).toList();
+                                                    this[entityField] = modelValue;
+                                                }
+                                                else{
+                                                    return "Joining table must declaire joining table names"
+                                                }
+                                            }
+                                            catch(error){
+                                                return error;
+                                            }
+                                        /*
+                                        select * from User 
+                                        INNER JOIN Tagging ON User.id = Tagging.user_id
+                                        INNER JOIN Tag ON Tag.id = Tagging.tag_id
+                                        WHERE Tagging.user_id = 13
+                                        */
+                                        break;
+                                        case "hasOne" : 
+                                            var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
+                                            if(entityName){
+                                                tableName = entityName.foreignKey;
+                                            }
+                                            else{
+                                                return `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
+                                            }
+    
+                                            //var jj = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).single();
+                                            var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).single();
+                                            this[entityField] = modelValue;
+                                        break;
+                                        case "hasMany" : 
+                                            var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
+                                            if(entityName){
+                                                tableName = entityName.foreignKey;
+                                            }
+                                            else{
+                                                return  `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
+                                            }
+                                            //var modelValue = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).toList();
+                                            var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).toList();
+                                            this[entityField] = modelValue;
+                                        break;
+                                    }
+                                }
+                                else{
+                                    return  "Entity name must be defined"
+                                }
+                            }
+                            else{
+                                return this["__proto__"]["_" + entityField];
+                            }
                         }
+                        
+                        
+                        return this["__proto__"]["_" + entityField];
                     }
-                    
-                    
-                    return this["__proto__"]["_" + entityField];
-                //return console.log("make db call to get value", entityField);
-                });
+                  });
 
                 if(currentEntity[entityField].relationshipType === "belongsTo"){
                     // check if entity has a value if so then return that value
