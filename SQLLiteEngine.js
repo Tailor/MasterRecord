@@ -1,4 +1,4 @@
-// Version 0.0.12
+// Version 0.0.13
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -423,13 +423,22 @@ class SQLLiteEngine {
         return "";
     }
 
-    // return a list of entity names and skip foreign keys and underscore.
-    getEntityList(entity){
-        var entitiesList = [];
-        var $that = this;
-        for (var ent in entity) {
-                if(!ent.startsWith("_")){
-                    if(!entity[ent].foreignKey){
+ // return a list of entity names and skip foreign keys and underscore.
+ getEntityList(entity){
+    var entitiesList = [];
+    var $that = this;
+    for (var ent in entity) {
+            if(!ent.startsWith("_")){
+                if(!entity[ent].foreignKey){
+                    if(entity[ent].relationshipTable){
+                        if($that.chechUnsupportedWords(entity[ent].relationshipTable)){
+                            entitiesList.push(`'${entity[ent].relationshipTable}'`);
+                        }
+                        else{
+                            entitiesList.push(entity[ent].relationshipTable);
+                        }
+                    }
+                    else{
                         if($that.chechUnsupportedWords(ent)){
                             entitiesList.push(`'${ent}'`);
                         }
@@ -437,16 +446,26 @@ class SQLLiteEngine {
                             entitiesList.push(ent);
                         }
                     }
-                    else{
-                        if(entity[ent].type === 'belongsTo'){
-                            entitiesList.push(`${entity[ent].foreignKey}`);
+                }
+                else{
+                    
+                    if(entity[ent].relationshipType === "belongsTo"){
+                        var name = entity[ent].foreignKey;
+                        if($that.chechUnsupportedWords(name)){
+                            entitiesList.push(`'${name}'`);
+                            //entitiesList.push(`'${ent}'`);
+                        }
+                        else{
+                            entitiesList.push(name);
+                            //entitiesList.push(ent);
                         }
                     }
+                    
                 }
             }
-        return entitiesList
-    }
-
+        }
+    return entitiesList
+}
     chechUnsupportedWords(word){
         for (var item in this.unsupportedWords) {
             var text = this.unsupportedWords[item];
