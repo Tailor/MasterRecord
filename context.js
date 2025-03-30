@@ -1,4 +1,4 @@
-// Version 0.0.7
+// Version 0.0.8
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -91,6 +91,9 @@ class context {
 
     __findSettings(root, rootFolderLocation, envType){
 
+        if(envType === undefined){
+            envType = "development";
+        }
         var rootFolder = `${root}/${rootFolderLocation}`;
         var search = `${rootFolder}/**/*env.${envType}.json`;
         var files = globSearch.sync(search, rootFolder);
