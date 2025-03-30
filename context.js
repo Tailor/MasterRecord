@@ -1,4 +1,4 @@
-// Version 0.0.8
+// Version 0.0.9
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -279,8 +279,11 @@ class context {
         
         catch(error){
             this.__clearErrorHandler();
-            //this._SQLEngine.errorTransaction();
+            
             console.log("error", error);
+            if(this.isSQLite){
+                this._SQLEngine.errorTransaction();
+            }
             this.__clearTracked();
             throw error;
         }

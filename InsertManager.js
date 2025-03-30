@@ -1,5 +1,5 @@
 
-// version 0.0.5
+// version 0.0.6
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -32,7 +32,16 @@ class InsertManager {
                     var query = `select * from ${currentModel.__entity.__name} where ${primaryKey} = ${ SQL.id }`;
                     var jj = this.__queryObject.raw(query);
                     var getQueryModel = this._SQLEngine.get(jj, currentModel.__entity, currentModel.__context );
-                    currentModel[primaryKey] = getQueryModel[0][primaryKey];
+                    var idVal;
+
+                    if(!getQueryModel[0]){
+                        idVal = getQueryModel[primaryKey]
+                    }
+                    else{
+                        idVal =  getQueryModel[0][primaryKey];
+                    }
+                   
+                    currentModel[primaryKey] = idVal;
                 }
 
                 const modelKeys = Object.keys(currentModel);
