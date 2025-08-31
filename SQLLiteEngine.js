@@ -1,4 +1,4 @@
-// Version 0.0.13
+// Version 0.0.17
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -263,7 +263,8 @@ class SQLLiteEngine {
 
             var item = whereEntity[query.parentName].query;
             for (let exp in item.expressions) {
-                var field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                var field = item.expressions[exp].field.toLowerCase();
+                // var field = tools.capitalizeFirstLetter(item.expressions[exp].field); removed this because it was causing issues not sure why we added it in the firstplace
                 if(mainQuery[field]){
                     if(mainQuery[field].isNavigational){
                         entity = $that.getEntity(field, query.entityMap);
@@ -499,7 +500,8 @@ class SQLLiteEngine {
             switch(model.__entity[dirtyFields[column]].type){
                  case "integer" :
                     //model.__entity[dirtyFields[column]].skipGetFunction = true;
-                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
+                    var columneValue = model[`_${dirtyFields[column]}`];
+                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${columneValue},`;
                     //model.__entity[dirtyFields[column]].skipGetFunction = false;
                 break;
                 case "string" :
@@ -529,7 +531,14 @@ class SQLLiteEngine {
                     argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
             }
         }
-        return argument.replace(/,\s*$/, "");
+
+        if(argument){
+            return argument.replace(/,\s*$/, "");
+        }
+        else{
+            return -1;
+        }
+       
     }
 
     
@@ -556,15 +565,17 @@ class SQLLiteEngine {
 
                 if((fieldColumn !== undefined && fieldColumn !== null && fieldColumn !== "" ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
-                        case "belongsTo" :
-                            column = modelEntity[column].foreignKey === undefined ? column : modelEntity[column].foreignKey;
-                        break;
                         case "string" : 
                             fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;
                         break;
                         case "time" : 
                             fieldColumn = fields[column];
                         break;
+                    }
+
+                    var relationship = modelEntity[column].relationshipType
+                    if(relationship === "belongsTo"){
+                        column = modelEntity[column].foreignKey
                     }
 
                     columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
@@ -602,7 +613,7 @@ class SQLLiteEngine {
         }
     else{
         console.log("warning - Field being passed is not a string");
-        throw "warning - Field being passed is not a string";
+        throw "error warning - Field being passed is not a string";
     }
     }
 

@@ -1,4 +1,5 @@
-// version : 0.0.1
+// version : 0.0.3
+
 var tools =  require('masterrecord/Tools');
 var util = require('util');
 
@@ -347,11 +348,12 @@ class SQLLiteEngine {
 
             switch(type){
                 case "belongsTo" :
-                    var foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
                     argument = `${foreignKey} = ${model[dirtyFields[column]]},`;
                 break;
                 case "integer" :
-                    argument = argument === null ? `${dirtyFields[column]} = ${model[dirtyFields[column]]},` : `${argument} ${dirtyFields[column]} = ${model[dirtyFields[column]]},`;
+                    const columneValue = model[`_${dirtyFields[column]}`];
+                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${columneValue},`;
                 break;
                 case "string" :
                     argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
@@ -363,7 +365,12 @@ class SQLLiteEngine {
                     argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
             }
         }
-        return argument.replace(/,\s*$/, "");
+       if(argument){
+            return argument.replace(/,\s*$/, "");
+        }
+        else{
+            return -1;
+        }
     }
 
     boolType(type){

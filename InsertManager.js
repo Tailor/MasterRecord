@@ -1,5 +1,5 @@
 
-// version 0.0.6
+// version 0.0.9
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -18,14 +18,14 @@ class InsertManager {
 
     runQueries(currentModel){
         var $that = this;
-        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel.__entity);
+        var cleanCurrentModel = tools.clearAllProto(currentModel);
         this.validateEntity(cleanCurrentModel, currentModel, currentModel.__entity);
         if(this._errorModel.isValid){
             
                 var modelEntity = currentModel.__entity;
                 // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
                 currentModel = this.belongsToInsert(currentModel, modelEntity);
-                var SQL = this._SQLEngine.insert(currentModel);
+                var SQL = this._SQLEngine.insert(cleanCurrentModel);
                 var primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
                 // return all fields that have auto and dont have a value to the current model on insert
                 if(currentModel.__entity[primaryKey].auto === true){
@@ -44,16 +44,22 @@ class InsertManager {
                     currentModel[primaryKey] = idVal;
                 }
 
+                const proto = Object.getPrototypeOf(currentModel);
+                const props = Object.getOwnPropertyNames(proto);
+                const cleanPropList = tools.returnEntityList(props, modelEntity);
                 const modelKeys = Object.keys(currentModel);
+                const mergedArray =  [...new Set(modelKeys.concat(cleanPropList))];
                 // loop through model properties
-                for (const property of modelKeys) {
+                for (const property of mergedArray) {
                     var propertyModel = currentModel[property];
                     var entityProperty = modelEntity[property] ? modelEntity[property] : {};
                     if(entityProperty.type === "hasOne"){
                         // make sure property model is an object not a primary data type like number or string
-                        if(typeof(propertyModel) === "object"){
+                     
+                        if(typeof(propertyModel) === "object" || typeof(propertyModel) === "function" ){
                             // check if model has its own entity
                             if(modelEntity){
+                                // check if property has a value because we dont want this to run on every insert if nothing was added
                                 propertyModel.__entity = tools.getEntity(property, $that._allEntities);
                                 propertyModel[currentModel.__entity.__name] = SQL.id;
                                 $that.runQueries(propertyModel);
@@ -65,7 +71,7 @@ class InsertManager {
                     }
                     
                     if(entityProperty.type === "hasMany"){
-                        if(Array.isArray(propertyModel)){
+                        if(tools.checkIfArrayLike(propertyModel)){
                             const propertyKeys = Object.keys(propertyModel);
                             for (const propertykey of propertyKeys) {
                                 if(propertyModel[propertykey]){
@@ -83,10 +89,14 @@ class InsertManager {
                 }
         }
         else{
-            var name = currentModel.__entity.__name;
-            console.log(`entity ${name} not valid`);
+            var messages = this._errorModel.errors;
+            const combinedError = messages.join('; and ');
+            throw combinedError;
+
         }
     }
+
+    
 
     // will insert belongs to row first and return the id so that next call can be make correctly
     belongsToInsert(currentModel, modelEntity){
@@ -98,7 +108,7 @@ class InsertManager {
                 // check if model is a an object. If so insert the child first then the parent. 
                 if(typeof newPropertyModel === 'object'){
                     newPropertyModel.__entity = tools.getEntity(entity, $that._allEntities);
-                    var propertyCleanCurrentModel = tools.removePrimarykeyandVirtual(newPropertyModel, newPropertyModel.__entity);
+                    var propertyCleanCurrentModel = tools.clearAllProto(newPropertyModel);
                     this.validateEntity(propertyCleanCurrentModel, newPropertyModel, newPropertyModel.__entity);
                     var propertySQL = this._SQLEngine.insert(newPropertyModel);
                     currentModel[foreignKey] = propertySQL.id; 
@@ -111,7 +121,8 @@ class InsertManager {
             // update the currentModel.
         return currentModel;
     }
-    // validate entity for nullable fields
+
+    // validate entity for nullable fields and if the entity has any values at all
     validateEntity(currentModel, currentRealModel, entityModel){
         for(var entity in entityModel) {
             var currentEntity = entityModel[entity];
@@ -124,7 +135,7 @@ class InsertManager {
                     }
                 }
             
-                // SKIP belongs too
+                // SKIP belongs too -----   // call sets for correct data for DB
                 if(currentEntity.type !== "belongsTo" && currentEntity.type !== "hasMany"){
                     if(currentEntity.relationshipType !== "belongsTo"){
                         // primary is always null in an insert so validation insert must be null
@@ -135,11 +146,13 @@ class InsertManager {
                                     this._errorModel.isValid = false;
                                     var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
                                     this._errorModel.errors.push(errorMessage);
-                                    throw errorMessage;
+                                    //throw errorMessage;
                                 }
                             }
                             else{
-                                currentRealModel[entity] = currentEntity.set(currentModel[entity]);
+                                var realData = currentEntity.set(currentModel[entity]);
+                                currentRealModel[entity] = realData;
+                                currentModel[entity] = realData;
                             }
                         }
                     }

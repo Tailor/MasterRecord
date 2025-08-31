@@ -1,4 +1,4 @@
-// Version 0.0.9
+// Version 0.0.12
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -54,6 +54,7 @@ class context {
         }
         catch (e) {
             console.log("error SQL", e);
+            throw error(e)
         }
     }
 
@@ -126,30 +127,36 @@ class context {
     }
 
     useSqlite(rootFolderLocation){
-        this.isSQLite = true;
-        var root =  process.cwd();
-        var envType = this.__environment;
-        var contextName = this.__name;
-        var file = this.__findSettings(root, rootFolderLocation, envType);
-        var settings = require(file.file);
-        var options = settings[contextName];
-        
-        if(options === undefined){
-            console.log("settings missing context name settings");
-            throw error("settings missing context name settings");
-        }
+        try{
+            this.isSQLite = true;
+            var root =  process.cwd();
+            var envType = this.__environment;
+            var contextName = this.__name;
+            var file = this.__findSettings(root, rootFolderLocation, envType);
+            var settings = require(file.file);
+            var options = settings[contextName];
+            
+            if(options === undefined){
+                console.log("settings missing context name settings");
+                throw error("settings missing context name settings");
+            }
 
-        this.validateSQLiteOptions(options);
-        options.completeConnection = `${file.rootFolder}${options.connection}`;
-        var dbDirectory = options.completeConnection.substr(0, options.completeConnection.lastIndexOf("\/"));
-        
-        if (!fs.existsSync(dbDirectory)){
-            fs.mkdirSync(dbDirectory);
-        }
+            this.validateSQLiteOptions(options);
+            options.completeConnection = `${file.rootFolder}${options.connection}`;
+            var dbDirectory = options.completeConnection.substr(0, options.completeConnection.lastIndexOf("\/"));
+            
+            if (!fs.existsSync(dbDirectory)){
+                fs.mkdirSync(dbDirectory);
+            }
 
-        this.db = this.__SQLiteInit(options,  "better-sqlite3");
-        this._SQLEngine.setDB(this.db, "better-sqlite3");
-        return this;
+            this.db = this.__SQLiteInit(options,  "better-sqlite3");
+            this._SQLEngine.setDB(this.db, "better-sqlite3");
+            return this;
+        }
+        catch(err){
+            console.log("error:",err );
+            throw error(err);
+        }
     }
 
     validateSQLiteOptions(options){
@@ -213,12 +220,18 @@ class context {
                                 break;
                                 case "modified":
                                     if(currentModel.__dirtyFields.length > 0){
-                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity); 
                                         // build columns equal to value string 
                                         var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
-                                        var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
-                                        this._SQLEngine.update(sqlUpdate);
+                                        if(argu !== -1 ){
+                                            var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                            var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                            this._SQLEngine.update(sqlUpdate);
+                                        }
+                                        else{
+                                            console.log("Nothing has been tracked, modified, created or added");
+                                        }
+                                        
                                     }
                                     else{
                                         console.log("Tracked entity modified with no values being changed");
@@ -251,9 +264,15 @@ class context {
                                         var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
                                         // build columns equal to value string 
                                         var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
-                                        var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                                        var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
-                                        this._SQLEngine.update(sqlUpdate);
+                                        if(argu !== -1 ){
+                                            var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                            var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                            this._SQLEngine.update(sqlUpdate);
+                                        }
+                                        else{
+                                            console.log("Nothing has been tracked, modified, created or added");
+                                        }
+                                       
                                     }
                                     else{
                                         console.log("Tracked entity modified with no values being changed");

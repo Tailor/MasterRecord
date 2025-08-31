@@ -1,5 +1,35 @@
-// Version 0.0.3
+// Version 0.0.4
 class Tools{
+
+    static checkIfArrayLike(obj) {
+        if (Array.isArray(obj)) {
+          return true;
+        }
+      
+        if (
+          obj &&
+          typeof obj === 'object' &&
+          Object.keys(obj).some(k => !isNaN(k)) &&
+          '0' in obj
+        ) {
+          return true;
+        }
+      
+        return -1;
+    }
+
+    static returnEntityList(list, entityList ){
+        var newList = [];
+        for(var max = 0; max < list.length; max++ ){
+            var ent = entityList[list[max]];
+            if(ent){
+                if(ent.relationshipType === "hasMany" || ent.relationshipType === "hasOne"){
+                    newList.push(ent.name);
+                } 
+            }
+        }
+        return newList;
+    }
 
     static findEntity(name, entityList){
         return entityList[name];
@@ -13,25 +43,6 @@ class Tools{
             stringArray.pop();
         }
         return stringArray.join(type);
-    }
-
-    static removePrimarykeyandVirtual(currentModel, modelEntity){
-        var newCurrentModel = Object.create(currentModel);
-
-        for(var entity in modelEntity) {
-            var currentEntity = modelEntity[entity];
-            if (modelEntity.hasOwnProperty(entity)) {
-                if(currentEntity.primary === true){
-                    delete newCurrentModel[`_${entity}`];
-                }
-            }
-            if(currentEntity.virtual === true){
-                // skip it from the insert
-                delete newCurrentModel[`_${entity}`];
-            }
-
-        }
-        return newCurrentModel;
     }
 
     static getPrimaryKeyObject(model){
@@ -73,20 +84,48 @@ class Tools{
     }
 
     static clearAllProto(proto){
+       
+        var newproto = {}
         if(proto.__proto__ ){
-            proto.__proto__ = null;
             for (var key in proto) {
                 if(!key.startsWith("_")){
                     var typeObj = typeof(proto[key]);
+                    newproto[key] = proto[key];
                     if(typeObj === "object"){
-                        this.clearAllProto(proto[key]);
+                        proto[key] = this.clearAllProto(proto[key]);
                     }
-                }else{
-                    throw "Cannot add relationship entity model only basic models"
                 }
             }
         }
 
+         newproto["__name"] = proto["__name"];
+         newproto["__state"] = proto["__state"];
+         newproto["__entity"] = proto["__entity"];
+         newproto["__context"] = proto["__context"];
+         newproto["__dirtyFields"] = proto["__dirtyFields"];
+         
+         newproto.__proto__ = null;
+        return newproto;
+
+    }
+
+    static removePrimarykeyandVirtual(currentModel, modelEntity){
+        var newCurrentModel = Object.create(currentModel);
+
+        for(var entity in modelEntity) {
+            var currentEntity = modelEntity[entity];
+            if (modelEntity.hasOwnProperty(entity)) {
+                if(currentEntity.primary === true){
+                    delete newCurrentModel[`_${entity}`];
+                }
+            }
+            if(currentEntity.virtual === true){
+                // skip it from the insert
+                delete newCurrentModel[`_${entity}`];
+            }
+
+        }
+        return newCurrentModel;
     }
 
     static getEntity(name, modelEntity){

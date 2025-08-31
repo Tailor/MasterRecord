@@ -1,5 +1,5 @@
 
-// version 0.0.10
+// version 0.0.11
 var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
@@ -249,8 +249,6 @@ class queryMethods{
       // ------------------------------- FUNCTIONS THAT UPDATE SQL START FROM HERE  -----------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------------------------------------
     add(entityValue){
-        // This will call context API to REMOVE entity to update list
-        tools.clearAllProto(entityValue);
         entityValue.__state = "insert";
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
