@@ -1,5 +1,5 @@
 
-// version 0.0.11
+// version 0.0.13
 var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
@@ -209,6 +209,12 @@ class queryMethods{
     }
 
     single(){
+        // If no clauses were used before single(), seed defaults so SQL is valid
+        if(this.__queryObject.script.entityMap.length === 0){
+            this.__queryObject.skipClause(this.__entity.__name);
+            this.__queryObject.script.take = 1;
+        }
+
         if(this.__context.isSQLite){
             var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             var sing = this.__singleEntityBuilder(entityValue);
@@ -228,6 +234,9 @@ class queryMethods{
         if(this.__context.isSQLite){
             if(this.__queryObject.script.entityMap.length === 0){
                 this.__queryObject.skipClause( this.__entity.__name);
+                if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
+                    this.__queryObject.script.take = 1000;
+                }
             }
             var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             var toLi = this.__multipleEntityBuilder(entityValue);
@@ -238,6 +247,9 @@ class queryMethods{
         if(this.__context.isMySQL){
             if(this.__queryObject.script.entityMap.length === 0){
                 this.__queryObject.skipClause( this.__entity.__name);
+                if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
+                    this.__queryObject.script.take = 1000;
+                }
             }
             var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             var toLi = this.__multipleEntityBuilder(entityValue);

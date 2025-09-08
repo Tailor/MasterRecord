@@ -1,4 +1,4 @@
-// Version 0.0.17
+// Version 0.0.19
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -496,10 +496,19 @@ class SQLLiteEngine {
 
         for (var column in dirtyFields) {
 
+            var type = model.__entity[dirtyFields[column]].type;
+
+            if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){
+                type = "belongsTo";
+            }
             // TODO Boolean value is a string with a letter
-            switch(model.__entity[dirtyFields[column]].type){
+            switch(type){
+                case "belongsTo" :
+                    const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    argument = `${foreignKey} = ${model[dirtyFields[column]]},`;
+                break;
                  case "integer" :
-                    //model.__entity[dirtyFields[column]].skipGetFunction = true;
+                     //model.__entity[dirtyFields[column]].skipGetFunction = true;
                     var columneValue = model[`_${dirtyFields[column]}`];
                     argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${columneValue},`;
                     //model.__entity[dirtyFields[column]].skipGetFunction = false;
@@ -563,7 +572,7 @@ class SQLLiteEngine {
                 // check if get function is avaliable if so use that
                 fieldColumn = fields[column];
 
-                if((fieldColumn !== undefined && fieldColumn !== null && fieldColumn !== "" ) && typeof(fieldColumn) !== "object"){
+                if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
                         case "string" : 
                             fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;

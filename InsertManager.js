@@ -1,5 +1,5 @@
 
-// version 0.0.9
+// version 0.0.10
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -129,7 +129,7 @@ class InsertManager {
             if (entityModel.hasOwnProperty(entity)) {
                 // check if there is a default value
                 if(currentEntity.default){
-                    if(!currentRealModel[entity]){
+                    if(currentRealModel[entity] === undefined || currentRealModel[entity] === null){
                         // if its empty add the default value
                         currentRealModel[entity] = currentEntity.default;
                     }
@@ -142,7 +142,7 @@ class InsertManager {
                         if(currentEntity.nullable === false && !currentEntity.primary){
                             // if it doesnt have a get method then call error
                             if(currentEntity.set === undefined){
-                                if(currentModel[entity] === undefined || currentModel[entity] === null || currentModel[entity] === "" ){
+                                if(currentModel[entity] === undefined || currentModel[entity] === null ){
                                     this._errorModel.isValid = false;
                                     var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
                                     this._errorModel.errors.push(errorMessage);

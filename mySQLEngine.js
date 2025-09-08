@@ -407,11 +407,9 @@ class SQLLiteEngine {
                 // call the get method if avlable
                 var fieldColumn = "";
                 // check if get function is avaliable if so use that
-                fieldColumn = fields[column];
-                
-                
+                fieldColumn = fields[column];       
 
-                if((fieldColumn !== undefined && fieldColumn !== null && fieldColumn !== "" ) && typeof(fieldColumn) !== "object"){
+                if((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
                         case "string" : 
                             fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;

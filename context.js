@@ -1,4 +1,4 @@
-// Version 0.0.12
+// Version 0.0.13
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -325,6 +325,9 @@ class context {
         var add = true;
         for (var mod in this.__trackedEntities) {
             var id = this.__trackedEntities[mod].__ID;
+            if(id === undefined){
+                id = Math.floor((Math.random() * 100000) + 1);
+            }
             if(id === model.__ID){
                 add = false;
             }
