@@ -1,4 +1,4 @@
-// version 0.0.5
+// version 0.0.6
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -388,6 +388,12 @@ class queryScript{
     }
 
     getEntity(str){
+        // Prefer parsing the lambda parameter (e.g., 'uc' in 'uc => uc.user_id == $$')
+        const m = str.match(/^\s*([\w\d$_]+?)\s*=>/);
+        if(m && m[1]){
+            return m[1];
+        }
+        // Fallback to previous behavior: first non-space char
         var clean = str.replace(/\s/g, '');  
         return clean.substring(0, 1);
     }
