@@ -1,4 +1,4 @@
-// version 0.0.2
+// version 0.0.3
 var tools =  require('./Tools');
 class DeleteManager{
     constructor(sqlEngine, entities){
@@ -23,7 +23,7 @@ class DeleteManager{
             // loop though all entity properties
             for (const property of entityKeys) {
                 // cascade delete
-                if(currentModel.__entity[property].type === "hasOne" || currentModel.__entity[property].type === "hasMany"){
+                if(currentModel.__entity[property].type === "hasOne" || currentModel.__entity[property].type === "hasMany" || currentModel.__entity[property].type === "hasManyThrough"){
                     var curModel = currentModel[property];
                     if(curModel === null){
                      // check if state is nullable - if so and nothing comes back dont call cascadeDelete
@@ -46,7 +46,7 @@ class DeleteManager{
                 // loop though all entity properties
                 for (const property of entityKeys) {
                     // cascade delete
-                    if(currentModel[i].__entity[property].type === "hasOne" || currentModel[i].__entity[property].type === "hasMany"){
+                    if(currentModel[i].__entity[property].type === "hasOne" || currentModel[i].__entity[property].type === "hasMany" || currentModel[i].__entity[property].type === "hasManyThrough"){
                         $that.cascadeDelete( currentModel[i][property]);
                     }
                 }

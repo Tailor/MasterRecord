@@ -1,5 +1,5 @@
 
-// version 0.0.10
+// version 0.0.11
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -76,6 +76,22 @@ class InsertManager {
                             for (const propertykey of propertyKeys) {
                                 if(propertyModel[propertykey]){
                                     propertyModel[propertykey].__entity = tools.getEntity(property, $that._allEntities);
+                                    propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
+                                    $that.runQueries(propertyModel[propertykey]);
+                                }
+                            }
+                        }
+                        else{
+                            throw `Relationship "${entityProperty.name}" must be an array`;
+                        }
+                    }
+
+                    if(entityProperty.type === "hasManyThrough"){
+                        if(tools.checkIfArrayLike(propertyModel)){
+                            const propertyKeys = Object.keys(propertyModel);
+                            for (const propertykey of propertyKeys) {
+                                if(propertyModel[propertykey]){
+                                    propertyModel[propertykey].__entity = tools.getEntity(entityProperty.foreignTable, $that._allEntities);
                                     propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
                                     $that.runQueries(propertyModel[propertykey]);
                                 }
