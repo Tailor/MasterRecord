@@ -1,5 +1,5 @@
 
-// version 0.0.11
+// version  0.0.12
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -18,6 +18,11 @@ class InsertManager {
 
     runQueries(currentModel){
         var $that = this;
+        // Reset validation state for this operation to avoid stale errors
+        if(this._errorModel){
+            this._errorModel.isValid = true;
+            this._errorModel.errors = [];
+        }
         var cleanCurrentModel = tools.clearAllProto(currentModel);
         this.validateEntity(cleanCurrentModel, currentModel, currentModel.__entity);
         if(this._errorModel.isValid){
@@ -75,7 +80,21 @@ class InsertManager {
                             const propertyKeys = Object.keys(propertyModel);
                             for (const propertykey of propertyKeys) {
                                 if(propertyModel[propertykey]){
-                                    propertyModel[propertykey].__entity = tools.getEntity(property, $that._allEntities);
+                                    let targetName = entityProperty.foreignTable || property;
+                                    let resolved = tools.getEntity(targetName, $that._allEntities) 
+                                                    || tools.getEntity(tools.capitalize(targetName), $that._allEntities)
+                                                    || tools.getEntity(property, $that._allEntities);
+                                    if(!resolved){
+                                        throw `Relationship entity for '${property}' could not be resolved. Expected '${targetName}'.`;
+                                    }
+                                    // Coerce primitive into object with primary key if user passed an id
+                                    if(typeof propertyModel[propertykey] !== "object" || propertyModel[propertykey] === null){
+                                        const childPrimaryKey = tools.getPrimaryKeyObject(resolved);
+                                        const primitiveValue = propertyModel[propertykey];
+                                        propertyModel[propertykey] = {};
+                                        propertyModel[propertykey][childPrimaryKey] = primitiveValue;
+                                    }
+                                    propertyModel[propertykey].__entity = resolved;
                                     propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
                                     $that.runQueries(propertyModel[propertykey]);
                                 }
@@ -91,7 +110,20 @@ class InsertManager {
                             const propertyKeys = Object.keys(propertyModel);
                             for (const propertykey of propertyKeys) {
                                 if(propertyModel[propertykey]){
-                                    propertyModel[propertykey].__entity = tools.getEntity(entityProperty.foreignTable, $that._allEntities);
+                                    let targetName = entityProperty.foreignTable || property;
+                                    let resolved = tools.getEntity(targetName, $that._allEntities) 
+                                                    || tools.getEntity(tools.capitalize(targetName), $that._allEntities)
+                                                    || tools.getEntity(property, $that._allEntities);
+                                    if(!resolved){
+                                        throw `Relationship entity for '${property}' could not be resolved. Expected '${targetName}'.`;
+                                    }
+                                    if(typeof propertyModel[propertykey] !== "object" || propertyModel[propertykey] === null){
+                                        const childPrimaryKey = tools.getPrimaryKeyObject(resolved);
+                                        const primitiveValue = propertyModel[propertykey];
+                                        propertyModel[propertykey] = {};
+                                        propertyModel[propertykey][childPrimaryKey] = primitiveValue;
+                                    }
+                                    propertyModel[propertykey].__entity = resolved;
                                     propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
                                     $that.runQueries(propertyModel[propertykey]);
                                 }
@@ -158,7 +190,10 @@ class InsertManager {
                         if(currentEntity.nullable === false && !currentEntity.primary){
                             // if it doesnt have a get method then call error
                             if(currentEntity.set === undefined){
-                                if(currentModel[entity] === undefined || currentModel[entity] === null ){
+                                const realVal = currentRealModel[entity];
+                                const cleanVal = currentModel[entity];
+                                const hasValue = (realVal !== undefined && realVal !== null) || (cleanVal !== undefined && cleanVal !== null);
+                                if(!hasValue){
                                     this._errorModel.isValid = false;
                                     var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
                                     this._errorModel.errors.push(errorMessage);

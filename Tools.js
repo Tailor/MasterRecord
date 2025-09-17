@@ -1,4 +1,4 @@
-// Version 0.0.4
+// Version 0.0.5
 class Tools{
 
     static checkIfArrayLike(obj) {
@@ -87,13 +87,19 @@ class Tools{
        
         var newproto = {}
         if(proto.__proto__ ){
-            for (var key in proto) {
-                if(!key.startsWith("_")){
-                    var typeObj = typeof(proto[key]);
-                    newproto[key] = proto[key];
-                    if(typeObj === "object"){
-                        proto[key] = this.clearAllProto(proto[key]);
-                    }
+            // Include non-enumerable own properties so we don't lose values defined via getters
+            const keys = Object.getOwnPropertyNames(proto);
+            for (const key of keys) {
+                if(!key.startsWith("_") && !key.startsWith("__")){
+                    try{
+                        const value = proto[key];
+                        if(typeof value === "object" && value !== null){
+                            // Recursively clone nested objects without altering the source
+                            newproto[key] = this.clearAllProto(value);
+                        } else {
+                            newproto[key] = value;
+                        }
+                    }catch(_){ /* ignore getter errors */ }
                 }
             }
         }
