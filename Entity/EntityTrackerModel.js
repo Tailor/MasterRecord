@@ -1,5 +1,5 @@
 
-// version : 0.0.7
+// version : 0.0.8
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -157,7 +157,7 @@ class EntityTrackerModel {
                                                 var entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
                                                 var thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
                                                 var firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
-                                                var secondJoiningID = joiningEntity.__entity[entityField].foreignTable;
+                                                var secondJoiningID = Object.values(joiningEntity.__entity).find(e => e.foreignTable === ent.__name);
                                                 if(firstJoiningID && secondJoiningID )
                                                 {
                                                     var modelValue = ent.include(`p => p.${entityFieldJoinName}.select(j => j.${joiningEntity.__entity[this.__entity.__name].foreignKey})`).include(`p =>p.${this.__entity.__name}`).where(`r =>r.${this.__entity.__name}.${priKey} = ${this[priKey]}`).toList();
@@ -234,4 +234,4 @@ class EntityTrackerModel {
 
 }
 
-module.exports = EntityTrackerModel
+module.exports = EntityTrackerModel;
