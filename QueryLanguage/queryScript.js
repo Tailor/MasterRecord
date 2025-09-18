@@ -174,8 +174,9 @@ class queryScript{
     }
 
     OPERATORS_REGEX(entityName){
+        // Prefer longest operators first to avoid partially matching '>' in '>=' and leaving '=' in the argument
         return  new RegExp("(?:^|[^\\w\\d])" + entityName
-        + "\\.((?:\\.?[\\w\\d_\\$]+)+)(?:\\((.*?)\\))?(?:\\s*(>|<|(?:===)|(?:!==)|(?:==)|(?:!=)|(?:=)|(?:<=)|(?:>=)|(?:in))\\s*(.*))?")
+        + "\\.((?:\\.?[\\w\\d_\\$]+)+)(?:\\((.*?)\\))?(?:\\s*((?:===)|(?:!==)|(?:<=)|(?:>=)|(?:==)|(?:!=)|(?:in)|>|<|(?:=))\\s*(.*))?")
     }
 
 
