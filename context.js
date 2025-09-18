@@ -1,4 +1,4 @@
-// Version 0.0.13
+// Version 0.0.14
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -54,7 +54,7 @@ class context {
         }
         catch (e) {
             console.log("error SQL", e);
-            throw error(e)
+            throw new Error(String(e))
         }
     }
 
@@ -91,39 +91,28 @@ class context {
     };
 
     __findSettings(root, rootFolderLocation, envType){
-
         if(envType === undefined){
             envType = "development";
         }
-        var rootFolder = `${root}/${rootFolderLocation}`;
-        var search = `${rootFolder}/**/*env.${envType}.json`;
-        var files = globSearch.sync(search, rootFolder);
-        var file = files[0];
-        if(file === undefined){
-            root = tools.removeBackwardSlashSection(root, 1, "/");
-            rootFolder = `${root}/${rootFolderLocation}`;
-            var search = `${rootFolder}/**/*env.${envType}.json`;
-            var files = globSearch.sync(search,rootFolder);
-            file = files[0];
-            if(file === undefined){
-                root = tools.removeBackwardSlashSection(root, 1, "/");
-                rootFolder = `${root}/${rootFolderLocation}`;
-                var search = `${rootFolder}/**/*env.${envType}.json`;
-                var files = globSearch.sync(search,rootFolder);
-                file = files[0];
-                if(file === undefined){
-                    console.log(`could not find file - ${rootFolder}/env.${envType}.json`);
-                    throw error(`could not find file - ${rootFolder}/env.${envType}.json`);
-                }
-
+        let currentRoot = root;
+        const maxHops = 12;
+        for(let i = 0; i < maxHops; i++){
+            const rootFolder = `${currentRoot}/${rootFolderLocation}`;
+            const search = `${rootFolder}/**/*env.${envType}.json`;
+            const files = globSearch.sync(search, currentRoot);
+            const file = files && files[0];
+            if(file){
+                return { file: file, rootFolder: currentRoot };
             }
-        
+            const parent = tools.removeBackwardSlashSection(currentRoot, 1, "/");
+            if(parent === currentRoot || parent === ""){
+                break;
+            }
+            currentRoot = parent;
         }
-        
-        return {
-            file: file,
-            rootFolder : root
-        };
+        const msg = `could not find env file '${rootFolderLocation}/env.${envType}.json' starting at ${root}`;
+        console.log(msg);
+        throw new Error(msg);
     }
 
     useSqlite(rootFolderLocation){
@@ -138,7 +127,7 @@ class context {
             
             if(options === undefined){
                 console.log("settings missing context name settings");
-                throw error("settings missing context name settings");
+                throw new Error("settings missing context name settings");
             }
 
             this.validateSQLiteOptions(options);
@@ -155,14 +144,14 @@ class context {
         }
         catch(err){
             console.log("error:",err );
-            throw error(err);
+            throw new Error(String(err));
         }
     }
 
     validateSQLiteOptions(options){
         if(options.hasOwnProperty('connect') === undefined){
             console.log("connnect string settings is missing")
-            throw error("connection string settings is missing");
+            throw new Error("connection string settings is missing");
         }
 
     }
@@ -179,7 +168,7 @@ class context {
             
             if(options === undefined){
                 console.log("settings missing context name settings");
-                throw error("settings missing context name settings");
+                throw new Error("settings missing context name settings");
             }
 
             this.db = this.__mysqlInit(options, "mysql2");
