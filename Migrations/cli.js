@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-// version 0.0.4
+// version 0.0.5
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
-const program = require('commander');
+const { program } = require('commander');
 let fs = require('fs');
 let path = require('path');
 var Migration = require('./migrations');
@@ -16,7 +16,7 @@ const [,, ...args] = process.argv
 
 
 program
-  .version('0.0.3', '-v, --version', '0.0.3')
+  .version('0.0.3')
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
 
   // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
