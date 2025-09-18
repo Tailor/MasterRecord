@@ -194,10 +194,11 @@ class queryScript{
             part.inside = part.query;
             parts[part.name] = part;
         }
-        part.inside = part.inside.replaceAll("&&", "and");
-        part.query = part.query.replaceAll("&&", "and");
-        part.inside = part.inside.replaceAll("||", "or");
-        part.query = part.query.replaceAll("||", "or");
+        // Normalize logical operators and add spacing so we can safely split by tokens
+        part.inside = part.inside.replaceAll("&&", " and ");
+        part.query = part.query.replaceAll("&&", " and ");
+        part.inside = part.inside.replaceAll("||", " or ");
+        part.query = part.query.replaceAll("||", " or ");
 
         return parts;
     }
@@ -350,19 +351,22 @@ class queryScript{
             var entity =  this.getEntity(partQuery);
             var exprPartRegExp = this.OPERATORS_REGEX(entity);
             // check if query contains an AND.
-            var trimmedQuery = partQuery.replace(/\s/g, '');
-           var splitByAnd = trimmedQuery.split("and");
-           let groupId = 0;
-           for (let splitAnds in splitByAnd) {
+            var normalized = partQuery.replace(/\s+/g, ' ').trim();
+            var splitByAnd = normalized.split(/\sand\s/);
+            let groupId = 0;
+            for (let splitAnds in splitByAnd) {
                 let token = splitByAnd[splitAnds];
                 // Split possible OR groups inside this AND segment
-                let orParts = token.split("or");
+                let orParts = token.split(/\sor\s/);
                 const hasOrGroup = orParts.length > 1;
                 let currentGroup = hasOrGroup ? (++groupId) : null;
                 for (let idx in orParts){
                     let segment = orParts[idx];
-                    // strip surrounding parentheses
-                    segment = segment.replace(/^\(+|\)+$/g, '');
+                    // strip wrapping parentheses pairs repeatedly
+                    segment = segment.trim();
+                    while(segment.startsWith('(') && segment.endsWith(')')){
+                        segment = segment.slice(1, -1).trim();
+                    }
                     if (match = segment.match(exprPartRegExp)) {
                         fields = match[1].split(".");
                         func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
@@ -390,7 +394,7 @@ class queryScript{
                         parts.query =  part;
                     }
                 }
-           }
+            }
         }
 
         return parts;

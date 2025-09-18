@@ -146,8 +146,12 @@ class SQLLiteEngine {
 			}
 			let func = expr.func;
 			let arg = expr.arg;
-			if(!func || func === 'exists' || typeof arg === 'undefined'){
+			if((!func && typeof arg === 'undefined')){
 				return null;
+			}
+			// Fallback: if parser defaulted to 'exists' but we have an argument, assume '='
+			if(func === 'exists' && typeof arg !== 'undefined'){
+				func = '=';
 			}
 			if(arg === "null"){
 				if(func === "=") func = "is";
