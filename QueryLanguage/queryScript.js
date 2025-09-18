@@ -352,35 +352,43 @@ class queryScript{
             // check if query contains an AND.
             var trimmedQuery = partQuery.replace(/\s/g, '');
            var splitByAnd = trimmedQuery.split("and");
+           let groupId = 0;
            for (let splitAnds in splitByAnd) {
-
-                if (match = splitByAnd[splitAnds].match(exprPartRegExp)) {
-                    fields = match[1].split(".");
-                    func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
-                    
-                    if (func == "==" || func == "===") {
-                        func = "=";
+                let token = splitByAnd[splitAnds];
+                // Split possible OR groups inside this AND segment
+                let orParts = token.split("or");
+                const hasOrGroup = orParts.length > 1;
+                let currentGroup = hasOrGroup ? (++groupId) : null;
+                for (let idx in orParts){
+                    let segment = orParts[idx];
+                    // strip surrounding parentheses
+                    segment = segment.replace(/^\(+|\)+$/g, '');
+                    if (match = segment.match(exprPartRegExp)) {
+                        fields = match[1].split(".");
+                        func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
+                        if (func == "==" || func == "===") {
+                            func = "=";
+                        }
+                        else if (func == "!==") {
+                            func = "!=";
+                        }
+                        arg = match[2] || match[4];
+                        if (arg == "true" || arg == "false") {
+                            arg = arg == "true";
+                        }
+                        else if (arg && arg.charAt(0) == arg.charAt(arg.length - 1) && (arg.charAt(0) == "'" || arg.charAt(0) == '"')) {
+                            arg = arg.slice(1, -1);
+                        }
+                        part.entity = entity;
+                        const exprObj = {
+                            field: fields[0],
+                            func : func.toLowerCase(),
+                            arg : arg
+                        };
+                        if(currentGroup){ exprObj.group = currentGroup; }
+                        part.expressions.push(exprObj);
+                        parts.query =  part;
                     }
-                    else if (func == "!==") {
-                        func = "!=";
-                    }
-
-                    arg = match[2] || match[4];
-                    if (arg == "true" || arg == "false") {
-                        arg = arg == "true";
-                    }
-                    else if (arg && arg.charAt(0) == arg.charAt(arg.length - 1) && (arg.charAt(0) == "'" || arg.charAt(0) == '"')) {
-                        arg = arg.slice(1, -1);
-                    }
-
-                    part.entity = entity;
-                
-                    part.expressions.push({
-                        field: fields[0],
-                        func : func.toLowerCase(),
-                        arg : arg
-                    });
-                    parts.query =  part;
                 }
            }
         }

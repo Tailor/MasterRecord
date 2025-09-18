@@ -1,4 +1,4 @@
-// version : 0.0.3
+// version : 0.0.6
 
 var tools =  require('masterrecord/Tools');
 var util = require('util');
@@ -123,32 +123,69 @@ class SQLLiteEngine {
     }
 
     buildWhere(query, mainQuery){
-        var whereEntity = query.where;
-        var strQuery = "";
-        var $that = this;
-        if(whereEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
-            for (let part in whereEntity[query.parentName]) {
-                    var item = whereEntity[query.parentName][part];
-                    for (let exp in item.expressions) {
-                        var field = tools.capitalizeFirstLetter(item.expressions[exp].field);
-                        if(mainQuery[field]){
-                            if(mainQuery[field].isNavigational){
-                                entity = $that.getEntity(field, query.entityMap);
-                                field = item.fields[1];
-                            }
-                        }
-                        if(strQuery === ""){
-                            strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                        }
-                        else{
-                            strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                        }
-                    }
-                }
-        }
-        return strQuery;
-    }
+		var whereEntity = query.where;
+		var $that = this;
+		if(!whereEntity){
+			return "";
+		}
+
+		var entityAlias = this.getEntity(query.parentName, query.entityMap);
+		var item = whereEntity[query.parentName].query;
+		var exprs = item.expressions || [];
+
+		function exprToSql(expr){
+			var field = expr.field.toLowerCase();
+			var ent = entityAlias;
+			if(mainQuery[field]){
+				if(mainQuery[field].isNavigational){
+					ent = $that.getEntity(field, query.entityMap);
+					if(item.fields && item.fields[1]){
+						field = item.fields[1];
+					}
+				}
+			}
+			let func = expr.func;
+			let arg = expr.arg;
+			if(!func || func === 'exists' || typeof arg === 'undefined'){
+				return null;
+			}
+			if(arg === "null"){
+				if(func === "=") func = "is";
+				if(func === "!=") func = "is not";
+				return `${ent}.${field}  ${func} ${arg}`;
+			}
+			if(func === "IN"){
+				return `${ent}.${field}  ${func} ${arg}`;
+			}
+			return `${ent}.${field}  ${func} '${$that._santizeSingleQuotes(arg)}'`;
+		}
+
+		const pieces = [];
+		for(let i = 0; i < exprs.length; i++){
+			const e = exprs[i];
+			if(e.group){
+				const gid = e.group;
+				const orParts = [];
+				while(i < exprs.length && exprs[i].group === gid){
+					const sql = exprToSql(exprs[i]);
+					if(sql){ orParts.push(sql); }
+					i++;
+				}
+				i--; // compensate for loop increment
+				if(orParts.length > 0){
+					pieces.push(`(${orParts.join(" or ")})`);
+				}
+			}else{
+				const sql = exprToSql(e);
+				if(sql){ pieces.push(sql); }
+			}
+		}
+
+		if(pieces.length === 0){
+			return "";
+		}
+		return `WHERE ${pieces.join(" and ")}`;
+	}
 
     buildInclude( query, entity, context){
         var includeQuery =  "";
@@ -407,9 +444,9 @@ class SQLLiteEngine {
                 // call the get method if avlable
                 var fieldColumn = "";
                 // check if get function is avaliable if so use that
-                fieldColumn = fields[column];       
-
-                if((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object"){
+                fieldColumn = fields[column];
+                
+                if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
                         case "string" : 
                             fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;

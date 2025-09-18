@@ -1,4 +1,4 @@
-// Version 0.0.19
+// Version 0.0.20
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -256,55 +256,68 @@ class SQLLiteEngine {
     buildWhere(query, mainQuery){
         var whereEntity = query.where;
 
-        var strQuery = "";
         var $that = this;
-        if(whereEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
+        if(!whereEntity){
+            return "";
+        }
 
-            var item = whereEntity[query.parentName].query;
-            for (let exp in item.expressions) {
-                var field = item.expressions[exp].field.toLowerCase();
-                // var field = tools.capitalizeFirstLetter(item.expressions[exp].field); removed this because it was causing issues not sure why we added it in the firstplace
-                if(mainQuery[field]){
-                    if(mainQuery[field].isNavigational){
-                        entity = $that.getEntity(field, query.entityMap);
+        var entityAlias = this.getEntity(query.parentName, query.entityMap);
+        var item = whereEntity[query.parentName].query;
+        var exprs = item.expressions || [];
+
+        function exprToSql(expr){
+            var field = expr.field.toLowerCase();
+            var ent = entityAlias;
+            if(mainQuery[field]){
+                if(mainQuery[field].isNavigational){
+                    ent = $that.getEntity(field, query.entityMap);
+                    // field alias fallback kept as original logic; if item.fields exists, use second
+                    if(item.fields && item.fields[1]){
                         field = item.fields[1];
                     }
                 }
-                if(item.expressions[exp].arg === "null"){
-                    if(item.expressions[exp].func === "="){
-                        item.expressions[exp].func = "is"
-                    }
-                    if(item.expressions[exp].func === "!="){
-                        item.expressions[exp].func = "is not"
-                    }
-                }
-                if(strQuery === ""){
-                    if(item.expressions[exp].arg === "null"){
-                        strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                    }else{
-                        if(item.expressions[exp].func === "IN"){
-                            strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                        }
-                        else{
-                            strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                        }
-                    }
-                }
-                else{
-                    if(item.expressions[exp].arg === "null"){
-                        strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                    }else{
-                        strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                    }
-                    
-                }
             }
-
-            
-                
+            let func = expr.func;
+            let arg = expr.arg;
+            if(!func || func === 'exists' || typeof arg === 'undefined'){
+                return null;
+            }
+            if(arg === "null"){
+                if(func === "=") func = "is";
+                if(func === "!=") func = "is not";
+                return `${ent}.${field}  ${func} ${arg}`;
+            }
+            if(func === "IN"){
+                return `${ent}.${field}  ${func} ${arg}`;
+            }
+            return `${ent}.${field}  ${func} '${arg}'`;
         }
-        return strQuery;
+
+        const pieces = [];
+        for(let i = 0; i < exprs.length; i++){
+            const e = exprs[i];
+            if(e.group){
+                const gid = e.group;
+                const orParts = [];
+                while(i < exprs.length && exprs[i].group === gid){
+                    const sql = exprToSql(exprs[i]);
+                    if(sql){ orParts.push(sql); }
+                    i++;
+                }
+                i--; // step back one since for-loop will increment
+                if(orParts.length > 0){
+                    pieces.push(`(${orParts.join(" or ")})`);
+                }
+            }else{
+                const sql = exprToSql(e);
+                if(sql){ pieces.push(sql); }
+            }
+        }
+
+        if(pieces.length === 0){
+            return "";
+        }
+        return `WHERE ${pieces.join(" and ")}`;
     }
 
     buildInclude( query, entity, context){
