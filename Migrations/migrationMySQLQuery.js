@@ -1,5 +1,5 @@
 
-// verison 0.0.2
+// verison 0.0.3
 class migrationMySQLQuery {
 
     #tempTableName = "_temp_alter_column_update"
@@ -37,13 +37,23 @@ class migrationMySQLQuery {
         var unique = table.unique ? " UNIQUE" : "";
         var type = this.typeManager(table.type);
         var tableName = table.name;
-        var defaultValue  = "";
-        if(table.default != null){
-
-            defaultValue = ` DEFAULT ${this.boolType(table.default)}`
-        }
-        if(table.relationshipType === 'belongsTo'){
+        if(table.relationshipType === 'belongsTo' && table.foreignKey){
             tableName = table.foreignKey;
+        }
+        var defaultValue  = "";
+        if(table.default !== undefined && table.default !== null){
+            let def = table.default;
+            if(table.type === 'boolean'){
+                def = this.boolType(def);
+                defaultValue = ` DEFAULT ${def}`;
+            }
+            else if(table.type === 'integer' || table.type === 'float' || table.type === 'decimal'){
+                defaultValue = ` DEFAULT ${def}`;
+            }
+            else{
+                const esc = String(def).replace(/'/g, "''");
+                defaultValue = ` DEFAULT '${esc}'`;
+            }
         }
 
         return `${tableName} ${type}${nullName}${defaultValue}${unique}${primaryKey}${auto}`;
@@ -176,7 +186,7 @@ class migrationMySQLQuery {
             }
         }
 
-        var completeQuery = `CREATE TABLE ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
+        var completeQuery = `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;
 
             /*

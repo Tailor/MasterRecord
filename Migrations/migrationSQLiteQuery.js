@@ -1,5 +1,5 @@
 
-// verison 0.0.5
+// verison 0.0.6
 class migrationSQLiteQuery {
 
     #tempTableName = "_temp_alter_column_update"
@@ -36,8 +36,28 @@ class migrationSQLiteQuery {
         var nullName = table.nullable ? "" : " NOT NULL";
         var unique = table.unique ? " UNIQUE" : "";
         var type = this.#typeManager(table.type);
+        var colName = table.name;
+        if(table.relationshipType === 'belongsTo' && table.foreignKey){
+            colName = table.foreignKey;
+        }
+        // DEFAULT clause
+        var defaultClause = "";
+        if(table.default !== undefined && table.default !== null){
+            let def = table.default;
+            if(table.type === 'boolean'){
+                def = (def === true || def === 'true') ? 1 : 0;
+                defaultClause = ` DEFAULT ${def}`;
+            }
+            else if(table.type === 'integer' || table.type === 'float' || table.type === 'decimal'){
+                defaultClause = ` DEFAULT ${def}`;
+            }
+            else{
+                const esc = String(def).replace(/'/g, "''");
+                defaultClause = ` DEFAULT '${esc}'`;
+            }
+        }
 
-        return `${table.name} ${type}${nullName}${unique}${primaryKey}${auto}`;
+        return `${colName} ${type}${nullName}${defaultClause}${unique}${primaryKey}${auto}`;
     }
 
     #typeManager(type){
@@ -111,7 +131,7 @@ class migrationSQLiteQuery {
             }
         }
     
-        return `CREATE TABLE ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
+        return `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
                 INTEGER PRIMARY KEY AUTOINCREMENT
