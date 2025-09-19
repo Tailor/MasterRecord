@@ -1,4 +1,4 @@
-// version 0.0.6
+// version 0.0.7
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -136,6 +136,43 @@ class queryScript{
         this.describeExpressionPartsFunctions(cachedExpr[entityName], querySections.functions);
         if(type === "include" || type === "and"){
             obj[type].push(cachedExpr);
+        }
+        else if(type === "where"){
+            // If where already exists, merge new expressions into existing where so multiple
+            // chained where(...) calls combine into a single WHERE clause (joined by AND).
+            if(obj.where && obj[entityName] && cachedExpr[entityName]){
+                const existingQuery = obj.where[entityName].query || {};
+                const incomingQuery = cachedExpr[entityName].query || {};
+                const existingExprs = existingQuery.expressions || [];
+                const incomingExprs = (incomingQuery.expressions || []).map(e => ({...e}));
+
+                // Avoid OR-group id collisions across separate where calls by offsetting
+                // incoming group ids by the max existing group id.
+                let maxGroup = 0;
+                for(let i = 0; i < existingExprs.length; i++){
+                    const g = existingExprs[i] && existingExprs[i].group;
+                    if(typeof g === 'number' && g > maxGroup){ maxGroup = g; }
+                }
+                for(let i = 0; i < incomingExprs.length; i++){
+                    if(typeof incomingExprs[i].group === 'number'){
+                        incomingExprs[i].group = incomingExprs[i].group + maxGroup;
+                    }
+                }
+
+                existingQuery.expressions = existingExprs.concat(incomingExprs);
+
+                // Merge selectFields for completeness (not strictly required for WHERE)
+                const existingFields = existingQuery.selectFields || [];
+                const incomingFields = incomingQuery.selectFields || [];
+                const mergedFields = existingFields.concat(incomingFields.filter(f => existingFields.indexOf(f) === -1));
+                if(mergedFields.length > 0){ existingQuery.selectFields = mergedFields; }
+
+                // Keep original obj.where; just ensure parentName is set correctly
+                obj.parentName = entityName;
+            }
+            else{
+                obj[type] = cachedExpr;
+            }
         }
         else{
             obj[type] = cachedExpr;
