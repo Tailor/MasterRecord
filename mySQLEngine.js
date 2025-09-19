@@ -1,4 +1,4 @@
-// version : 0.0.6
+// version : 0.0.7
 
 var tools =  require('masterrecord/Tools');
 var util = require('util');
@@ -96,6 +96,25 @@ class SQLLiteEngine {
             console.error(err);
             return null;
         }
+    }
+
+    // Introspection helpers
+    tableExists(tableName){
+        try{
+            const sql = `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName}'`;
+            this.db.connect(this.db);
+            const res = this.db.query(sql);
+            return Array.isArray(res) ? res.length > 0 : !!res?.length;
+        }catch(_){ return false; }
+    }
+
+    getTableInfo(tableName){
+        try{
+            const sql = `SELECT COLUMN_NAME as name, COLUMN_DEFAULT as dflt_value, IS_NULLABLE as is_nullable, DATA_TYPE as data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName}'`;
+            this.db.connect(this.db);
+            const res = this.db.query(sql);
+            return res || [];
+        }catch(_){ return []; }
     }
 
 

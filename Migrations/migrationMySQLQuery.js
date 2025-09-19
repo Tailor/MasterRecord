@@ -1,5 +1,5 @@
 
-// verison 0.0.3
+// verison 0.0.4
 class migrationMySQLQuery {
 
     #tempTableName = "_temp_alter_column_update"

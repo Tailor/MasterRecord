@@ -1,5 +1,5 @@
 
-// verison 0.0.6
+// verison 0.0.7
 class migrationSQLiteQuery {
 
     #tempTableName = "_temp_alter_column_update"
@@ -95,6 +95,13 @@ class migrationSQLiteQuery {
 
 
     addColum(table){
+        // If a full column spec is provided, map it to a proper SQLite column definition
+        if(table.column){
+            const def = this.#columnMapping(table.column);
+            return `ALTER TABLE ${table.tableName}
+        ADD COLUMN ${def}`;
+        }
+        // Fallback legacy behavior: raw name provided must include full definition if caller wants type/constraints
         return `ALTER TABLE ${table.tableName}
         ADD COLUMN ${table.name}`;
 

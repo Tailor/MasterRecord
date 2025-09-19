@@ -1,4 +1,4 @@
-// Version 0.0.20
+// Version 0.0.21
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -53,6 +53,23 @@ class SQLLiteEngine {
             console.error(err);
             return null;
         }
+    }
+
+    // Introspection helpers
+    tableExists(tableName){
+        try{
+            const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`;
+            const row = this.db.prepare(sql).get();
+            return !!row;
+        }catch(_){ return false; }
+    }
+
+    getTableInfo(tableName){
+        try{
+            const sql = `PRAGMA table_info(${tableName})`;
+            const rows = this.db.prepare(sql).all();
+            return rows || [];
+        }catch(_){ return []; }
     }
 
     getCount(queryObject, entity, context){
