@@ -1,4 +1,4 @@
-// Version 0.0.14
+// Version 0.0.15
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -9,6 +9,7 @@ var insertManager = require('./insertManager');
 var deleteManager = require('./deleteManager');
 var globSearch = require("glob");
 var fs = require('fs');
+var path = require('path');
 const appRoot = require('app-root-path');
 const MySQLClient = require('masterrecord/mySQLSyncConnect');
 
@@ -97,9 +98,14 @@ class context {
         let currentRoot = root;
         const maxHops = 12;
         for(let i = 0; i < maxHops; i++){
-            const rootFolder = `${currentRoot}/${rootFolderLocation}`;
-            const search = `${rootFolder}/**/*env.${envType}.json`;
-            const files = globSearch.sync(search, currentRoot);
+            const rootFolder = path.isAbsolute(rootFolderLocation) ? rootFolderLocation : `${currentRoot}/${rootFolderLocation}`;
+            // Support both env.development.json and development.json naming
+            const searchA = `${rootFolder}/**/*env.${envType}.json`;
+            const searchB = `${rootFolder}/**/*${envType}.json`;
+            let files = globSearch.sync(searchA, currentRoot);
+            if(!files || files.length === 0){
+                files = globSearch.sync(searchB, currentRoot);
+            }
             const file = files && files[0];
             if(file){
                 return { file: file, rootFolder: currentRoot };
@@ -113,6 +119,79 @@ class context {
         const msg = `could not find env file '${rootFolderLocation}/env.${envType}.json' starting at ${root}`;
         console.log(msg);
         throw new Error(msg);
+    }
+
+    // Auto-detect DB type (sqlite or mysql) using environment JSON
+    env(rootFolderLocation){
+        try{
+            // Determine environment: prefer explicit, then NODE_ENV, fallback 'development'
+            let envType = this.__environment || process.env.NODE_ENV || 'development';
+            const contextName = this.__name;
+
+            // Try multiple base roots for robustness
+            const candidateRoots = [ process.cwd(), appRoot.path, __dirname ];
+            let file;
+            for(let i = 0; i < candidateRoots.length; i++){
+                try{
+                    file = this.__findSettings(candidateRoots[i], rootFolderLocation, envType);
+                    if(file) break;
+                }catch(_){ /* try next */ }
+            }
+            // If still not found and an absolute path was provided, try directly
+            if(!file && path.isAbsolute(rootFolderLocation)){
+                const directFolder = rootFolderLocation;
+                const envFileA = path.join(directFolder, `env.${envType}.json`);
+                const envFileB = path.join(directFolder, `${envType}.json`);
+                const picked = fs.existsSync(envFileA) ? envFileA : (fs.existsSync(envFileB) ? envFileB : null);
+                if(picked){
+                    file = { file: picked, rootFolder: path.dirname(path.dirname(picked)) };
+                }
+            }
+            if(!file){
+                throw new Error(`Environment config not found for '${envType}' under '${rootFolderLocation}'.`);
+            }
+
+            const settings = require(file.file);
+            const options = settings[contextName];
+            if(options === undefined){
+                console.log("settings missing context name settings");
+                throw new Error("settings missing context name settings");
+            }
+
+            const type = String(options.type || '').toLowerCase();
+
+            if(type === 'sqlite' || type === 'better-sqlite3'){
+                this.isSQLite = true; this.isMySQL = false;
+                // Back-compat: treat leading '/' as project-root relative, not filesystem root
+                let dbPath = options.connection || '';
+                if(dbPath){
+                    if(dbPath.startsWith(path.sep) || !path.isAbsolute(dbPath)){
+                        dbPath = path.join(file.rootFolder, dbPath);
+                    }
+                }
+                const dbDir = path.dirname(dbPath);
+                if(!fs.existsSync(dbDir)){
+                    fs.mkdirSync(dbDir, { recursive: true });
+                }
+                const sqliteOptions = { ...options, completeConnection: dbPath };
+                this.db = this.__SQLiteInit(sqliteOptions, 'better-sqlite3');
+                this._SQLEngine.setDB(this.db, 'better-sqlite3');
+                return this;
+            }
+
+            if(type === 'mysql'){
+                this.isMySQL = true; this.isSQLite = false;
+                this.db = this.__mysqlInit(options, 'mysql2');
+                this._SQLEngine.setDB(this.db, 'mysql');
+                return this;
+            }
+
+            throw new Error(`Unsupported database type '${options.type}'. Expected 'sqlite' or 'mysql'.`);
+        }
+        catch(err){
+            console.log("error:", err);
+            throw new Error(String(err));
+        }
     }
 
     useSqlite(rootFolderLocation){
@@ -149,11 +228,51 @@ class context {
     }
 
     validateSQLiteOptions(options){
-        if(options.hasOwnProperty('connect') === undefined){
-            console.log("connnect string settings is missing")
-            throw new Error("connection string settings is missing");
+        if(!options || typeof options !== 'object'){
+            throw new Error("settings object is missing or invalid");
         }
 
+        // Normalize type
+        let type = (options.type || '').toString().toLowerCase();
+        if(!type){
+            // Infer when not provided
+            if(typeof options.connection === 'string'){
+                type = 'sqlite';
+                options.type = 'sqlite';
+            }
+            else if(options.host || options.user || options.database){
+                type = 'mysql';
+                options.type = 'mysql';
+            }
+        }
+
+        if(type === 'sqlite' || type === 'better-sqlite3'){
+            // Required
+            if(!options.connection || typeof options.connection !== 'string' || options.connection.trim() === ''){
+                throw new Error("connection string settings is missing");
+            }
+            // Defaults
+            if(options.username === undefined){ options.username = ''; }
+            if(options.password === undefined){ options.password = ''; }
+            return; // valid
+        }
+
+        if(type === 'mysql'){
+            // Defaults
+            if(!options.host){ options.host = 'localhost'; }
+            if(options.port === undefined){ options.port = 3306; }
+            if(options.password === undefined){ options.password = ''; }
+            // Required
+            if(!options.user || options.user.toString().trim() === ''){
+                throw new Error("MySQL 'user' is required in settings");
+            }
+            if(!options.database || options.database.toString().trim() === ''){
+                throw new Error("MySQL 'database' is required in settings");
+            }
+            return; // valid
+        }
+
+        throw new Error(`Unsupported database type '${options.type}'. Expected 'sqlite' or 'mysql'.`);
     }
     
     useMySql(rootFolderLocation){
@@ -171,6 +290,7 @@ class context {
                 throw new Error("settings missing context name settings");
             }
 
+            this.validateSQLiteOptions(options);
             this.db = this.__mysqlInit(options, "mysql2");
             this._SQLEngine.setDB(this.db, "mysql");
             return this;
