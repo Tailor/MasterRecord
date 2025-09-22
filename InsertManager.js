@@ -1,5 +1,5 @@
 
-// version  0.0.12
+// version  0.0.13
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -37,15 +37,15 @@ class InsertManager {
                     var query = `select * from ${currentModel.__entity.__name} where ${primaryKey} = ${ SQL.id }`;
                     var jj = this.__queryObject.raw(query);
                     var getQueryModel = this._SQLEngine.get(jj, currentModel.__entity, currentModel.__context );
-                    var idVal;
-
-                    if(!getQueryModel[0]){
-                        idVal = getQueryModel[primaryKey]
+                    var idVal = SQL.id;
+                    // SQLite returns an object, MySQL may return array. Guard for nulls.
+                    if(getQueryModel){
+                        if(Array.isArray(getQueryModel)){
+                            if(getQueryModel[0]){ idVal = getQueryModel[0][primaryKey]; }
+                        }else if(typeof getQueryModel === 'object'){
+                            if(getQueryModel[primaryKey] !== undefined){ idVal = getQueryModel[primaryKey]; }
+                        }
                     }
-                    else{
-                        idVal =  getQueryModel[0][primaryKey];
-                    }
-                   
                     currentModel[primaryKey] = idVal;
                 }
 
@@ -59,15 +59,18 @@ class InsertManager {
                     var propertyModel = currentModel[property];
                     var entityProperty = modelEntity[property] ? modelEntity[property] : {};
                     if(entityProperty.type === "hasOne"){
-                        // make sure property model is an object not a primary data type like number or string
-                     
-                        if(typeof(propertyModel) === "object" || typeof(propertyModel) === "function" ){
+                        // only insert child if user provided a concrete object with data
+                        if(propertyModel && typeof(propertyModel) === "object" ){
                             // check if model has its own entity
                             if(modelEntity){
                                 // check if property has a value because we dont want this to run on every insert if nothing was added
-                                propertyModel.__entity = tools.getEntity(property, $that._allEntities);
-                                propertyModel[currentModel.__entity.__name] = SQL.id;
-                                $that.runQueries(propertyModel);
+                                // ensure it has some own props; otherwise skip
+                                const hasOwn = Object.keys(propertyModel).length > 0;
+                                if(hasOwn){
+                                    propertyModel.__entity = tools.getEntity(property, $that._allEntities);
+                                    propertyModel[currentModel.__entity.__name] = SQL.id;
+                                    $that.runQueries(propertyModel);
+                                }
                             }
                             else{
                                 throw `Relationship "${entityProperty.name}" could not be found please check if object has correct spelling or if it has been added to the context class`
@@ -76,6 +79,10 @@ class InsertManager {
                     }
                     
                     if(entityProperty.type === "hasMany"){
+                        // skip when not provided; only enforce array type if user supplied a value
+                        if(propertyModel === undefined || propertyModel === null){
+                            continue;
+                        }
                         if(tools.checkIfArrayLike(propertyModel)){
                             const propertyKeys = Object.keys(propertyModel);
                             for (const propertykey of propertyKeys) {
@@ -186,13 +193,34 @@ class InsertManager {
                 // SKIP belongs too -----   // call sets for correct data for DB
                 if(currentEntity.type !== "belongsTo" && currentEntity.type !== "hasMany"){
                     if(currentEntity.relationshipType !== "belongsTo"){
+                        // Auto-populate common timestamp fields if required and missing
+                        if((entity === 'created_at' || entity === 'updated_at') && (currentRealModel[entity] === undefined || currentRealModel[entity] === null)){
+                            var nowVal = Date.now().toString();
+                            currentRealModel[entity] = nowVal;
+                            currentModel[entity] = nowVal;
+                        }
                         // primary is always null in an insert so validation insert must be null
                         if(currentEntity.nullable === false && !currentEntity.primary){
                             // if it doesnt have a get method then call error
                             if(currentEntity.set === undefined){
                                 const realVal = currentRealModel[entity];
                                 const cleanVal = currentModel[entity];
-                                const hasValue = (realVal !== undefined && realVal !== null) || (cleanVal !== undefined && cleanVal !== null);
+                                let hasValue = (realVal !== undefined && realVal !== null) || (cleanVal !== undefined && cleanVal !== null);
+                                // For strings, empty string should be considered invalid for notNullable
+                                const candidate = (realVal !== undefined && realVal !== null) ? realVal : cleanVal;
+                                if(typeof candidate === 'string' && candidate.trim() === ''){
+                                    hasValue = false;
+                                }
+                                // Fallback: check backing field on tracked model if both reads were undefined/null
+                                if(!hasValue && currentRealModel && currentRealModel.__proto__){
+                                    const backing = currentRealModel.__proto__["_" + entity];
+                                    hasValue = (backing !== undefined && backing !== null);
+                                    if(hasValue){
+                                        // normalize into both models so downstream sees it
+                                        currentRealModel[entity] = backing;
+                                        currentModel[entity] = backing;
+                                    }
+                                }
                                 if(!hasValue){
                                     this._errorModel.isValid = false;
                                     var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;

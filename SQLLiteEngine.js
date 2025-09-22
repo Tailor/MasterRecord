@@ -1,4 +1,4 @@
-// Version 0.0.21
+// Version 0.0.22
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -299,9 +299,11 @@ class SQLLiteEngine {
             if((!func && typeof arg === 'undefined')){
                 return null;
             }
-            // Fallback: if parser defaulted to 'exists' but we have an argument, assume '='
-            if(func === 'exists' && typeof arg !== 'undefined'){
-                func = '=';
+            // Removed fallback that coerced 'exists' with an argument to '='
+            // Bare field or !field: interpret as IS [NOT] NULL for SQLite
+            if(func === 'exists' && typeof arg === 'undefined'){
+                const isNull = expr.negate === true; // '!field' -> IS NULL
+                return `${ent}.${field}  is ${isNull ? '' : 'not '}null`;
             }
             if(arg === "null"){
                 if(func === "=") func = "is";
@@ -499,6 +501,14 @@ class SQLLiteEngine {
                 }
             }
         }
+    // Ensure primary key is always included in SELECT list
+    try{
+        const pk = this.getPrimarykey(entity);
+        if(pk){
+            const hasPk = entitiesList.indexOf(pk) !== -1 || entitiesList.indexOf(`[${pk}]`) !== -1 || entitiesList.indexOf(`'${pk}'`) !== -1;
+            if(!hasPk){ entitiesList.unshift(pk); }
+        }
+    }catch(_){ /* ignore */ }
     return entitiesList
 }
     chechUnsupportedWords(word){
@@ -529,6 +539,28 @@ class SQLLiteEngine {
         var dirtyFields = model.__dirtyFields;
 
         for (var column in dirtyFields) {
+
+			// Validate non-nullable constraints on updates
+			var fieldName = dirtyFields[column];
+			var entityDef = model.__entity[fieldName];
+			if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
+				// Determine the value that will actually be persisted for this field
+				var persistedValue;
+				switch(entityDef.type){
+					case "integer":
+						persistedValue = model["_" + fieldName];
+					break;
+					case "belongsTo":
+						persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
+					break;
+					default:
+						persistedValue = model[fieldName];
+				}
+				var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+				if(persistedValue === undefined || persistedValue === null || isEmptyString){
+					throw `Entity ${model.__entity.__name} column ${fieldName} is a required Field`;
+				}
+			}
 
             var type = model.__entity[dirtyFields[column]].type;
 
@@ -621,7 +653,8 @@ class SQLLiteEngine {
                         column = modelEntity[column].foreignKey
                     }
 
-                    columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
+                    // Use bracket-quoted identifiers for SQLite column names
+                    columns = columns === null ? `[${column}],` : `${columns} [${column}],`;
                     values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
 
                 }
@@ -633,7 +666,8 @@ class SQLLiteEngine {
                                 var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
                                 fieldColumn = fieldObject[primaryKey];
                                 column = modelEntity[column].foreignKey;
-                                columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
+                                // Use bracket-quoted identifiers for SQLite column names
+                                columns = columns === null ? `[${column}],` : `${columns} [${column}],`;
                                 values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
                             }else{
                                 console.log("Cannot find belings to relationship")

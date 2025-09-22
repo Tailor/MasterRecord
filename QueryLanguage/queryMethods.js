@@ -1,5 +1,5 @@
 
-// version 0.0.13
+// version 0.0.14
 var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
@@ -61,48 +61,28 @@ class queryMethods{
 
     ______orderByCount(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'orderByCount');
         this.__queryObject.orderByCount(str, this.__entity.__name);
         return this;
     }
 
     ______orderByCountDescending(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'orderByCountDescending');
         this.__queryObject.orderByCountDesc(str, this.__entity.__name);
         return this;
     }
 
     orderBy(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'orderBy');
         this.__queryObject.orderBy(str, this.__entity.__name);
         return this;
     }
 
     orderByDescending(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'orderByDescending');
         this.__queryObject.orderByDesc(str, this.__entity.__name);
         return this;
     }
@@ -115,25 +95,14 @@ class queryMethods{
     /* WHERE and AND work together its a way to add to the WHERE CLAUSE DYNAMICALLY */
     and(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'and');
         this.__queryObject.and(str, this.__entity.__name);
         return this;
     }
 
     where(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
-
+        str = this.__validateAndReplacePlaceholders(str, args, 'where');
         this.__queryObject.where(str, this.__entity.__name);
         return this;
     }
@@ -142,12 +111,7 @@ class queryMethods{
     //Eagerly loading
     include(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'include');
         this.__queryObject.include(str, this.__entity.__name);
         return this;
     }
@@ -155,12 +119,7 @@ class queryMethods{
     // only takes a array of selected items
     select(query,  ...args){
         var str = query.toString();
-        if(args){
-            for(let argument in args){
-                var item = args[argument];
-                str = str.replace("$$", item);
-            }
-        }
+        str = this.__validateAndReplacePlaceholders(str, args, 'select');
         this.__queryObject.select(str, this.__entity.__name);
         return this;
     }
@@ -182,12 +141,7 @@ class queryMethods{
     count(query,  ...args){
         if(query){
             var str = query.toString();
-            if(args){
-                for(let argument in args){
-                    var item = args[argument];
-                    str = str.replace("$$", item);
-                }
-            }
+            str = this.__validateAndReplacePlaceholders(str, args, 'count');
             this.__queryObject.count(str, this.__entity.__name);
         }
 
@@ -206,6 +160,29 @@ class queryMethods{
             this.__reset();
             return val;
         }
+    }
+
+    __validateAndReplacePlaceholders(str, args, methodName){
+        // Count placeholders
+        const placeholderCount = (str.match(/\$\$/g) || []).length;
+        const providedCount = args ? args.length : 0;
+        if(placeholderCount !== providedCount){
+            const msg = `Query argument error in ${methodName}: expected ${placeholderCount} value(s) for '$$', but received ${providedCount}.`;
+            console.error(msg);
+            throw new Error(msg);
+        }
+        if(args){
+            for(let argument in args){
+                var item = args[argument];
+                if(typeof item === 'undefined'){
+                    const msg = `Query argument error in ${methodName}: placeholder value at index ${argument} is undefined.`;
+                    console.error(msg);
+                    throw new Error(msg);
+                }
+                str = str.replace("$$", item);
+            }
+        }
+        return str;
     }
 
     single(){

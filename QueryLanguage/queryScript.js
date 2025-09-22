@@ -1,4 +1,4 @@
-// version 0.0.7
+// version 0.0.8
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
@@ -404,6 +404,13 @@ class queryScript{
                     while(segment.startsWith('(') && segment.endsWith(')')){
                         segment = segment.slice(1, -1).trim();
                     }
+                    // detect unary negation like '!r.field'
+                    let isNegated = false;
+                    const negationMatch = segment.match(/^\s*!+\s*/);
+                    if(negationMatch){
+                        isNegated = true;
+                        segment = segment.replace(/^\s*!+\s*/, '');
+                    }
                     if (match = segment.match(exprPartRegExp)) {
                         fields = match[1].split(".");
                         func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
@@ -426,6 +433,10 @@ class queryScript{
                             func : func.toLowerCase(),
                             arg : arg
                         };
+                        // For bare field checks (exists) without explicit arg, carry negation forward
+                        if(exprObj.func === 'exists' && typeof exprObj.arg === 'undefined' && isNegated){
+                            exprObj.negate = true;
+                        }
                         if(currentGroup){ exprObj.group = currentGroup; }
                         part.expressions.push(exprObj);
                         parts.query =  part;
