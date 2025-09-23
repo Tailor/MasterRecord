@@ -1,5 +1,5 @@
 
-// version  0.0.13
+// version  0.0.15
 var tools =  require('./Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
 
@@ -32,21 +32,9 @@ class InsertManager {
                 currentModel = this.belongsToInsert(currentModel, modelEntity);
                 var SQL = this._SQLEngine.insert(cleanCurrentModel);
                 var primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
-                // return all fields that have auto and dont have a value to the current model on insert
+                // use returned insert id directly; avoid redundant post-insert SELECT
                 if(currentModel.__entity[primaryKey].auto === true){
-                    var query = `select * from ${currentModel.__entity.__name} where ${primaryKey} = ${ SQL.id }`;
-                    var jj = this.__queryObject.raw(query);
-                    var getQueryModel = this._SQLEngine.get(jj, currentModel.__entity, currentModel.__context );
-                    var idVal = SQL.id;
-                    // SQLite returns an object, MySQL may return array. Guard for nulls.
-                    if(getQueryModel){
-                        if(Array.isArray(getQueryModel)){
-                            if(getQueryModel[0]){ idVal = getQueryModel[0][primaryKey]; }
-                        }else if(typeof getQueryModel === 'object'){
-                            if(getQueryModel[primaryKey] !== undefined){ idVal = getQueryModel[primaryKey]; }
-                        }
-                    }
-                    currentModel[primaryKey] = idVal;
+                    currentModel[primaryKey] = SQL.id;
                 }
 
                 const proto = Object.getPrototypeOf(currentModel);
@@ -70,6 +58,20 @@ class InsertManager {
                                     propertyModel.__entity = tools.getEntity(property, $that._allEntities);
                                     propertyModel[currentModel.__entity.__name] = SQL.id;
                                     $that.runQueries(propertyModel);
+                                    // Hydrate child back as a tracked instance so subsequent property sets are tracked
+                                    try{
+                                        var childPk = tools.getPrimaryKeyObject(propertyModel.__entity);
+                                        var childId = propertyModel[childPk];
+                                        if(childId !== undefined){
+                                            var ctxSetName = tools.capitalizeFirstLetter(property);
+                                            if(currentModel.__context && currentModel.__context[ctxSetName]){
+                                                var trackedChild = currentModel.__context[ctxSetName].where(`r => r.${childPk} == $$`, childId).single();
+                                                if(trackedChild){
+                                                    currentModel[property] = trackedChild;
+                                                }
+                                            }
+                                        }
+                                    }catch(_){ /* ignore tracking hydration errors */ }
                                 }
                             }
                             else{

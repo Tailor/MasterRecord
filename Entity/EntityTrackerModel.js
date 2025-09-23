@@ -1,5 +1,5 @@
 
-// version : 0.0.8
+// version : 0.0.9
 var tools =  require('../Tools');
 class EntityTrackerModel {
 
@@ -29,6 +29,10 @@ class EntityTrackerModel {
                     set: function(value) {
                         modelClass.__state = "modified";
                         modelClass.__dirtyFields.push(modelField);
+                        // ensure this entity is tracked on any modification
+                        if(modelClass.__context && typeof modelClass.__context.__track === 'function'){
+                            modelClass.__context.__track(modelClass);
+                        }
                         if(typeof currentEntity[modelField].set === "function"){
                             this["__proto__"]["_" + modelField] = currentEntity[modelField].set(value);
                         }else{

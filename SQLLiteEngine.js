@@ -1,4 +1,4 @@
-// Version 0.0.22
+// Version 0.0.23
 var tools =  require('masterrecord/Tools');
 
 class SQLLiteEngine {
@@ -580,7 +580,7 @@ class SQLLiteEngine {
                     //model.__entity[dirtyFields[column]].skipGetFunction = false;
                 break;
                 case "string" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} [${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',` : `${argument} [${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',`;
                 break;
                 case "boolean" :
                     var bool = "";
@@ -590,10 +590,10 @@ class SQLLiteEngine {
                     else{
                         bool = model[dirtyFields[column]];
                     }
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${bool}',` : `${argument} [${dirtyFields[column]}] = ${bool},`;
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${bool}',` : `${argument} [${dirtyFields[column]}] = '${bool}',`;
                 break;
                 case "time" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
+                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
                 break;
                 case "belongsTo" :
                     var fore = `_${dirtyFields[column]}`;
@@ -641,7 +641,7 @@ class SQLLiteEngine {
                 if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
                         case "string" : 
-                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;
+                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column], { entityName: modelEntity.__name, fieldName: column })}'`;
                         break;
                         case "time" : 
                             fieldColumn = fields[column];
@@ -683,15 +683,24 @@ class SQLLiteEngine {
 
     }
 
-    // will add double single quotes to allow sting to be saved.
-    _santizeSingleQuotes(string){
-        if (typeof string === 'string' || string instanceof String){
-            return string.replace(/'/g, "''");
+    // will add double single quotes to allow string to be saved.
+    _santizeSingleQuotes(value, context){
+        if (typeof value === 'string' || value instanceof String){
+            return value.replace(/'/g, "''");
         }
-    else{
-        console.log("warning - Field being passed is not a string");
-        throw "error warning - Field being passed is not a string";
-    }
+        else{
+            var details = context || {};
+            var entityName = details.entityName || 'UnknownEntity';
+            var fieldName = details.fieldName || 'UnknownField';
+            var valueType = (value === null) ? 'null' : (value === undefined ? 'undefined' : typeof value);
+            var preview;
+            try{ preview = (value === null || value === undefined) ? String(value) : JSON.stringify(value); }
+            catch(_){ preview = '[unserializable]'; }
+            if(preview && preview.length > 120){ preview = preview.substring(0, 120) + '…'; }
+            var message = `Field is not a string: entity=${entityName}, field=${fieldName}, type=${valueType}, value=${preview}`;
+            console.error(message);
+            throw new Error(message);
+        }
     }
 
     // converts any object into SQL parameter select string

@@ -1,4 +1,4 @@
-// version : 0.0.8
+// version : 0.0.9
 
 var tools =  require('masterrecord/Tools');
 var util = require('util');
@@ -182,7 +182,10 @@ class SQLLiteEngine {
 			if(func === "IN"){
 				return `${ent}.${field}  ${func} ${arg}`;
 			}
-			return `${ent}.${field}  ${func} '${$that._santizeSingleQuotes(arg)}'`;
+            var safeArg = (typeof arg === 'string' || arg instanceof String)
+                ? $that._santizeSingleQuotes(arg, { entityName: ent, fieldName: field })
+                : String(arg);
+            return `${ent}.${field}  ${func} '${safeArg}'`;
 		}
 
 		const pieces = [];
@@ -447,7 +450,11 @@ class SQLLiteEngine {
                     argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${columneValue},`;
                 break;
                 case "string" :
-                    argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
+                    argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',`;
+                break;
+                case "time" :
+                    // Always quote time values so empty strings remain valid ('')
+                    argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
                 break;
                 case "boolean" :
                     argument = argument === null ? `${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',`;
@@ -503,10 +510,11 @@ class SQLLiteEngine {
                 if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     switch(modelEntity[column].type){
                         case "string" : 
-                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;
+                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column], { entityName: modelEntity.__name, fieldName: column })}'`;
                         break;
                         case "time" : 
-                            fieldColumn = fields[column];
+                            // Quote time values to prevent blank values from producing malformed SQL
+                            fieldColumn = `'${fields[column]}'`;
                         break;
                     }
                     
@@ -528,13 +536,23 @@ class SQLLiteEngine {
 
     }
 
-    // will add double single quotes to allow sting to be saved.
-    _santizeSingleQuotes(string){
-
-        if(typeof string === "string"){
-            return string.replace(/'/g, "''");
-        }else{
-            return `${string}`;
+    // will add double single quotes to allow string to be saved.
+    _santizeSingleQuotes(value, context){
+        if (typeof value === 'string' || value instanceof String){
+            return value.replace(/'/g, "''");
+        }
+        else{
+            var details = context || {};
+            var entityName = details.entityName || 'UnknownEntity';
+            var fieldName = details.fieldName || 'UnknownField';
+            var valueType = (value === null) ? 'null' : (value === undefined ? 'undefined' : typeof value);
+            var preview;
+            try{ preview = (value === null || value === undefined) ? String(value) : JSON.stringify(value); }
+            catch(_){ preview = '[unserializable]'; }
+            if(preview && preview.length > 120){ preview = preview.substring(0, 120) + '…'; }
+            var message = `Field is not a string: entity=${entityName}, field=${fieldName}, type=${valueType}, value=${preview}`;
+            console.error(message);
+            throw new Error(message);
         }
     }
 
