@@ -1,12 +1,22 @@
 #!/usr/bin/env node
 
-// version 0.0.5
+// version 0.0.6
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
 const { program } = require('commander');
 let fs = require('fs');
 let path = require('path');
+const Module = require('module');
+// Alias require('masterrecord') to this global package so project files don't need a local install
+const __MASTERRECORD_ROOT__ = path.join(__dirname, '..');
+const __ORIGINAL_REQUIRE__ = Module.prototype.require;
+Module.prototype.require = function(request) {
+  if (request === 'masterrecord') {
+    return __ORIGINAL_REQUIRE__.call(this, __MASTERRECORD_ROOT__);
+  }
+  return __ORIGINAL_REQUIRE__.call(this, request);
+};
 var Migration = require('./migrations');
 var globSearch = require("glob");
 const pkg = require(path.join(__dirname, '..', 'package.json'));
