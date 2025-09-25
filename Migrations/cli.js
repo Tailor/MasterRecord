@@ -9,6 +9,7 @@ let fs = require('fs');
 let path = require('path');
 var Migration = require('./migrations');
 var globSearch = require("glob");
+const pkg = require(path.join(__dirname, '..', 'package.json'));
 
 
 const [,, ...args] = process.argv
@@ -16,8 +17,11 @@ const [,, ...args] = process.argv
 
 
 program
-  .version('0.0.3')
+  .version(pkg.version, '-v, --version')
   .description('A ORM framework that facilitates the creation and use of business objects whose data requires persistent storage to a database');
+
+// Support legacy '-V' as an alias to print version
+program.option('-V', 'output the version');
 
   // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
   program
@@ -276,3 +280,9 @@ program
 
 
 program.parse(process.argv);
+
+// Handle manual '-V' alias
+const opts = program.opts();
+if (opts && opts.V) {
+  console.log(pkg.version);
+}
