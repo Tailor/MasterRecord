@@ -1,14 +1,14 @@
 {
   "name": "masterrecord",
   "dependencies": {
-    "commander": "^13.1.0",
-    "glob" : "^11.0.1",
+    "commander": "^14.0.1",
+    "glob" : "^11.0.3",
     "deep-object-diff" : "^1.1.9",
-    "pg" : "^8.14.1",
-    "sync-mysql2" : "^1.0.5",
+    "pg" : "^8.16.3",
+    "sync-mysql2" : "^1.0.6",
     "app-root-path": "^3.1.0"
   },
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
   "repository": {
