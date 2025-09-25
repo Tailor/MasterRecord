@@ -1,5 +1,6 @@
-var MySql = require('sync-mysql2');
+// version : 0.0.1
 
+var MySql = require('sync-mysql2');
 
 class MySQLClient {
     constructor(config) {
