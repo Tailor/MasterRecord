@@ -231,49 +231,62 @@ program.option('-V', 'output the version');
          var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
          var files = globSearch.sync(search, executedLocation);
          var file = files[0];
-         if(file){
-          var contextSnapshot = require(file);
-          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-          if( migrationFiles && migrationFiles.length){
-            // organize by time using filename timestamp or file mtime
-            var mFiles = migrationFiles.slice().sort(function(a, b){
-              return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
-            });
-             var context = require(contextSnapshot.contextLocation);
-             
-             for (let i = 0; i < mFiles.length; i++) {
-                var file = mFiles[i];
-                var migrationProjectFile = require(file);
-
-                var contextInstance = new context();
-                var newMigrationProjectInstance = new migrationProjectFile(context);
-                var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-                var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-                newMigrationProjectInstance.up(tableObj);
-            }
-        
-            
-            var snap = {
-                  file : contextSnapshot.contextLocation,
-                  executedLocation : executedLocation,
-                  context : contextInstance,
-                  contextEntities : cleanEntities,
-                  contextFileName: contextFileName
-                }
- 
-             migration.createSnapShot(snap);
-             console.log("database updated");
-          }
-          else{
-           console.log("Error - Cannot read or find migration file");
-          }
-
+         if(!file){
+           console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
+           return;
          }
-         else{
-           console.log("Error - Cannot read or find Context file");
-          }
-        }catch (e){
+         var contextSnapshot;
+         try{
+           contextSnapshot = require(file);
+         }catch(_){
+           console.log(`Error - Cannot read context snapshot at '${file}'.`);
+           return;
+         }
+         var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+         var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+         if(!(migrationFiles && migrationFiles.length)){
+           console.log("Error - Cannot read or find migration file");
+           return;
+         }
+         // organize by time using filename timestamp or file mtime
+         var mFiles = migrationFiles.slice().sort(function(a, b){
+           return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+         });
+         let ContextCtor;
+         try{
+           ContextCtor = require(contextSnapshot.contextLocation);
+         }catch(_){
+           console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+           return;
+         }
+         var contextInstance;
+         try{
+           contextInstance = new ContextCtor();
+         }catch(_){
+           console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+           return;
+         }
+         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+         for (let i = 0; i < mFiles.length; i++) {
+            var migFile = mFiles[i];
+            var migrationProjectFile = require(migFile);
+            var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
+            var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+            newMigrationProjectInstance.up(tableObj);
+         }
+         var snap = {
+               file : contextSnapshot.contextLocation,
+               executedLocation : executedLocation,
+               context : contextInstance,
+               contextEntities : cleanEntities,
+               contextFileName: contextFileName
+             }
+ 
+         migration.createSnapShot(snap);
+         console.log("database updated");
+ 
+        }
+        catch (e){
           console.log("Error - Cannot read or find file ", e);
         }
   });
@@ -289,16 +302,27 @@ program.option('-V', 'output the version');
       var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
       var files = globSearch.sync(search, executedLocation);
       var file = files[0];
-      if(file){
-          var contextSnapshot = require(file);
-          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-          if( migrationFiles){
-            return migrationFiles;
-          }
+      if(!file){
+        console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
+        return;
       }
-      else{
-        console.log("Error - Cannot read or find Context file");
+      var contextSnapshot;
+      try{
+        contextSnapshot = require(file);
+      }catch(_){
+        console.log(`Error - Cannot read context snapshot at '${file}'.`);
+        return;
+      }
+      var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+      var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+      if(!(migrationFiles && migrationFiles.length)){
+        console.log("No migration files found.");
+        return;
+      }
+      var sorted = migrationFiles.slice().sort((a,b) => __getMigrationTimestamp(a) - __getMigrationTimestamp(b));
+      // Print relative names for readability
+      for(const f of sorted){
+        console.log(path.basename(f));
       }
  });
 
@@ -309,10 +333,102 @@ program.option('-V', 'output the version');
   .description('Apply pending migrations to database - down method call')
   .action(function(migrationFileName){
   // this will call all the down methods until it gets to the one your looking for. First it needs to validate that there is such a file.
-  // TODO:
-  
-  });
+    var executedLocation = process.cwd();
+    var migration = new Migration();
+    try{
+      // Accept either a bare filename or a path; normalize to basename
+      var targetName = path.basename(migrationFileName);
 
+      // Locate the target migration file anywhere under the current folder
+      var searchTarget = `${executedLocation}/**/${targetName}`;
+      var targetMatches = globSearch.sync(searchTarget, executedLocation);
+      if(!(targetMatches && targetMatches.length)){
+        console.log(`Error - Cannot read or find migration file '${targetName}' in '${executedLocation}'.`);
+        return;
+      }
+      var targetFilePath = targetMatches[0];
+      var migrationFolder = path.dirname(targetFilePath);
+
+      // Find the context snapshot within the same migrations folder
+      var snapshotMatches = globSearch.sync(`${migrationFolder}/**/*_contextSnapShot.json`, migrationFolder);
+      var snapshotFile = snapshotMatches && snapshotMatches[0];
+      if(!snapshotFile){
+        console.log("Error - Cannot read or find Context snapshot in migration folder.");
+        return;
+      }
+
+      var contextSnapshot;
+      try{
+        contextSnapshot = require(snapshotFile);
+      }catch(_){
+        console.log(`Error - Cannot read context snapshot at '${snapshotFile}'.`);
+        return;
+      }
+
+      // Get all migration files in this folder
+      var allMigrationFiles = globSearch.sync(`${migrationFolder}/**/*_migration.js`, migrationFolder);
+      if(!(allMigrationFiles && allMigrationFiles.length)){
+        console.log("Error - Cannot read or find migration file");
+        return;
+      }
+
+      // Sort chronologically
+      var sorted = allMigrationFiles.slice().sort(function(a, b){
+        return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+      });
+
+      // Find target index by basename match
+      var targetIndex = sorted.findIndex(function(f){ return path.basename(f) === targetName; });
+      if(targetIndex === -1){
+        console.log(`Error - Target migration '${targetName}' not found.`);
+        return;
+      }
+
+      // Prepare context and table object
+      let ContextCtor;
+      try{
+        ContextCtor = require(contextSnapshot.contextLocation);
+      }catch(_){
+        console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+        return;
+      }
+      var contextInstance;
+      try{
+        contextInstance = new ContextCtor();
+      }catch(_){
+        console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+        return;
+      }
+      var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+      var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+
+      // Roll back (down) all migrations newer than the target (i.e., strictly after targetIndex)
+      for (var i = sorted.length - 1; i > targetIndex; i--) {
+        var migFile = sorted[i];
+        var MigCtor = require(migFile);
+        var migInstance = new MigCtor(ContextCtor);
+        if(typeof migInstance.down === 'function'){
+          migInstance.down(tableObj);
+        } else {
+          console.log(`Warning - Migration '${path.basename(migFile)}' has no down method; skipping.`);
+        }
+      }
+
+      // Update snapshot
+      var snap = {
+        file : contextSnapshot.contextLocation,
+        executedLocation : executedLocation,
+        context : contextInstance,
+        contextEntities : cleanEntities,
+        contextFileName: path.basename(snapshotFile).replace('_contextSnapShot.json','')
+      }
+      migration.createSnapShot(snap);
+      console.log("database updated");
+
+    }catch (e){
+      console.log("Error - Cannot read or find file ", e);
+    }
+  });
 
 
 program.parse(process.argv);
