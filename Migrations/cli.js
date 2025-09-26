@@ -45,11 +45,9 @@ program.option('-V', 'output the version');
         var executedLocation = process.cwd();
         // find context file from main folder location
         var contextInstance = migration.findContext(executedLocation, contextFileName);
-       var context =  new contextInstance.context();
         var snap = {
           file : contextInstance.fileLocation,
           executedLocation : executedLocation,
-          context : context,
           contextEntities : [],
           contextFileName: contextFileName.toLowerCase()
         }
