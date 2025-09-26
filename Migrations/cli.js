@@ -21,6 +21,19 @@ var Migration = require('./migrations');
 var globSearch = require("glob");
 const pkg = require(path.join(__dirname, '..', 'package.json'));
 
+// Extract numeric timestamp from migration filename (e.g., 1737999999999_name_migration.js)
+function __getMigrationTimestamp(file){
+  try{
+    const base = path.basename(file);
+    const match = /^([0-9]{10,})_/i.exec(base);
+    if(match){ return Number(match[1]); }
+    const stat = fs.statSync(file);
+    return stat.mtimeMs || 0;
+  }catch(_){
+    return 0;
+  }
+}
+
 
 const [,, ...args] = process.argv
 
@@ -45,6 +58,10 @@ program.option('-V', 'output the version');
         var executedLocation = process.cwd();
         // find context file from main folder location
         var contextInstance = migration.findContext(executedLocation, contextFileName);
+        if(!contextInstance){
+          console.log(`Error - Cannot read or find Context file '${contextFileName}.js' in '${executedLocation}'.`);
+          return;
+        }
         var snap = {
           file : contextInstance.fileLocation,
           executedLocation : executedLocation,
@@ -103,23 +120,41 @@ program.option('-V', 'output the version');
           // find context file from main folder location
         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
         var files = globSearch.sync(search, executedLocation);
-        var file = files[0];
-        if(file){
-          var contextSnapshot = require(files[0]);
-          var context = require(contextSnapshot.contextLocation);
-          var contextInstance = new context();
-          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-          var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities);
-          var migrationDate = Date.now();
-          var file = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
-          fs.writeFile(file, newEntity, 'utf8', function (err) {
-            if (err) return console.log("--- Error running cammand, re-run command add-migration ---- ", err);
-          });
-          console.log(`${name} migration file created`);
+        var file = files && files[0];
+        if(!file){
+          console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'. Run 'masterrecord enable-migrations ${contextFileName}'.`);
+          return;
         }
-        else{
-          console.log("Error - Cannot read or find Context file");
+        var contextSnapshot = null;
+        try{
+          contextSnapshot = require(file);
+        }catch(_){
+          console.log(`Error - Cannot read context snapshot at '${file}'.`);
+          return;
         }
+
+        let ContextCtor;
+        try{
+          ContextCtor = require(contextSnapshot.contextLocation);
+        }catch(_){
+          console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+          return;
+        }
+        let contextInstance;
+        try{
+          contextInstance = new ContextCtor();
+        }catch(_){
+          console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+          return;
+        }
+        var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities);
+        var migrationDate = Date.now();
+        var outputFile = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
+        fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
+          if (err) return console.log("--- Error running cammand, re-run command add-migration ---- ", err);
+        });
+        console.log(`${name} migration file created`);
        }catch (e){
          console.log("Error - Cannot read or find file ", e);
       }
@@ -142,25 +177,20 @@ program.option('-V', 'output the version');
           var contextSnapshot = require(file);
           var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
           var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-          if( migrationFiles){
-            
-           // find newest migration file
-           // THIS DOESNT WORK BUG - hack to fix this I just take the last file which I am asuming is the newest one
-             var mFiles = migrationFiles.sort(function(x, y){
-               return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1
-             });
-          /** ENd of BUG */
-          
-             var mFile = mFiles[mFiles.length -1];
+          if( migrationFiles && migrationFiles.length){
+            // sort by timestamp prefix or file mtime as fallback
+            var mFiles = migrationFiles.slice().sort(function(a, b){
+              return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+            });
+            var mFile = mFiles[mFiles.length -1];
 
              var migrationProjectFile = require(mFile);
              var context = require(contextSnapshot.contextLocation);
              var contextInstance = new context();
              var newMigrationProjectInstance = new migrationProjectFile(context);
 
-             var tableObj = migration.buildUpObject(contextSnapshot.schema, contextInstance.__entities);
-             
-             var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+            var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+            var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
              newMigrationProjectInstance.up(tableObj);
             
              var snap = {
@@ -205,12 +235,10 @@ program.option('-V', 'output the version');
           var contextSnapshot = require(file);
           var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
           var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-          if( migrationFiles){
-            
-          
-            // organize by time
-            var mFiles = migrationFiles.sort(function(x, y){
-              return new Date(x.timestamp) < new Date(y.timestamp) ? 1 : -1;
+          if( migrationFiles && migrationFiles.length){
+            // organize by time using filename timestamp or file mtime
+            var mFiles = migrationFiles.slice().sort(function(a, b){
+              return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
             });
              var context = require(contextSnapshot.contextLocation);
              
@@ -220,8 +248,8 @@ program.option('-V', 'output the version');
 
                 var contextInstance = new context();
                 var newMigrationProjectInstance = new migrationProjectFile(context);
-                var tableObj = migration.buildUpObject(contextSnapshot.schema, contextInstance.__entities);
                 var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+                var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
                 newMigrationProjectInstance.up(tableObj);
             }
         

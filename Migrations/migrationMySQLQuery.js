@@ -8,10 +8,17 @@ class migrationMySQLQuery {
         var columnList = [];
         for (var key in table) {
             if(typeof table[key] === "object"){
-                columnList.push(table[key].name);
+                var col = table[key];
+                // Skip relationship-only fields
+                if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
+                    continue;
+                }
+                // Map belongsTo to its foreignKey name
+                var name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
+                columnList.push(name);
             }
         }
-        return columnList.join(',');;
+        return columnList.join(',');
     }
 
     #columnMapping(table){

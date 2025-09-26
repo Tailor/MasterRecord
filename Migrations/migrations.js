@@ -167,7 +167,10 @@ class Migrations{
     findContext(executedLocation, contextFileName){
         var search = `${executedLocation}/**/*${contextFileName}.js`
         var files = globSearch.sync(search, executedLocation);
-        var file = files[0];
+        var file = files && files[0];
+        if(!file){
+            return null;
+        }
         var context = require(file);
         return {
             context : context,
