@@ -219,6 +219,84 @@ program.option('-V', 'output the version');
 
 
   program
+  .command('update-database-down <contextFileName>')
+  .alias('udd')
+  .description('Run the latest migration down method for the given context')
+  .action(function(contextFileName){
+    var executedLocation = process.cwd();
+    contextFileName = contextFileName.toLowerCase();
+    var migration = new Migration();
+    try{
+       var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
+       var files = globSearch.sync(search, executedLocation);
+       var file = files && files[0];
+       if(!file){
+         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
+         return;
+       }
+       var contextSnapshot;
+       try{
+         contextSnapshot = require(file);
+       }catch(_){
+         console.log(`Error - Cannot read context snapshot at '${file}'.`);
+         return;
+       }
+       var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+       var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+       if(!(migrationFiles && migrationFiles.length)){
+         console.log("Error - Cannot read or find migration file");
+         return;
+       }
+       // Sort and select latest
+       var mFiles = migrationFiles.slice().sort(function(a, b){
+         return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+       });
+       var latestFile = mFiles[mFiles.length - 1];
+
+       // Prepare context and table object
+       let ContextCtor;
+       try{
+         ContextCtor = require(contextSnapshot.contextLocation);
+       }catch(_){
+         console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+         return;
+       }
+       var contextInstance;
+       try{
+         contextInstance = new ContextCtor();
+       }catch(_){
+         console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+         return;
+       }
+       var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+       var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+
+       var MigCtor = require(latestFile);
+       var migInstance = new MigCtor(ContextCtor);
+       if(typeof migInstance.down === 'function'){
+         migInstance.down(tableObj);
+       }else{
+         console.log(`Warning - Migration '${path.basename(latestFile)}' has no down method; skipping.`);
+       }
+
+       // Update snapshot
+       var snap = {
+         file : contextSnapshot.contextLocation,
+         executedLocation : executedLocation,
+         context : contextInstance,
+         contextEntities : cleanEntities,
+         contextFileName: contextFileName
+       }
+       migration.createSnapShot(snap);
+       console.log("database updated");
+
+    }catch (e){
+      console.log("Error - Cannot read or find file ", e);
+    }
+  });
+
+
+  program
   .command('update-database-restart <contextFileName>')
   .alias('udr')
   .description('Apply pending migrations to database - up method call')
