@@ -356,7 +356,15 @@ class schema{
                 const esc = String(v).replace(/'/g, "''");
                 return `'${esc}'`;
             }).join(", ");
-            const sql = `INSERT INTO ${tableName} (${colList}) VALUES (${vals})`;
+            // Idempotent seed: ignore duplicates on unique indexes
+            let sql;
+            if(this.context.isSQLite){
+                sql = `INSERT OR IGNORE INTO ${tableName} (${colList}) VALUES (${vals})`;
+            } else if(this.context.isMySQL){
+                sql = `INSERT IGNORE INTO ${tableName} (${colList}) VALUES (${vals})`;
+            } else {
+                sql = `INSERT INTO ${tableName} (${colList}) VALUES (${vals})`;
+            }
             this.context._execute(sql);
         }
     }

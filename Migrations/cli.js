@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// version 0.0.6
+// version 0.0.7
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
@@ -565,6 +565,96 @@ program.option('-V', 'output the version');
 
     }catch (e){
       console.log("Error - Cannot read or find file ", e);
+    }
+  });
+
+
+  program
+  .command('update-database-all')
+  .alias('uda')
+  .description('Scan the project for *Context.js files and run update-database on each')
+  .action(function(){
+    var executedLocation = process.cwd();
+    try{
+      // Find all Context files (e.g., chatContext.js)
+      var allFiles = globSearch.sync(`${executedLocation}/**/*Context.js`, executedLocation);
+      if(!(allFiles && allFiles.length)){
+        console.log('No Context files found.');
+        return;
+      }
+      // Deduplicate by basename (case-insensitive)
+      var seen = new Set();
+      var contextFiles = [];
+      for(const f of allFiles){
+        var name = path.basename(f).toLowerCase();
+        if(!seen.has(name)){
+          seen.add(name);
+          contextFiles.push(f);
+        }
+      }
+      var migration = new Migration();
+      // Process each context independently
+      for(const ctxFile of contextFiles){
+        try{
+          var base = path.basename(ctxFile);
+          var ctxName = base.replace(/\.js$/i, '').toLowerCase();
+          // Locate snapshot for this context
+          var snapMatches = globSearch.sync(`${executedLocation}/**/*${ctxName}_contextSnapShot.json`, executedLocation);
+          var snapFile = snapMatches && snapMatches[0];
+          if(!snapFile){
+            console.log(`Skipping ${ctxName}: snapshot not found. Run 'masterrecord enable-migrations ${ctxName}'.`);
+            continue;
+          }
+          var contextSnapshot;
+          try{ contextSnapshot = require(snapFile); }catch(_){
+            console.log(`Skipping ${ctxName}: cannot read context snapshot at '${snapFile}'.`);
+            continue;
+          }
+          // Get migration files for this snapshot folder
+          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+          if(!(migrationFiles && migrationFiles.length)){
+            console.log(`Skipping ${ctxName}: no migration files found.`);
+            continue;
+          }
+          // Pick latest
+          var mFiles = migrationFiles.slice().sort(function(a, b){
+            return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+          });
+          var mFile = mFiles[mFiles.length - 1];
+
+          var ContextCtor;
+          try{ ContextCtor = require(contextSnapshot.contextLocation); }catch(_){
+            console.log(`Skipping ${ctxName}: cannot load Context at '${contextSnapshot.contextLocation}'.`);
+            continue;
+          }
+          var contextInstance;
+          try{ contextInstance = new ContextCtor(); }catch(_){
+            console.log(`Skipping ${ctxName}: failed to construct Context.`);
+            continue;
+          }
+          var migrationProjectFile = require(mFile);
+          var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
+          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+          // Run up for this context
+          newMigrationProjectInstance.up(tableObj);
+          // Update snapshot
+          var snap = {
+            file : contextSnapshot.contextLocation,
+            executedLocation : executedLocation,
+            context : contextInstance,
+            contextEntities : cleanEntities,
+            contextFileName: ctxName
+          }
+          migration.createSnapShot(snap);
+          console.log(`database updated for ${ctxName}`);
+        }catch(errCtx){
+          console.log('Error updating context: ', errCtx);
+        }
+      }
+    }catch(e){
+      console.log('Error - Cannot read or find file ', e);
     }
   });
 

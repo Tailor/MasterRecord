@@ -1,4 +1,4 @@
-// version : 0.0.3
+// version : 0.0.4
 
 var MySql = require('sync-mysql2');
 
@@ -60,8 +60,20 @@ class MySQLClient {
     }
 
     close() {
-        if (this.connection) {
-            this.connection.end();
+        try {
+            if (!this.connection) { return; }
+            if (typeof this.connection.finishAll === 'function') {
+                // Drain any pending RPC calls
+                try { this.connection.finishAll(); } catch(_) { /* ignore */ }
+            }
+            if (typeof this.connection.end === 'function') {
+                try { this.connection.end(); } catch(_) { /* ignore */ }
+            } else if (typeof this.connection.close === 'function') {
+                try { this.connection.close(); } catch(_) { /* ignore */ }
+            } else if (typeof this.connection.dispose === 'function') {
+                try { this.connection.dispose(); } catch(_) { /* ignore */ }
+            }
+        } finally {
             this.connection = null;
         }
     }
