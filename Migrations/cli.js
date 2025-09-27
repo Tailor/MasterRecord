@@ -74,6 +74,66 @@ program.option('-V', 'output the version');
 
   });
 
+  program
+  .command('ensure-database <contextFileName>')
+  .alias('ed')
+  .description('Ensure the target database exists for the given context (MySQL)')
+  .action(function(contextFileName){
+    var executedLocation = process.cwd();
+    contextFileName = contextFileName.toLowerCase();
+    var migration = new Migration();
+    try{
+      var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
+      var files = globSearch.sync(search, executedLocation);
+      var file = files && files[0];
+      if(!file){
+        console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
+        return;
+      }
+      var contextSnapshot;
+      try{
+        contextSnapshot = require(file);
+      }catch(_){
+        console.log(`Error - Cannot read context snapshot at '${file}'.`);
+        return;
+      }
+      // Find latest migration file (so we can use its class which extends schema)
+      var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
+      var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+      if(!(migrationFiles && migrationFiles.length)){
+        console.log("Error - Cannot read or find migration file");
+        return;
+      }
+      var mFiles = migrationFiles.slice().sort(function(a, b){
+        return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+      });
+      var mFile = mFiles[mFiles.length -1];
+
+      let ContextCtor;
+      try{
+        ContextCtor = require(contextSnapshot.contextLocation);
+      }catch(_){
+        console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+        return;
+      }
+
+      // Use the migration class (extends schema) so createdatabase is available
+      var MigrationCtor = require(mFile);
+      var mig = new MigrationCtor(ContextCtor);
+      if(typeof mig.createdatabase === 'function'){
+        try{ mig.createdatabase(); }catch(_){ /* best-effort */ }
+        console.log('database ensured');
+      } else if(typeof mig.createDatabase === 'function'){
+        try{ mig.createDatabase(); }catch(_){ }
+        console.log('database ensured');
+      } else {
+        console.log('Error - Migration class missing createDatabase method');
+      }
+    }catch(e){
+      console.log('Error - Cannot read or find file ', e);
+    }
+  });
+
   // program
   // .command('create-database <contextFileName> <dbName>')
   // .alias('cd')

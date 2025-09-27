@@ -574,14 +574,24 @@ class SQLLiteEngine {
             this.db.connect(this.db);
             const res = this.db.query(query);
             if(res === null){
-                console.error('MySQL execute skipped: connection not defined');
+                const dbName = (this.db && this.db.config && this.db.config.database) ? this.db.config.database : '(unknown)';
+                if(this.db && this.db.lastErrorCode === 'ER_BAD_DB_ERROR'){
+                    console.error(`MySQL execute skipped: database '${dbName}' does not exist`);
+                }else{
+                    console.error('MySQL execute skipped: connection not defined');
+                }
                 return null;
             }
             return res;
         }catch(err){
             const code = err && err.code ? err.code : '';
             if(code === 'ER_BAD_DB_ERROR' || code === 'ECONNREFUSED' || code === 'PROTOCOL_CONNECTION_LOST'){
-                console.error('MySQL execute skipped: connection not defined');
+                const dbName = (this.db && this.db.config && this.db.config.database) ? this.db.config.database : '(unknown)';
+                if(code === 'ER_BAD_DB_ERROR'){
+                    console.error(`MySQL execute skipped: database '${dbName}' does not exist`);
+                } else {
+                    console.error('MySQL execute skipped: connection not defined');
+                }
                 return null;
             }
             console.error(err);

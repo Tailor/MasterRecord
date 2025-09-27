@@ -3,12 +3,17 @@ class schema{
 
     constructor(context){
         this.context = new context();
+        this._dbEnsured = false;
     }
 
 
     init(table){
         if(table){
             this.fullTable = table.___table;
+        }
+        // Ensure backing database exists for MySQL before running any DDL
+        if(this.context && this.context.isMySQL && this._dbEnsured !== true){
+            try{ this.createDatabase(); }catch(_){ /* best-effort */ }
         }
     }
     
@@ -251,6 +256,39 @@ class schema{
                 this.context._execute(query);
             }
         }
+    }
+
+    // EnsureCreated equivalent for MySQL: create DB if missing
+    createDatabase(){
+        try{
+            if(!(this.context && this.context.isMySQL)){ return; }
+            const MySQLClient = require('masterrecord/mySQLSyncConnect');
+            const client = this.context.db; // main client (may not be connected yet)
+            if(!client || !client.config || !client.config.database){ return; }
+            const dbName = client.config.database;
+            // Build server-level connection (no database)
+            const baseConfig = { ...client.config };
+            delete baseConfig.database;
+            const admin = new MySQLClient(baseConfig);
+            admin.connect();
+            if(!admin.connection){ return; }
+            const check = admin.query(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${dbName}'`);
+            const exists = Array.isArray(check) ? check.length > 0 : !!check?.length;
+            if(!exists){
+                // Create with sensible defaults
+                admin.query(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+            }
+            admin.close();
+            this._dbEnsured = true;
+        }catch(err){
+            // Non-fatal: migrations may still proceed if DB already exists or permissions blocked
+            try{ console.error(err); }catch(_){ }
+        }
+    }
+
+    // Alias for consistency with user expectation
+    createdatabase(table){
+        return this.createDatabase(table);
     }
 
 

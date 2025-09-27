@@ -9,6 +9,8 @@ class MySQLClient {
             delete this.config.type;
         }
         this.connection = null;
+        this.lastErrorCode = null;
+        this.lastErrorMessage = null;
     }
 
     connect() {
@@ -19,7 +21,14 @@ class MySQLClient {
             }
         } catch (err) {
             // Swallow connection errors and leave connection undefined so callers can react gracefully
-            console.error('MySQL connect error:', err && err.code ? err.code : err);
+            this.lastErrorCode = err && err.code ? err.code : null;
+            this.lastErrorMessage = err && err.message ? err.message : String(err);
+            if(this.lastErrorCode === 'ER_BAD_DB_ERROR'){
+                const dbName = this.config && this.config.database ? this.config.database : '(unknown)';
+                console.error(`MySQL connect error: database '${dbName}' does not exist`);
+            }else{
+                console.error('MySQL connect error:', this.lastErrorCode || this.lastErrorMessage);
+            }
             this.connection = null;
             return null;
         }
@@ -35,12 +44,16 @@ class MySQLClient {
             return jj;
         } catch (err) {
             // If the underlying driver surfaces bad DB or network errors, normalize to null
-            const code = err && err.code ? err.code : '';
-            if(code === 'ER_BAD_DB_ERROR' || code === 'ECONNREFUSED' || code === 'PROTOCOL_CONNECTION_LOST'){
-                console.error('MySQL query skipped due to connection not defined');
-                return null;
+            this.lastErrorCode = err && err.code ? err.code : null;
+            this.lastErrorMessage = err && err.message ? err.message : String(err);
+            if(this.lastErrorCode === 'ER_BAD_DB_ERROR'){
+                const dbName = this.config && this.config.database ? this.config.database : '(unknown)';
+                console.error(`MySQL error: database '${dbName}' does not exist`);
+            } else if(this.lastErrorCode === 'ECONNREFUSED' || this.lastErrorCode === 'PROTOCOL_CONNECTION_LOST'){
+                console.error('MySQL connection error:', this.lastErrorCode);
+            } else {
+                console.error(err);
             }
-            console.error(err);
             return null;
         }
 
