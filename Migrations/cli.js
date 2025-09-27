@@ -576,79 +576,68 @@ program.option('-V', 'output the version');
   .action(function(){
     var executedLocation = process.cwd();
     try{
-      // Find all Context files (e.g., chatContext.js)
-      var allFiles = globSearch.sync(`${executedLocation}/**/*Context.js`, executedLocation);
-      if(!(allFiles && allFiles.length)){
-        console.log('No Context files found.');
+      // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
+      var snapshotFiles = globSearch.sync(`${executedLocation}/**/*_contextSnapShot.json`, executedLocation);
+      if(!(snapshotFiles && snapshotFiles.length)){
+        console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
       }
-      // Deduplicate by basename (case-insensitive)
-      var seen = new Set();
-      var contextFiles = [];
-      for(const f of allFiles){
-        var name = path.basename(f).toLowerCase();
-        if(!seen.has(name)){
-          seen.add(name);
-          contextFiles.push(f);
-        }
+      // Group snapshots by context name (case-insensitive) and pick best per group
+      var groups = {};
+      for(const snapFile of snapshotFiles){
+        let cs;
+        try{ cs = require(snapFile); }catch(_){ continue; }
+        const nameFromPath = path.basename(snapFile).replace(/_contextSnapShot\.json$/i, '').toLowerCase();
+        const ctxName = (cs && cs.contextLocation)
+          ? path.basename(cs.contextLocation).replace(/\.js$/i, '').toLowerCase()
+          : nameFromPath;
+        const searchMigration = `${cs.migrationFolder}/**/*_migration.js`;
+        const migs = globSearch.sync(searchMigration, cs.migrationFolder) || [];
+        if(!groups[ctxName]) groups[ctxName] = [];
+        groups[ctxName].push({ snapFile, cs, ctxName, migs });
       }
+
       var migration = new Migration();
-      // Process each context independently
-      for(const ctxFile of contextFiles){
+      var ctxNames = Object.keys(groups);
+      for(const name of ctxNames){
         try{
-          var base = path.basename(ctxFile);
-          var ctxName = base.replace(/\.js$/i, '').toLowerCase();
-          // Locate snapshot for this context
-          var snapMatches = globSearch.sync(`${executedLocation}/**/*${ctxName}_contextSnapShot.json`, executedLocation);
-          var snapFile = snapMatches && snapMatches[0];
-          if(!snapFile){
-            console.log(`Skipping ${ctxName}: snapshot not found. Run 'masterrecord enable-migrations ${ctxName}'.`);
+          var list = groups[name];
+          // Prefer entries that actually have migration files
+          var withMigs = list.filter(e => e.migs && e.migs.length > 0);
+          var entry = withMigs.length ? withMigs[withMigs.length - 1] : list[0];
+          if(!(entry.migs && entry.migs.length)){
+            console.log(`Skipping ${entry.ctxName}: no migration files found.`);
             continue;
           }
-          var contextSnapshot;
-          try{ contextSnapshot = require(snapFile); }catch(_){
-            console.log(`Skipping ${ctxName}: cannot read context snapshot at '${snapFile}'.`);
-            continue;
-          }
-          // Get migration files for this snapshot folder
-          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
-          if(!(migrationFiles && migrationFiles.length)){
-            console.log(`Skipping ${ctxName}: no migration files found.`);
-            continue;
-          }
-          // Pick latest
-          var mFiles = migrationFiles.slice().sort(function(a, b){
+          var mFiles = entry.migs.slice().sort(function(a, b){
             return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
           });
           var mFile = mFiles[mFiles.length - 1];
 
           var ContextCtor;
-          try{ ContextCtor = require(contextSnapshot.contextLocation); }catch(_){
-            console.log(`Skipping ${ctxName}: cannot load Context at '${contextSnapshot.contextLocation}'.`);
+          try{ ContextCtor = require(entry.cs.contextLocation); }catch(_){
+            console.log(`Skipping ${entry.ctxName}: cannot load Context at '${entry.cs.contextLocation}'.`);
             continue;
           }
           var contextInstance;
           try{ contextInstance = new ContextCtor(); }catch(_){
-            console.log(`Skipping ${ctxName}: failed to construct Context.`);
+            console.log(`Skipping ${entry.ctxName}: failed to construct Context.`);
             continue;
           }
           var migrationProjectFile = require(mFile);
           var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
           var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-          var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-          // Run up for this context
+          var tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
           newMigrationProjectInstance.up(tableObj);
-          // Update snapshot
           var snap = {
-            file : contextSnapshot.contextLocation,
+            file : entry.cs.contextLocation,
             executedLocation : executedLocation,
             context : contextInstance,
             contextEntities : cleanEntities,
-            contextFileName: ctxName
+            contextFileName: entry.ctxName
           }
           migration.createSnapShot(snap);
-          console.log(`database updated for ${ctxName}`);
+          console.log(`database updated for ${entry.ctxName}`);
         }catch(errCtx){
           console.log('Error updating context: ', errCtx);
         }

@@ -15,7 +15,7 @@ class migrationMySQLQuery {
                 }
                 // Map belongsTo to its foreignKey name
                 var name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
-                columnList.push(name);
+                columnList.push(`\`${name}\``);
             }
         }
         return columnList.join(',');
@@ -63,7 +63,7 @@ class migrationMySQLQuery {
             }
         }
 
-        return `${tableName} ${type}${nullName}${defaultValue}${unique}${primaryKey}${auto}`;
+        return `\`${tableName}\` ${type}${nullName}${defaultValue}${unique}${primaryKey}${auto}`;
     }
 
     boolType(type){
@@ -135,7 +135,7 @@ class migrationMySQLQuery {
       
         if(table){
 
-            return `ALTER TABLE ${table.tableName} MODIFY COLUMN ${this.#columnMapping(table.table)} `;
+            return `ALTER TABLE \`${table.tableName}\` MODIFY COLUMN ${this.#columnMapping(table.table)} `;
         }
         else{
             console.log("table information is null");
@@ -152,8 +152,8 @@ class migrationMySQLQuery {
 
 
     addColum(table){
-        return `ALTER TABLE ${table.tableName}
-        ADD ${table.name} ${table.realDataType}`;
+        return `ALTER TABLE \`${table.tableName}\`
+        ADD \`${table.name}\` ${table.realDataType}`;
 
         /*
             column definations
@@ -172,7 +172,7 @@ class migrationMySQLQuery {
         is indexed
         appears in a view
         */
-        return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`;
+        return `ALTER TABLE \`${table.tableName}\` DROP COLUMN \`${table.name}\``;
     }
 
     insertInto(name, table){
@@ -193,7 +193,7 @@ class migrationMySQLQuery {
             }
         }
 
-        var completeQuery = `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
+        var completeQuery = `CREATE TABLE IF NOT EXISTS \`${table.__name}\` (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;
 
             /*
@@ -213,15 +213,15 @@ class migrationMySQLQuery {
 
 
     dropTable(name){
-        return `DROP TABLE ${name}`
+        return `DROP TABLE \`${name}\``
     }
 
     renameTable(table){
-        return `ALTER TABLE ${table.tableName} RENAME TO ${table.newName}`;
+        return `ALTER TABLE \`${table.tableName}\` RENAME TO \`${table.newName}\``;
     }
 
     renameColumn(table){
-        return `ALTER TABLE ${table.tableName} RENAME COLUMN ${table.name} TO ${table.newName}`
+        return `ALTER TABLE \`${table.tableName}\` RENAME COLUMN \`${table.name}\` TO \`${table.newName}\``
     }
 
     
