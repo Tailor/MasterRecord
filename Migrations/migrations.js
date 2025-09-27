@@ -1,4 +1,4 @@
-// version 0.0.8
+// version 0.0.9
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -238,6 +238,9 @@ class Migrations{
         tables.forEach(function (item, index) {
                     // add new columns for table
                     var columnInfo = tables[index];
+                    // Always expose each table under its name so templates like
+                    // this.createTable(table.TableName) can safely access it.
+                    tableObj[item.name] = columnInfo.new;
                     
                     item.newTables.forEach(function (column, ind) {
                         tableObj[item.name] = columnInfo.new;

@@ -1,4 +1,4 @@
-// version 0.0.5
+// version 0.0.6
 class schema{
 
     constructor(context){
@@ -85,7 +85,7 @@ class schema{
                 }
             }
         }else{
-            console.log("Table that your trying to create is undefined. PLease check if there are any changes that need to be made");
+            console.log("Table that you're trying to create is undefined. Please check if there are any changes that need to be made");
         }
     }
 

@@ -570,8 +570,23 @@ class SQLLiteEngine {
 
     _execute(query){
         console.log("SQL:", query);
-        this.db.connect(this.db);
-        return this.db.query(query);
+        try{
+            this.db.connect(this.db);
+            const res = this.db.query(query);
+            if(res === null){
+                console.error('MySQL execute skipped: connection not defined');
+                return null;
+            }
+            return res;
+        }catch(err){
+            const code = err && err.code ? err.code : '';
+            if(code === 'ER_BAD_DB_ERROR' || code === 'ECONNREFUSED' || code === 'PROTOCOL_CONNECTION_LOST'){
+                console.error('MySQL execute skipped: connection not defined');
+                return null;
+            }
+            console.error(err);
+            return null;
+        }
     }
 
      _run(query){
