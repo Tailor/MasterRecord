@@ -5,6 +5,7 @@ var fs = require('fs');
 var diff = require("deep-object-diff");
 var MigrationTemplate = require("./migrationTemplate");
 var globSearch = require("glob");
+var path = require('path');
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
@@ -203,28 +204,30 @@ class Migrations{
     }
 
     createSnapShot(snap){
-        
-        var dbFolder = `${snap.executedLocation}/db`;
+        // Place migrations alongside the Context file by default:
+        // <ContextDir>/db/migrations/<context>_contextSnapShot.json
+        const contextDir = path.dirname(snap.file);
+        const dbFolder = path.join(contextDir, 'db');
         if (!fs.existsSync(dbFolder)){
-            fs.mkdirSync(dbFolder);
+            fs.mkdirSync(dbFolder, { recursive: true });
         }
 
-        var migrationsDirectory = `${snap.executedLocation}/db/migrations`;
+        const migrationsDirectory = path.join(dbFolder, 'migrations');
         if (!fs.existsSync(migrationsDirectory)){
-            fs.mkdirSync(migrationsDirectory);
+            fs.mkdirSync(migrationsDirectory, { recursive: true });
         }
     
+        const snapshotPath = path.join(migrationsDirectory, `${snap.contextFileName}_contextSnapShot.json`);
         var content = {
             contextLocation: snap.file,
-            migrationFolder: `${snap.executedLocation}/db/migrations`,
-            snapShotLocation: `${snap.executedLocation}/db/migrations/${snap.contextFileName}_contextSnapShot.json`,
+            migrationFolder: migrationsDirectory,
+            snapShotLocation: snapshotPath,
             schema : snap.contextEntities
         };
     
         const jsonContent = JSON.stringify(content, null, 2);
         try{
-          // will replace the whole file if it exist
-            fs.writeFileSync(`${migrationsDirectory}/${snap.contextFileName}_contextSnapShot.json`, jsonContent);
+            fs.writeFileSync(snapshotPath, jsonContent);
         }catch (e){
             console.log("Cannot write file ", e);
         }

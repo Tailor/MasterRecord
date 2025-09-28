@@ -569,21 +569,23 @@ program.option('-V', 'output the version');
     var executedLocation = process.cwd();
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
-      var snapshotFiles = globSearch.sync(path.join(executedLocation, '**', '*_contextSnapShot.json'), executedLocation);
+      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', executedLocation);
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
       }
       // Group snapshots by context name (case-insensitive) and pick best per group
       var groups = {};
-      for(const snapFile of snapshotFiles){
+      for(const snapRel of snapshotFiles){
+        const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
         try{ cs = require(snapFile); }catch(_){ continue; }
         const nameFromPath = path.basename(snapFile).replace(/_contextSnapShot\.json$/i, '').toLowerCase();
         const ctxName = (cs && cs.contextLocation)
           ? path.basename(cs.contextLocation).replace(/\.js$/i, '').toLowerCase()
           : nameFromPath;
-        const migs = globSearch.sync(path.join(cs.migrationFolder, '**', '*_migration.js'), cs.migrationFolder) || [];
+        const migRel = globSearch.sync('**/*_migration.js', cs.migrationFolder) || [];
+        const migs = migRel.map(f => path.resolve(cs.migrationFolder, f));
         if(!groups[ctxName]) groups[ctxName] = [];
         groups[ctxName].push({ snapFile, cs, ctxName, migs });
       }
