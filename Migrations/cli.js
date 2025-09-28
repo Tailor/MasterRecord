@@ -569,7 +569,7 @@ program.option('-V', 'output the version');
     var executedLocation = process.cwd();
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
-      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', executedLocation);
+      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
@@ -584,7 +584,13 @@ program.option('-V', 'output the version');
         const ctxName = (cs && cs.contextLocation)
           ? path.basename(cs.contextLocation).replace(/\.js$/i, '').toLowerCase()
           : nameFromPath;
-        const migRel = globSearch.sync('**/*_migration.js', cs.migrationFolder) || [];
+        // Find migrations in snapshot's migrationFolder; fallback to <ContextDir>/db/migrations
+        let migRel = globSearch.sync('**/*_migration.js', { cwd: cs.migrationFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+        if(!(migRel && migRel.length)){
+          const defaultFolder = path.join(path.dirname(cs.contextLocation || snapFile), 'db', 'migrations');
+          migRel = globSearch.sync('**/*_migration.js', { cwd: defaultFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+          if(migRel && migRel.length){ cs.migrationFolder = defaultFolder; }
+        }
         const migs = migRel.map(f => path.resolve(cs.migrationFolder, f));
         if(!groups[ctxName]) groups[ctxName] = [];
         groups[ctxName].push({ snapFile, cs, ctxName, migs });
