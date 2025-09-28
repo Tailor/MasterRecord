@@ -83,9 +83,8 @@ program.option('-V', 'output the version');
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
     try{
-      var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-      var files = globSearch.sync(search, executedLocation);
-      var file = files && files[0];
+      var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
         return;
@@ -98,8 +97,8 @@ program.option('-V', 'output the version');
         return;
       }
       // Find latest migration file (so we can use its class which extends schema)
-      var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-      var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+      migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
       if(!(migrationFiles && migrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         return;
@@ -178,9 +177,8 @@ program.option('-V', 'output the version');
     var migration = new Migration();
       try{
           // find context file from main folder location
-        var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-        var files = globSearch.sync(search, executedLocation);
-        var file = files && files[0];
+        var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
         if(!file){
           console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'. Run 'masterrecord enable-migrations ${contextFileName}'.`);
           return;
@@ -229,14 +227,13 @@ program.option('-V', 'output the version');
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
       try{
-         // find context file from main folder location
-         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-         var files = globSearch.sync(search, executedLocation);
-         var file = files[0];
+         // find context snapshot (cwd-based glob)
+         var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
          if(file){
           var contextSnapshot = require(file);
-          var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-          var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+          var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+          migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
           if( migrationFiles && migrationFiles.length){
             // sort by timestamp prefix or file mtime as fallback
             var mFiles = migrationFiles.slice().sort(function(a, b){
@@ -287,9 +284,8 @@ program.option('-V', 'output the version');
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
     try{
-       var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-       var files = globSearch.sync(search, executedLocation);
-       var file = files && files[0];
+       var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+       var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
        if(!file){
          console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
          return;
@@ -301,8 +297,8 @@ program.option('-V', 'output the version');
          console.log(`Error - Cannot read context snapshot at '${file}'.`);
          return;
        }
-       var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-       var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+       var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+       migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
        if(!(migrationFiles && migrationFiles.length)){
          console.log("Error - Cannot read or find migration file");
          return;
@@ -365,10 +361,9 @@ program.option('-V', 'output the version');
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
       try{
-         // find context file from main folder location
-         var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-         var files = globSearch.sync(search, executedLocation);
-         var file = files[0];
+         // find context snapshot (cwd-based glob)
+         var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
          if(!file){
            console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
            return;
@@ -380,8 +375,8 @@ program.option('-V', 'output the version');
            console.log(`Error - Cannot read context snapshot at '${file}'.`);
            return;
          }
-         var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-         var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+         var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+         migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
          if(!(migrationFiles && migrationFiles.length)){
            console.log("Error - Cannot read or find migration file");
            return;
@@ -437,9 +432,8 @@ program.option('-V', 'output the version');
  .action(function(contextFileName){
       var executedLocation = process.cwd();
       contextFileName = contextFileName.toLowerCase();
-      var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-      var files = globSearch.sync(search, executedLocation);
-      var file = files[0];
+      var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
         return;
@@ -451,13 +445,12 @@ program.option('-V', 'output the version');
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
       }
-      var searchMigration = `${contextSnapshot.migrationFolder}/**/*_migration.js`;
-      var migrationFiles = globSearch.sync(searchMigration, contextSnapshot.migrationFolder);
+      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(migrationFiles && migrationFiles.length)){
         console.log("No migration files found.");
         return;
       }
-      var sorted = migrationFiles.slice().sort((a,b) => __getMigrationTimestamp(a) - __getMigrationTimestamp(b));
+      var sorted = migrationFiles.slice().sort((a,b) => __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, a)) - __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, b)));
       // Print relative names for readability
       for(const f of sorted){
         console.log(path.basename(f));
@@ -478,18 +471,17 @@ program.option('-V', 'output the version');
       var targetName = path.basename(migrationFileName);
 
       // Locate the target migration file anywhere under the current folder
-      var searchTarget = `${executedLocation}/**/${targetName}`;
-      var targetMatches = globSearch.sync(searchTarget, executedLocation);
+      var targetMatches = globSearch.sync(`**/${targetName}`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
       if(!(targetMatches && targetMatches.length)){
         console.log(`Error - Cannot read or find migration file '${targetName}' in '${executedLocation}'.`);
         return;
       }
-      var targetFilePath = targetMatches[0];
+      var targetFilePath = path.resolve(executedLocation, targetMatches[0]);
       var migrationFolder = path.dirname(targetFilePath);
 
       // Find the context snapshot within the same migrations folder
-      var snapshotMatches = globSearch.sync(`${migrationFolder}/**/*_contextSnapShot.json`, migrationFolder);
-      var snapshotFile = snapshotMatches && snapshotMatches[0];
+      var snapshotMatches = globSearch.sync(`**/*_contextSnapShot.json`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
+      var snapshotFile = snapshotMatches && snapshotMatches[0] ? path.resolve(migrationFolder, snapshotMatches[0]) : null;
       if(!snapshotFile){
         console.log("Error - Cannot read or find Context snapshot in migration folder.");
         return;
@@ -504,7 +496,7 @@ program.option('-V', 'output the version');
       }
 
       // Get all migration files in this folder
-      var allMigrationFiles = globSearch.sync(`${migrationFolder}/**/*_migration.js`, migrationFolder);
+      var allMigrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(allMigrationFiles && allMigrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         return;
@@ -512,7 +504,7 @@ program.option('-V', 'output the version');
 
       // Sort chronologically
       var sorted = allMigrationFiles.slice().sort(function(a, b){
-        return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+        return __getMigrationTimestamp(path.resolve(migrationFolder, a)) - __getMigrationTimestamp(path.resolve(migrationFolder, b));
       });
 
       // Find target index by basename match
@@ -542,7 +534,7 @@ program.option('-V', 'output the version');
 
       // Roll back (down) all migrations newer than the target (i.e., strictly after targetIndex)
       for (var i = sorted.length - 1; i > targetIndex; i--) {
-        var migFile = sorted[i];
+        var migFile = path.resolve(migrationFolder, sorted[i]);
         var MigCtor = require(migFile);
         var migInstance = new MigCtor(ContextCtor);
         if(typeof migInstance.down === 'function'){
@@ -577,22 +569,23 @@ program.option('-V', 'output the version');
     var executedLocation = process.cwd();
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
-      var snapshotFiles = globSearch.sync(`${executedLocation}/**/*_contextSnapShot.json`, executedLocation);
+      var snapshotFiles = globSearch.sync(`**/*_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
       }
       // Group snapshots by context name (case-insensitive) and pick best per group
       var groups = {};
-      for(const snapFile of snapshotFiles){
+      for(const snapRel of snapshotFiles){
+        const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
         try{ cs = require(snapFile); }catch(_){ continue; }
         const nameFromPath = path.basename(snapFile).replace(/_contextSnapShot\.json$/i, '').toLowerCase();
         const ctxName = (cs && cs.contextLocation)
           ? path.basename(cs.contextLocation).replace(/\.js$/i, '').toLowerCase()
           : nameFromPath;
-        const searchMigration = `${cs.migrationFolder}/**/*_migration.js`;
-        const migs = globSearch.sync(searchMigration, cs.migrationFolder) || [];
+        const migsRel = globSearch.sync(`**/*_migration.js`, { cwd: cs.migrationFolder, dot: true, windowsPathsNoEscape: true }) || [];
+        const migs = migsRel.map(f => path.resolve(cs.migrationFolder, f));
         if(!groups[ctxName]) groups[ctxName] = [];
         groups[ctxName].push({ snapFile, cs, ctxName, migs });
       }
