@@ -218,10 +218,14 @@ class Migrations{
         }
     
         const snapshotPath = path.join(migrationsDirectory, `${snap.contextFileName}_contextSnapShot.json`);
+        // Store relative paths (portable): values are relative to the snapshot file directory (migrationsDirectory)
+        const relContextLocation = path.relative(migrationsDirectory, snap.file);
+        const relMigrationFolder = '.'; // the snapshot sits inside migrationsDirectory
+        const relSnapshotLocation = path.basename(snapshotPath);
         var content = {
-            contextLocation: snap.file,
-            migrationFolder: migrationsDirectory,
-            snapShotLocation: snapshotPath,
+            contextLocation: relContextLocation,
+            migrationFolder: relMigrationFolder,
+            snapShotLocation: relSnapshotLocation,
             schema : snap.contextEntities
         };
     
@@ -316,7 +320,6 @@ class Migrations{
 
        return MT.get();
     }
-
 
 }
 

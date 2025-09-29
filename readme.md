@@ -179,4 +179,106 @@ Notes:
 - For large SQLite tables, a rebuild copies data; consider maintenance windows.
 - Use `master=development masterrecord get-migrations AppContext` to inspect migration order.
 
+## Multi-context (multi-database) projects
+
+When your project defines multiple Context files (e.g., `userContext.js`, `modelContext.js`, `mailContext.js`, `chatContext.js`) across different packages or feature directories, MasterRecord can auto-detect and operate on all of them.
+
+### New bulk commands
+
+- enable-migrations-all (alias: ema)
+  - Scans the project for MasterRecord Context files (heuristic) and enables migrations for each by writing a portable snapshot next to the context at `<ContextDir>/db/migrations/<context>_contextSnapShot.json`.
+
+- add-migration-all <Name> (alias: ama)
+  - Creates a migration named `<Name>` (e.g., `Init`) for every detected context that has a snapshot. Migrations are written into each context’s own migrations folder.
+
+- update-database-all (alias: uda)
+  - Applies the latest migration for every detected context with migrations.
+
+- update-database-down <ContextName> (alias: udd)
+  - Runs the latest migration’s `down()` for the specified context.
+
+- update-database-target <migrationFileName> (alias: udt)
+  - Rolls back migrations newer than the given migration file within that context’s migrations folder.
+
+- ensure-database <ContextName> (alias: ed)
+  - For MySQL contexts, ensures the database exists (like EF’s `Database.EnsureCreated`). Auto-detects connection info from your Context env settings.
+
+### Portable snapshots (no hardcoded absolute paths)
+
+Snapshots are written with relative paths, so moving/renaming the project root does not break CLI resolution:
+- `contextLocation`: path from the migrations folder to the Context file
+- `migrationFolder`: `.` (the snapshot resides in the migrations folder)
+- `snapShotLocation`: the snapshot filename
+
+### Typical flow for multiple contexts
+
+1) Enable migrations everywhere:
+```bash
+# macOS/Linux
+master=development masterrecord enable-migrations-all
+
+# Windows PowerShell
+$env:master = 'development'
+masterrecord enable-migrations-all
+```
+
+2) Create an initial migration for all contexts:
+```bash
+# macOS/Linux
+master=development masterrecord add-migration-all Init
+
+# Windows PowerShell
+$env:master = 'development'
+masterrecord add-migration-all Init
+```
+
+3) Apply migrations everywhere:
+```bash
+# macOS/Linux
+master=development masterrecord update-database-all
+
+# Windows PowerShell
+$env:master = 'development'
+masterrecord update-database-all
+```
+
+4) Inspect migrations for a specific context:
+```bash
+# macOS/Linux
+master=development masterrecord get-migrations userContext
+
+# Windows PowerShell
+$env:master = 'development'
+masterrecord get-migrations userContext
+```
+
+5) Roll back latest for a specific context:
+```bash
+# macOS/Linux
+master=development masterrecord update-database-down userContext
+
+# Windows PowerShell
+$env:master = 'development'
+masterrecord update-database-down userContext
+```
+
+### Environment selection (cross-platform)
+- macOS/Linux prefix: `master=development ...` or `NODE_ENV=development ...`
+- Windows PowerShell:
+```powershell
+$env:master = 'development'
+masterrecord update-database-all
+```
+- Windows cmd.exe:
+```cmd
+set master=development && masterrecord update-database-all
+```
+
+### Notes and tips
+- Each Context should define its own env settings and tables; `update-database-all` operates context-by-context so separate databases are handled cleanly.
+- For SQLite contexts, the `connection` path will be created if the directory does not exist.
+- For MySQL contexts, `ensure-database <ContextName>` can create the DB (permissions required) before migrations run.
+- If you rename/move the project root, re-run `enable-migrations-all` or any single-context command once; snapshots use relative paths and will continue working.
+- If `update-database-all` reports “no migration files found” for a context, run `get-migrations <ContextName>`. If empty, create a migration with `add-migration <Name> <ContextName>` or use `add-migration-all <Name>`.
+
 

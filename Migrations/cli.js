@@ -562,6 +562,61 @@ program.option('-V', 'output the version');
 
 
   program
+  .command('add-migration-all <name>')
+  .alias('ama')
+  .description('Create a migration with the given name for all detected contexts')
+  .action(function(name){
+    var executedLocation = process.cwd();
+    try{
+      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      if(!(snapshotFiles && snapshotFiles.length)){
+        console.log('No context snapshots found. Run enable-migrations-all first.');
+        return;
+      }
+      var created = 0;
+      for(const snapRel of snapshotFiles){
+        try{
+          const snapFile = path.resolve(executedLocation, snapRel);
+          let cs;
+          try{ cs = require(snapFile); }catch(_){ continue; }
+          const snapDir = path.dirname(snapFile);
+          const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
+          const migBase = path.resolve(snapDir, cs.migrationFolder || '.');
+          // Load context
+          let ContextCtor;
+          try{ ContextCtor = require(contextAbs); }catch(_){
+            console.log(`Skipping: cannot load Context at '${contextAbs}'.`);
+            continue;
+          }
+          let contextInstance;
+          try{ contextInstance = new ContextCtor(); }catch(_){
+            console.log(`Skipping: failed to construct Context from '${contextAbs}'.`);
+            continue;
+          }
+          var migration = new Migration();
+          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          var newEntity = migration.template(name, cs.schema, cleanEntities);
+          if(!fs.existsSync(migBase)){
+            try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
+          }
+          var migrationDate = Date.now();
+          var outputFile = path.join(migBase, `${migrationDate}_${name}_migration.js`);
+          fs.writeFileSync(outputFile, newEntity, 'utf8');
+          console.log(`Created migration '${path.basename(outputFile)}' for ${path.basename(contextAbs)}`);
+          created++;
+        }catch(err){
+          console.log('Skipping snapshot due to error: ', err);
+        }
+      }
+      if(created === 0){
+        console.log('No migrations created.');
+      }
+    }catch(e){
+      console.log('Error - Cannot create migrations for all contexts ', e);
+    }
+  });
+
+  program
   .command('update-database-all')
   .alias('uda')
   .description('Scan the project for *Context.js files and run update-database on each')
@@ -580,20 +635,21 @@ program.option('-V', 'output the version');
         const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
         try{ cs = require(snapFile); }catch(_){ continue; }
+        const snapDir = path.dirname(snapFile);
+        const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
+        let migBase = path.resolve(snapDir, cs.migrationFolder || '.');
         const nameFromPath = path.basename(snapFile).replace(/_contextSnapShot\.json$/i, '').toLowerCase();
-        const ctxName = (cs && cs.contextLocation)
-          ? path.basename(cs.contextLocation).replace(/\.js$/i, '').toLowerCase()
-          : nameFromPath;
+        const ctxName = contextAbs ? path.basename(contextAbs).replace(/\.js$/i, '').toLowerCase() : nameFromPath;
         // Find migrations in snapshot's migrationFolder; fallback to <ContextDir>/db/migrations
-        let migRel = globSearch.sync('**/*_migration.js', { cwd: cs.migrationFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+        let migRel = globSearch.sync('**/*_migration.js', { cwd: migBase, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
         if(!(migRel && migRel.length)){
-          const defaultFolder = path.join(path.dirname(cs.contextLocation || snapFile), 'db', 'migrations');
+          const defaultFolder = path.join(path.dirname(contextAbs || snapFile), 'db', 'migrations');
           migRel = globSearch.sync('**/*_migration.js', { cwd: defaultFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
-          if(migRel && migRel.length){ cs.migrationFolder = defaultFolder; }
+          if(migRel && migRel.length){ migBase = defaultFolder; }
         }
-        const migs = migRel.map(f => path.resolve(cs.migrationFolder, f));
+        const migs = migRel.map(f => path.resolve(migBase, f));
         if(!groups[ctxName]) groups[ctxName] = [];
-        groups[ctxName].push({ snapFile, cs, ctxName, migs });
+        groups[ctxName].push({ snapFile, snapDir, cs, ctxName, migs, contextAbs, migBase });
       }
 
       var migration = new Migration();
@@ -614,8 +670,8 @@ program.option('-V', 'output the version');
           var mFile = mFiles[mFiles.length - 1];
 
           var ContextCtor;
-          try{ ContextCtor = require(entry.cs.contextLocation); }catch(_){
-            console.log(`Skipping ${entry.ctxName}: cannot load Context at '${entry.cs.contextLocation}'.`);
+          try{ ContextCtor = require(entry.contextAbs); }catch(_){
+            console.log(`Skipping ${entry.ctxName}: cannot load Context at '${entry.contextAbs}'.`);
             continue;
           }
           var contextInstance;
@@ -629,7 +685,7 @@ program.option('-V', 'output the version');
           var tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
           newMigrationProjectInstance.up(tableObj);
           var snap = {
-            file : entry.cs.contextLocation,
+            file : entry.contextAbs,
             executedLocation : executedLocation,
             context : contextInstance,
             contextEntities : cleanEntities,
@@ -643,6 +699,58 @@ program.option('-V', 'output the version');
       }
     }catch(e){
       console.log('Error - Cannot read or find file ', e);
+    }
+  });
+
+  program
+  .command('enable-migrations-all')
+  .alias('ema')
+  .description('Enable migrations for all detected MasterRecord Context files')
+  .action(function(){
+    var executedLocation = process.cwd();
+    try{
+      // Find candidate Context files
+      var candidates = globSearch.sync('**/*Context.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+      if(!(candidates && candidates.length)){
+        console.log('No Context files found.');
+        return;
+      }
+      var seen = new Set();
+      var enabled = 0;
+      var migration = new Migration();
+      for(const rel of candidates){
+        try{
+          const abs = path.resolve(executedLocation, rel);
+          // Skip node_modules
+          if(abs.indexOf('node_modules') !== -1){ continue; }
+          // Heuristic filter: file must look like a MasterRecord context
+          let text = '';
+          try{ text = fs.readFileSync(abs, 'utf8'); }catch(_){ continue; }
+          const looksLikeContext = /extends\s+masterrecord\.context/i.test(text) || /require\(['"]masterrecord['"]\)/i.test(text);
+          if(!looksLikeContext){ continue; }
+          const ctxName = path.basename(abs).replace(/\.js$/i,'');
+          const key = ctxName.toLowerCase();
+          if(seen.has(key)){ continue; }
+          seen.add(key);
+          // Create snapshot relative to the context file directory
+          var snap = {
+            file : abs,
+            executedLocation : executedLocation,
+            contextEntities : [],
+            contextFileName: key
+          };
+          migration.createSnapShot(snap);
+          console.log(`migrations enabled for ${ctxName}`);
+          enabled++;
+        }catch(err){
+          console.log('Skipping candidate due to error: ', err);
+        }
+      }
+      if(enabled === 0){
+        console.log('No eligible MasterRecord Contexts detected.');
+      }
+    }catch(e){
+      console.log('Error - Failed to enable migrations for all contexts ', e);
     }
   });
 
