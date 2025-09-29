@@ -96,9 +96,12 @@ program.option('-V', 'output the version');
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
       }
+      const snapDir = path.dirname(file);
+      const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+      const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
       // Find latest migration file (so we can use its class which extends schema)
-      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
-      migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
+      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
       if(!(migrationFiles && migrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         return;
@@ -110,9 +113,9 @@ program.option('-V', 'output the version');
 
       let ContextCtor;
       try{
-        ContextCtor = require(contextSnapshot.contextLocation);
+        ContextCtor = require(contextAbs);
       }catch(_){
-        console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+        console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
         return;
       }
 
@@ -248,8 +251,11 @@ program.option('-V', 'output the version');
          var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
          if(file){
           var contextSnapshot = require(file);
-          var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
-          migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
+          const snapDir = path.dirname(file);
+          const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+          const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+          var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+          migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
           if( migrationFiles && migrationFiles.length){
             // sort by timestamp prefix or file mtime as fallback
             var mFiles = migrationFiles.slice().sort(function(a, b){
@@ -257,9 +263,9 @@ program.option('-V', 'output the version');
             });
             var mFile = mFiles[mFiles.length -1];
 
-             var migrationProjectFile = require(mFile);
-             var context = require(contextSnapshot.contextLocation);
-             var contextInstance = new context();
+            var migrationProjectFile = require(mFile);
+            var ContextCtor = require(contextAbs);
+            var contextInstance = new ContextCtor();
              var newMigrationProjectInstance = new migrationProjectFile(context);
 
             var cleanEntities = migration.cleanEntities(contextInstance.__entities);
@@ -267,7 +273,7 @@ program.option('-V', 'output the version');
              newMigrationProjectInstance.up(tableObj);
             
              var snap = {
-               file : contextSnapshot.contextLocation,
+               file : contextAbs,
                executedLocation : executedLocation,
                context : contextInstance,
                contextEntities : cleanEntities,
@@ -313,8 +319,11 @@ program.option('-V', 'output the version');
          console.log(`Error - Cannot read context snapshot at '${file}'.`);
          return;
        }
-       var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
-       migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
+       const snapDir = path.dirname(file);
+       const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+       const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+       var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
        if(!(migrationFiles && migrationFiles.length)){
          console.log("Error - Cannot read or find migration file");
          return;
@@ -328,9 +337,9 @@ program.option('-V', 'output the version');
        // Prepare context and table object
        let ContextCtor;
        try{
-         ContextCtor = require(contextSnapshot.contextLocation);
+         ContextCtor = require(contextAbs);
        }catch(_){
-         console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+         console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
          return;
        }
        var contextInstance;
@@ -353,7 +362,7 @@ program.option('-V', 'output the version');
 
        // Update snapshot
        var snap = {
-         file : contextSnapshot.contextLocation,
+         file : contextAbs,
          executedLocation : executedLocation,
          context : contextInstance,
          contextEntities : cleanEntities,
@@ -384,15 +393,18 @@ program.option('-V', 'output the version');
            console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
            return;
          }
-         var contextSnapshot;
+      var contextSnapshot;
          try{
            contextSnapshot = require(file);
          }catch(_){
            console.log(`Error - Cannot read context snapshot at '${file}'.`);
            return;
          }
-         var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
-         migrationFiles = (migrationFiles || []).map(f => path.resolve(contextSnapshot.migrationFolder, f));
+      const snapDir = path.dirname(file);
+      const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+      const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
          if(!(migrationFiles && migrationFiles.length)){
            console.log("Error - Cannot read or find migration file");
            return;
@@ -533,9 +545,9 @@ program.option('-V', 'output the version');
       // Prepare context and table object
       let ContextCtor;
       try{
-        ContextCtor = require(contextSnapshot.contextLocation);
+        ContextCtor = require(contextAbs);
       }catch(_){
-        console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+        console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
         return;
       }
       var contextInstance;
@@ -562,7 +574,7 @@ program.option('-V', 'output the version');
 
       // Update snapshot
       var snap = {
-        file : contextSnapshot.contextLocation,
+        file : contextAbs,
         executedLocation : executedLocation,
         context : contextInstance,
         contextEntities : cleanEntities,
