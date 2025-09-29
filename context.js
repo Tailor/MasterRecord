@@ -112,7 +112,7 @@ class context {
                 const abs = path.isAbsolute(rel) ? rel : path.resolve(currentRoot, rel);
                 return { file: abs, rootFolder: currentRoot };
             }
-            const parent = tools.removeBackwardSlashSection(currentRoot, 1, "/");
+            const parent = path.dirname(currentRoot);
             if(parent === currentRoot || parent === ""){
                 break;
             }
@@ -166,11 +166,15 @@ class context {
 
             if(type === 'sqlite' || type === 'better-sqlite3'){
                 this.isSQLite = true; this.isMySQL = false;
-                // Back-compat: treat leading '/' as project-root relative, not filesystem root
+                // Treat leading project-style paths ('/components/...') as project-root relative across OSes
                 let dbPath = options.connection || '';
                 if(dbPath){
-                    if(dbPath.startsWith(path.sep) || !path.isAbsolute(dbPath)){
-                        dbPath = path.join(file.rootFolder, dbPath);
+                    const looksProjectRootRelative = dbPath.startsWith('/') || dbPath.startsWith('\\');
+                    const isAbsoluteFsPath = path.isAbsolute(dbPath);
+                    if(looksProjectRootRelative || !isAbsoluteFsPath){
+                        // Normalize leading separators to avoid duplicating separators on Windows
+                        const trimmed = dbPath.replace(/^[/\\]+/, '');
+                        dbPath = path.join(file.rootFolder, trimmed);
                     }
                 }
                 const dbDir = path.dirname(dbPath);
@@ -214,11 +218,21 @@ class context {
             }
 
             this.validateSQLiteOptions(options);
-            options.completeConnection = `${file.rootFolder}${options.connection}`;
-            var dbDirectory = options.completeConnection.substr(0, options.completeConnection.lastIndexOf("\/"));
+            // Build DB path similarly to env(): project-root relative on leading slash
+            let dbPath = options.connection || '';
+            if(dbPath){
+                const looksProjectRootRelative = dbPath.startsWith('/') || dbPath.startsWith('\\');
+                const isAbsoluteFsPath = path.isAbsolute(dbPath);
+                if(looksProjectRootRelative || !isAbsoluteFsPath){
+                    const trimmed = dbPath.replace(/^[/\\]+/, '');
+                    dbPath = path.join(file.rootFolder, trimmed);
+                }
+            }
+            options.completeConnection = dbPath;
+            var dbDirectory = path.dirname(options.completeConnection);
             
             if (!fs.existsSync(dbDirectory)){
-                fs.mkdirSync(dbDirectory);
+                fs.mkdirSync(dbDirectory, { recursive: true });
             }
 
             this.db = this.__SQLiteInit(options,  "better-sqlite3");
