@@ -266,7 +266,7 @@ program.option('-V', 'output the version');
             var migrationProjectFile = require(mFile);
             var ContextCtor = require(contextAbs);
             var contextInstance = new ContextCtor();
-             var newMigrationProjectInstance = new migrationProjectFile(context);
+            var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
 
             var cleanEntities = migration.cleanEntities(contextInstance.__entities);
             var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
