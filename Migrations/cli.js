@@ -191,24 +191,40 @@ program.option('-V', 'output the version');
           return;
         }
 
+        // Resolve relative paths from the snapshot directory (portable snapshots)
+        const snapDir = path.dirname(file);
+        const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+        const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+
         let ContextCtor;
         try{
-          ContextCtor = require(contextSnapshot.contextLocation);
+          ContextCtor = require(contextAbs);
         }catch(_){
-          console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+          console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
           return;
         }
         let contextInstance;
         try{
           contextInstance = new ContextCtor();
         }catch(_){
-          console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+          console.log(`Error - Failed to construct Context from '${contextAbs}'.`);
           return;
         }
         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+
+        // Skip if no changes between snapshot schema and current entities
+        const has = migration.hasChanges(contextSnapshot.schema || [], cleanEntities || []);
+        if(!has){
+          console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
+          return;
+        }
+
         var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities);
+        if(!fs.existsSync(migBase)){
+          try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
+        }
         var migrationDate = Date.now();
-        var outputFile = `${contextSnapshot.migrationFolder}/${migrationDate}_${name}_migration.js`
+        var outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
         fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
           if (err) return console.log("--- Error running cammand, re-run command add-migration ---- ", err);
         });
@@ -595,6 +611,12 @@ program.option('-V', 'output the version');
           }
           var migration = new Migration();
           var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          // If no changes, skip with message
+          const has = migration.hasChanges(cs.schema || [], cleanEntities || []);
+          if(!has){
+            console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
+            continue;
+          }
           var newEntity = migration.template(name, cs.schema, cleanEntities);
           if(!fs.existsSync(migBase)){
             try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }

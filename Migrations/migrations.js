@@ -277,6 +277,22 @@ class Migrations{
         return tableObj;
     }
 
+    // Returns true if there are any changes between old and new schema
+    hasChanges(oldSchema, newSchema){
+        const tables = this.#buildMigrationObject(oldSchema, newSchema);
+        for(const t of tables){
+            if(!t) continue;
+            if((t.newTables && t.newTables.length) ||
+               (t.newColumns && t.newColumns.length) ||
+               (t.deletedColumns && t.deletedColumns.length) ||
+               (t.updatedColumns && t.updatedColumns.length) ||
+               (t.old === null) || (t.new === null)){
+                return true;
+            }
+        }
+        return false;
+    }
+
     template(name, oldSchema, newSchema){
         var MT = new MigrationTemplate(name);
         var tables = this.#buildMigrationObject(oldSchema, newSchema);
