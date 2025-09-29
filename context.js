@@ -98,17 +98,19 @@ class context {
         let currentRoot = root;
         const maxHops = 12;
         for(let i = 0; i < maxHops; i++){
-            const rootFolder = path.isAbsolute(rootFolderLocation) ? rootFolderLocation : `${currentRoot}/${rootFolderLocation}`;
+            const rootFolder = path.isAbsolute(rootFolderLocation) ? rootFolderLocation : path.join(currentRoot, rootFolderLocation);
             // Support both env.development.json and development.json naming
             const searchA = `${rootFolder}/**/*env.${envType}.json`;
             const searchB = `${rootFolder}/**/*${envType}.json`;
-            let files = globSearch.sync(searchA, currentRoot);
+            let files = globSearch.sync(searchA, { cwd: currentRoot, dot: true, nocase: true, windowsPathsNoEscape: true });
             if(!files || files.length === 0){
-                files = globSearch.sync(searchB, currentRoot);
+                files = globSearch.sync(searchB, { cwd: currentRoot, dot: true, nocase: true, windowsPathsNoEscape: true });
             }
-            const file = files && files[0];
-            if(file){
-                return { file: file, rootFolder: currentRoot };
+            const rel = files && files[0];
+            if(rel){
+                // Ensure absolute path for require()
+                const abs = path.isAbsolute(rel) ? rel : path.resolve(currentRoot, rel);
+                return { file: abs, rootFolder: currentRoot };
             }
             const parent = tools.removeBackwardSlashSection(currentRoot, 1, "/");
             if(parent === currentRoot || parent === ""){
@@ -151,7 +153,9 @@ class context {
                 throw new Error(`Environment config not found for '${envType}' under '${rootFolderLocation}'.`);
             }
 
-            const settings = require(file.file);
+            // Always require absolute file path to avoid module root ambiguity on global installs/Windows
+            const settingsPath = path.isAbsolute(file.file) ? file.file : path.resolve(file.rootFolder, file.file);
+            const settings = require(settingsPath);
             const options = settings[contextName];
             if(options === undefined){
                 console.log("settings missing context name settings");
