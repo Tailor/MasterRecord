@@ -12,13 +12,13 @@ MasterRecord is a lightweight, code-first ORM and migration tool for Node.js wit
 
 ```bash
 # npm
-npm install masterrecord
+npm install -g masterrecord
 
 # pnpm
-pnpm add masterrecord
+pnpm add -g masterrecord
 
 # yarn
-yarn add masterrecord
+yarn global add masterrecord
 ```
 
 ## Quick Start
@@ -26,19 +26,19 @@ yarn add masterrecord
 1) Create an environment config file (see Environment below), then enable migrations:
 
 ```bash
-npx masterrecord enable-migrations AppContext
+masterrecord enable-migrations AppContext
 ```
 
 2) Make or change your entities, then create a migration file:
 
 ```bash
-npx masterrecord add-migration Init AppContext
+ masterrecord add-migration Init AppContext
 ```
 
 3) Apply the migration to your database:
 
 ```bash
-master=development npx masterrecord update-database AppContext
+master=development masterrecord update-database AppContext
 ```
 
 ### Enable migrations (one-time per Context)
