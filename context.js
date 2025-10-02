@@ -38,7 +38,7 @@ class context {
         SQLite expected model 
         {
             "type": "better-sqlite3",
-            "connection" : "/db/",
+            "connection" : "/db/mydb.sqlite",  // or "/db/" (auto-creates <contextname>.sqlite)
             "password": "",
             "username": ""
         }
@@ -177,6 +177,13 @@ class context {
                         dbPath = path.join(file.rootFolder, trimmed);
                     }
                 }
+                // If dbPath is a directory (ends with separator or exists as directory), append default filename
+                const endsWithSep = dbPath.endsWith('/') || dbPath.endsWith('\\');
+                const isDir = fs.existsSync(dbPath) && fs.statSync(dbPath).isDirectory();
+                if(endsWithSep || isDir){
+                    const dbName = `${contextName.toLowerCase()}.sqlite`;
+                    dbPath = path.join(dbPath, dbName);
+                }
                 const dbDir = path.dirname(dbPath);
                 if(!fs.existsSync(dbDir)){
                     fs.mkdirSync(dbDir, { recursive: true });
@@ -227,6 +234,13 @@ class context {
                     const trimmed = dbPath.replace(/^[/\\]+/, '');
                     dbPath = path.join(file.rootFolder, trimmed);
                 }
+            }
+            // If dbPath is a directory (ends with separator or exists as directory), append default filename
+            const endsWithSep = dbPath.endsWith('/') || dbPath.endsWith('\\');
+            const isDir = fs.existsSync(dbPath) && fs.statSync(dbPath).isDirectory();
+            if(endsWithSep || isDir){
+                const dbName = `${contextName.toLowerCase()}.sqlite`;
+                dbPath = path.join(dbPath, dbName);
             }
             options.completeConnection = dbPath;
             var dbDirectory = path.dirname(options.completeConnection);
