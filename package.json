@@ -1,6 +1,6 @@
 {
   "name": "masterrecord",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "main": "MasterRecord.js",
   "bin": {
