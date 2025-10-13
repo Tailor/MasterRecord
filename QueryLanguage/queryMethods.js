@@ -1,5 +1,5 @@
 
-// version 0.0.14
+// version 0.0.15
 var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
 var tools = require('masterrecord/Tools');
 var queryScript = require('masterrecord/QueryLanguage/queryScript');
@@ -249,13 +249,40 @@ class queryMethods{
         entityValue.__state = "delete";
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
+
+        // If the entity has an __ID, try to find and update it in tracked entities
+        if(entityValue.__ID){
+            var tracked = this.__context.__findTracked(entityValue.__ID);
+            if(tracked){
+                // Update the tracked entity's state
+                tracked.__state = "delete";
+                return;
+            }
+        }
+
+        // If not already tracked, track it now
+        this.__context.__track(entityValue);
     }
 
     removeRange(entityValues){
         for (const property in entityValues) {
-            entityValues[property].__state = "delete";
-            entityValues[property].__entity = this.__entity;
-            entityValues[property].__context = this.__context;
+            var entityValue = entityValues[property];
+            entityValue.__state = "delete";
+            entityValue.__entity = this.__entity;
+            entityValue.__context = this.__context;
+
+            // If the entity has an __ID, try to find and update it in tracked entities
+            if(entityValue.__ID){
+                var tracked = this.__context.__findTracked(entityValue.__ID);
+                if(tracked){
+                    // Update the tracked entity's state
+                    tracked.__state = "delete";
+                    continue;
+                }
+            }
+
+            // If not already tracked, track it now
+            this.__context.__track(entityValue);
         }
     }
 

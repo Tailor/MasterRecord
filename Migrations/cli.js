@@ -59,7 +59,9 @@ program.option('-V', 'output the version');
         // find context file from main folder location
         var contextInstance = migration.findContext(executedLocation, contextFileName);
         if(!contextInstance){
-          console.log(`Error - Cannot read or find Context file '${contextFileName}.js' in '${executedLocation}'.`);
+          console.error(`\n❌ Error - Cannot read or find Context file '${contextFileName}.js'`);
+          console.error(`\nSearched in: ${executedLocation}`);
+          console.error(`\nMake sure your Context file exists and is named correctly.`);
           return;
         }
         var snap = {
@@ -70,7 +72,7 @@ program.option('-V', 'output the version');
         }
 
         migration.createSnapShot(snap);
-        console.log("Migration enabled")
+        console.log("✓ Migration enabled successfully")
 
   });
 
@@ -114,8 +116,14 @@ program.option('-V', 'output the version');
       let ContextCtor;
       try{
         ContextCtor = require(contextAbs);
-      }catch(_){
-        console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
+      }catch(err){
+        console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
+        console.error(`\nDetails:`);
+        console.error(err.message);
+        if(err.stack){
+          console.error(`\nStack trace:`);
+          console.error(err.stack);
+        }
         return;
       }
 
@@ -123,13 +131,23 @@ program.option('-V', 'output the version');
       var MigrationCtor = require(mFile);
       var mig = new MigrationCtor(ContextCtor);
       if(typeof mig.createdatabase === 'function'){
-        try{ mig.createdatabase(); }catch(_){ /* best-effort */ }
-        console.log('database ensured');
+        try{
+          mig.createdatabase();
+          console.log('✓ Database ensured');
+        }catch(err){
+          console.error(`\n❌ Error creating database:`);
+          console.error(err.message);
+        }
       } else if(typeof mig.createDatabase === 'function'){
-        try{ mig.createDatabase(); }catch(_){ }
-        console.log('database ensured');
+        try{
+          mig.createDatabase();
+          console.log('✓ Database ensured');
+        }catch(err){
+          console.error(`\n❌ Error creating database:`);
+          console.error(err.message);
+        }
       } else {
-        console.log('Error - Migration class missing createDatabase method');
+        console.error('❌ Error - Migration class missing createDatabase method');
       }
     }catch(e){
       console.log('Error - Cannot read or find file ', e);
@@ -202,15 +220,31 @@ program.option('-V', 'output the version');
         let ContextCtor;
         try{
           ContextCtor = require(contextAbs);
-        }catch(_){
-          console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
+        }catch(err){
+          console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
+          console.error(`\nDetails:`);
+          console.error(err.message);
+          if(err.stack){
+            console.error(`\nStack trace:`);
+            console.error(err.stack);
+          }
           return;
         }
         let contextInstance;
         try{
           contextInstance = new ContextCtor();
-        }catch(_){
-          console.log(`Error - Failed to construct Context from '${contextAbs}'.`);
+        }catch(err){
+          console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
+          console.error(`\nThis usually happens when:`);
+          console.error(`  • Environment configuration is missing or invalid`);
+          console.error(`  • Database connection settings are incorrect`);
+          console.error(`  • Required dependencies are not installed`);
+          console.error(`\nDetails:`);
+          console.error(err.message);
+          if(err.stack){
+            console.error(`\nStack trace:`);
+            console.error(err.stack);
+          }
           return;
         }
         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
@@ -231,7 +265,7 @@ program.option('-V', 'output the version');
         fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
           if (err) return console.log("--- Error running cammand, re-run command add-migration ---- ", err);
         });
-        console.log(`${name} migration file created`);
+        console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
        }catch (e){
          console.log("Error - Cannot read or find file ", e);
       }
@@ -281,7 +315,7 @@ program.option('-V', 'output the version');
              }
  
              migration.createSnapShot(snap);
-             console.log("database updated");
+             console.log("✓ Database updated successfully");
           }
           else{
            console.log("Error - Cannot read or find migration file");
@@ -338,15 +372,31 @@ program.option('-V', 'output the version');
        let ContextCtor;
        try{
          ContextCtor = require(contextAbs);
-       }catch(_){
-         console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
+       }catch(err){
+         console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
+         console.error(`\nDetails:`);
+         console.error(err.message);
+         if(err.stack){
+           console.error(`\nStack trace:`);
+           console.error(err.stack);
+         }
          return;
        }
        var contextInstance;
        try{
          contextInstance = new ContextCtor();
-       }catch(_){
-         console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+       }catch(err){
+         console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
+         console.error(`\nThis usually happens when:`);
+         console.error(`  • Environment configuration is missing or invalid`);
+         console.error(`  • Database connection settings are incorrect`);
+         console.error(`  • Required dependencies are not installed`);
+         console.error(`\nDetails:`);
+         console.error(err.message);
+         if(err.stack){
+           console.error(`\nStack trace:`);
+           console.error(err.stack);
+         }
          return;
        }
        var cleanEntities = migration.cleanEntities(contextInstance.__entities);
@@ -369,7 +419,7 @@ program.option('-V', 'output the version');
          contextFileName: contextFileName
        }
        migration.createSnapShot(snap);
-       console.log("database updated");
+       console.log("✓ Database rolled back successfully");
 
     }catch (e){
       console.log("Error - Cannot read or find file ", e);
@@ -415,16 +465,32 @@ program.option('-V', 'output the version');
          });
          let ContextCtor;
          try{
-           ContextCtor = require(contextSnapshot.contextLocation);
-         }catch(_){
-           console.log(`Error - Cannot load Context file at '${contextSnapshot.contextLocation}'.`);
+           ContextCtor = require(contextAbs);
+         }catch(err){
+           console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
+           console.error(`\nDetails:`);
+           console.error(err.message);
+           if(err.stack){
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
+           }
            return;
          }
          var contextInstance;
          try{
            contextInstance = new ContextCtor();
-         }catch(_){
-           console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+         }catch(err){
+           console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
+           console.error(`\nThis usually happens when:`);
+           console.error(`  • Environment configuration is missing or invalid`);
+           console.error(`  • Database connection settings are incorrect`);
+           console.error(`  • Required dependencies are not installed`);
+           console.error(`\nDetails:`);
+           console.error(err.message);
+           if(err.stack){
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
+           }
            return;
          }
          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
@@ -444,7 +510,7 @@ program.option('-V', 'output the version');
              }
  
          migration.createSnapShot(snap);
-         console.log("database updated");
+         console.log("✓ Database restarted and updated successfully");
  
         }
         catch (e){
@@ -546,15 +612,31 @@ program.option('-V', 'output the version');
       let ContextCtor;
       try{
         ContextCtor = require(contextAbs);
-      }catch(_){
-        console.log(`Error - Cannot load Context file at '${contextAbs}'.`);
+      }catch(err){
+        console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
+        console.error(`\nDetails:`);
+        console.error(err.message);
+        if(err.stack){
+          console.error(`\nStack trace:`);
+          console.error(err.stack);
+        }
         return;
       }
       var contextInstance;
       try{
         contextInstance = new ContextCtor();
-      }catch(_){
-        console.log(`Error - Failed to construct Context from '${contextSnapshot.contextLocation}'.`);
+      }catch(err){
+        console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
+        console.error(`\nThis usually happens when:`);
+        console.error(`  • Environment configuration is missing or invalid`);
+        console.error(`  • Database connection settings are incorrect`);
+        console.error(`  • Required dependencies are not installed`);
+        console.error(`\nDetails:`);
+        console.error(err.message);
+        if(err.stack){
+          console.error(`\nStack trace:`);
+          console.error(err.stack);
+        }
         return;
       }
       var cleanEntities = migration.cleanEntities(contextInstance.__entities);
@@ -581,7 +663,7 @@ program.option('-V', 'output the version');
         contextFileName: path.basename(snapshotFile).replace('_contextSnapShot.json','')
       }
       migration.createSnapShot(snap);
-      console.log("database updated");
+      console.log("✓ Database rolled back to target migration successfully");
 
     }catch (e){
       console.log("Error - Cannot read or find file ", e);
@@ -612,13 +694,19 @@ program.option('-V', 'output the version');
           const migBase = path.resolve(snapDir, cs.migrationFolder || '.');
           // Load context
           let ContextCtor;
-          try{ ContextCtor = require(contextAbs); }catch(_){
-            console.log(`Skipping: cannot load Context at '${contextAbs}'.`);
+          try{
+            ContextCtor = require(contextAbs);
+          }catch(err){
+            console.error(`⚠️  Skipping ${path.basename(contextAbs)}: cannot load Context file`);
+            console.error(`   Details: ${err.message}`);
             continue;
           }
           let contextInstance;
-          try{ contextInstance = new ContextCtor(); }catch(_){
-            console.log(`Skipping: failed to construct Context from '${contextAbs}'.`);
+          try{
+            contextInstance = new ContextCtor();
+          }catch(err){
+            console.error(`⚠️  Skipping ${path.basename(contextAbs)}: failed to construct Context`);
+            console.error(`   Details: ${err.message}`);
             continue;
           }
           var migration = new Migration();
@@ -704,13 +792,19 @@ program.option('-V', 'output the version');
           var mFile = mFiles[mFiles.length - 1];
 
           var ContextCtor;
-          try{ ContextCtor = require(entry.contextAbs); }catch(_){
-            console.log(`Skipping ${entry.ctxName}: cannot load Context at '${entry.contextAbs}'.`);
+          try{
+            ContextCtor = require(entry.contextAbs);
+          }catch(err){
+            console.error(`⚠️  Skipping ${entry.ctxName}: cannot load Context file`);
+            console.error(`   Details: ${err.message}`);
             continue;
           }
           var contextInstance;
-          try{ contextInstance = new ContextCtor(); }catch(_){
-            console.log(`Skipping ${entry.ctxName}: failed to construct Context.`);
+          try{
+            contextInstance = new ContextCtor();
+          }catch(err){
+            console.error(`⚠️  Skipping ${entry.ctxName}: failed to construct Context`);
+            console.error(`   Details: ${err.message}`);
             continue;
           }
           var migrationProjectFile = require(mFile);
@@ -726,7 +820,7 @@ program.option('-V', 'output the version');
             contextFileName: entry.ctxName
           }
           migration.createSnapShot(snap);
-          console.log(`database updated for ${entry.ctxName}`);
+          console.log(`✓ Database updated successfully for ${entry.ctxName}`);
         }catch(errCtx){
           console.log('Error updating context: ', errCtx);
         }
@@ -774,7 +868,7 @@ program.option('-V', 'output the version');
             contextFileName: key
           };
           migration.createSnapShot(snap);
-          console.log(`migrations enabled for ${ctxName}`);
+          console.log(`✓ Migrations enabled for ${ctxName}`);
           enabled++;
         }catch(err){
           console.log('Skipping candidate due to error: ', err);

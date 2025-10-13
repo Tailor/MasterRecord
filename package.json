@@ -1,28 +1,38 @@
 {
   "name": "masterrecord",
-  "dependencies": {
-    "commander": "^14.0.1",
-    "glob" : "^11.0.3",
-    "deep-object-diff" : "^1.1.9",
-    "pg" : "^8.16.3",
-    "sync-mysql2" : "^1.0.7",
-    "app-root-path": "^3.1.0",
-    "better-sqlite3": "^12.4.1"
-  },
-  "version": "0.2.29",
+  "version": "0.2.30",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
+  "main": "MasterRecord.js",
+  "bin": {
+    "masterrecord": "./Migrations/cli.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "preinstall": "node -e \"try { require.resolve('masterrecord'); } catch(e) { if (!process.env.npm_config_global) { console.log('\\n\\u001b[36m📦 MasterRecord Installation\\u001b[0m'); console.log('\\u001b[33mℹ For best experience, install globally first:\\u001b[0m'); console.log('  npm install -g masterrecord\\n'); } }\""
+  },
+  "author": "Alexandr Rich",
+  "license": "MIT",
   "homepage": "https://github.com/Tailor/MasterRecord#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Tailor/Masterrecord.git"
   },
-  "main": "MasterRecord.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "Alexandr Rich",
-  "license": "MIT",
-  "bin": {
-    "masterrecord": "./Migrations/cli.js"
+  "keywords": [
+    "orm",
+    "database",
+    "migrations",
+    "mysql",
+    "sqlite",
+    "postgres",
+    "masterrecord"
+  ],
+  "dependencies": {
+    "commander": "^14.0.1",
+    "glob": "^11.0.3",
+    "deep-object-diff": "^1.1.9",
+    "pg": "^8.16.3",
+    "sync-mysql2": "^1.0.7",
+    "app-root-path": "^3.1.0",
+    "better-sqlite3": "^12.4.1"
   }
 }
