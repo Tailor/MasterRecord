@@ -280,53 +280,173 @@ program.option('-V', 'output the version');
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
       try{
+         console.log(`\n🔍 Searching for context snapshot '${contextFileName}_contextSnapShot.json'...`);
          // find context snapshot (cwd-based glob)
          var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
          var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
-         if(file){
-          var contextSnapshot = require(file);
-          const snapDir = path.dirname(file);
-          const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
-          const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
-          var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
-          migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
-          if( migrationFiles && migrationFiles.length){
-            // sort by timestamp prefix or file mtime as fallback
-            var mFiles = migrationFiles.slice().sort(function(a, b){
-              return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
-            });
-            var mFile = mFiles[mFiles.length -1];
 
-            var migrationProjectFile = require(mFile);
-            var ContextCtor = require(contextAbs);
-            var contextInstance = new ContextCtor();
-            var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
-
-            var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-            var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-             newMigrationProjectInstance.up(tableObj);
-            
-             var snap = {
-               file : contextAbs,
-               executedLocation : executedLocation,
-               context : contextInstance,
-               contextEntities : cleanEntities,
-               contextFileName: contextFileName
-             }
- 
-             migration.createSnapShot(snap);
-             console.log("✓ Database updated successfully");
-          }
-          else{
-           console.log("Error - Cannot read or find migration file");
-          }
-
+         if(!file){
+           console.error(`\n❌ Error - Cannot find Context snapshot file`);
+           console.error(`\nSearched for: ${contextFileName}_contextSnapShot.json`);
+           console.error(`Searched in: ${executedLocation}`);
+           console.error(`\n💡 Solution: Run 'masterrecord enable-migrations ${contextFileName}' first`);
+           return;
          }
-         else{
-           console.log("Error - Cannot read or find Context file");
-          }
+
+         console.log(`✓ Found snapshot: ${file}`);
+
+         var contextSnapshot;
+         try{
+           contextSnapshot = require(file);
+         }catch(err){
+           console.error(`\n❌ Error - Cannot load context snapshot`);
+           console.error(`\nFile: ${file}`);
+           console.error(`Details: ${err.message}`);
+           return;
+         }
+
+         const snapDir = path.dirname(file);
+         const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+         const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+
+         console.log(`\n🔍 Searching for migration files in: ${migBase}`);
+         var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+         migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
+
+         if(!(migrationFiles && migrationFiles.length)){
+           console.error(`\n❌ Error - No migration files found`);
+           console.error(`\nSearched in: ${migBase}`);
+           console.error(`\n💡 Solution: Run 'masterrecord add-migration Init ${contextFileName}' to create your first migration`);
+           return;
+         }
+
+         // sort by timestamp prefix or file mtime as fallback
+         var mFiles = migrationFiles.slice().sort(function(a, b){
+           return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+         });
+         var mFile = mFiles[mFiles.length -1];
+         console.log(`✓ Found ${mFiles.length} migration file(s), using latest: ${path.basename(mFile)}`);
+
+         console.log(`\n🔍 Loading Context file from: ${contextAbs}`);
+         var migrationProjectFile;
+         var ContextCtor;
+         try{
+           migrationProjectFile = require(mFile);
+           ContextCtor = require(contextAbs);
+         }catch(err){
+           console.error(`\n❌ Error - Cannot load Context or migration file`);
+           console.error(`\nContext file: ${contextAbs}`);
+           console.error(`Migration file: ${mFile}`);
+           console.error(`\nDetails: ${err.message}`);
+           if(err.stack){
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
+           }
+           return;
+         }
+
+         console.log(`✓ Context file loaded successfully`);
+         console.log(`\n🔍 Instantiating Context (this will create the database if it doesn't exist)...`);
+
+         var contextInstance;
+         try{
+           contextInstance = new ContextCtor();
+         }catch(err){
+           console.error(`\n❌ Error - Failed to instantiate Context`);
+           console.error(`\nContext file: ${contextAbs}`);
+           console.error(`\nThis usually happens when:`);
+           console.error(`  • Environment configuration file is missing`);
+           console.error(`  • Database connection settings are incorrect`);
+           console.error(`  • The 'master' environment variable is not set`);
+           console.error(`  • Required dependencies are not installed`);
+           console.error(`\nDetails: ${err.message}`);
+           if(err.stack){
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
+           }
+           console.error(`\n💡 Check your environment config file (e.g., config/environments/env.development.json)`);
+           console.error(`💡 Make sure you're running: master=development masterrecord update-database ${contextFileName}`);
+           return;
+         }
+
+         console.log(`✓ Context instantiated successfully`);
+
+         // Log database connection details
+         if(contextInstance.isSQLite && contextInstance.db){
+           const dbPath = contextInstance.db.name || 'unknown';
+           console.log(`\n📊 Database Type: SQLite`);
+           console.log(`📁 Database Path: ${dbPath}`);
+
+           // Check if the database file exists
+           if(fs.existsSync(dbPath)){
+             const stats = fs.statSync(dbPath);
+             console.log(`✓ Database file exists (${(stats.size / 1024).toFixed(2)} KB)`);
+           }else{
+             console.log(`⚠️  Database file does not exist yet (will be created during migration)`);
+           }
+         }else if(contextInstance.isMySQL){
+           console.log(`\n📊 Database Type: MySQL`);
+         }
+
+         console.log(`\n🔍 Loading entities from context...`);
+         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+         console.log(`✓ Found ${cleanEntities.length} entity/entities`);
+
+         if(cleanEntities.length === 0){
+           console.error(`\n⚠️  Warning - No entities found in Context`);
+           console.error(`\nMake sure your Context file has dbset() calls to register entities`);
+           console.error(`Example:`);
+           console.error(`  this.dbset(User, 'User');`);
+           console.error(`  this.dbset(Post, 'Post');`);
+         }
+
+         console.log(`\n🚀 Running migration...`);
+         try{
+           var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
+           var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+           newMigrationProjectInstance.up(tableObj);
+         }catch(err){
+           console.error(`\n❌ Error - Migration failed during execution`);
+           console.error(`\nMigration file: ${mFile}`);
+           console.error(`\nDetails: ${err.message}`);
+           if(err.stack){
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
+           }
+           return;
+         }
+
+         console.log(`\n💾 Updating snapshot...`);
+         var snap = {
+           file : contextAbs,
+           executedLocation : executedLocation,
+           context : contextInstance,
+           contextEntities : cleanEntities,
+           contextFileName: contextFileName
+         }
+
+         migration.createSnapShot(snap);
+         console.log(`\n✅ Database updated successfully!`);
+
+         // Final verification for SQLite
+         if(contextInstance.isSQLite && contextInstance.db){
+           const dbPath = contextInstance.db.name || 'unknown';
+           if(fs.existsSync(dbPath)){
+             const stats = fs.statSync(dbPath);
+             console.log(`\n📁 Database file: ${dbPath}`);
+             console.log(`📊 Size: ${(stats.size / 1024).toFixed(2)} KB`);
+           }else{
+             console.error(`\n⚠️  Warning - Database file was not created at expected path: ${dbPath}`);
+           }
+         }
+
         }catch (e){
-          console.log("Error - Cannot read or find file ", e);
+          console.error(`\n❌ Unexpected error during update-database`);
+          console.error(`\nDetails: ${e.message}`);
+          if(e.stack){
+            console.error(`\nStack trace:`);
+            console.error(e.stack);
+          }
         }
   });
 
