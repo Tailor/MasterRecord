@@ -443,21 +443,56 @@ class SQLLiteEngine {
             switch(type){
                 case "belongsTo" :
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
-                    argument = `${foreignKey} = ${model[dirtyFields[column]]},`;
+                    let fkValue = model[dirtyFields[column]];
+                    // 🔥 NEW: Validate foreign key type
+                    try {
+                        fkValue = $that._validateAndCoerceFieldType(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    argument = `${foreignKey} = ${fkValue},`;
                 break;
                 case "integer" :
                     const columneValue = model[`_${dirtyFields[column]}`];
-                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${columneValue},`;
+                    var intValue = columneValue !== undefined ? columneValue : model[dirtyFields[column]];
+                    // 🔥 NEW: Validate integer type
+                    try {
+                        intValue = $that._validateAndCoerceFieldType(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    argument = argument === null ? `[${dirtyFields[column]}] = ${intValue},` : `${argument} [${dirtyFields[column]}] = ${intValue},`;
                 break;
                 case "string" :
-                    argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(model[dirtyFields[column]], { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',`;
+                    var strValue = model[dirtyFields[column]];
+                    // 🔥 NEW: Validate string type
+                    try {
+                        strValue = $that._validateAndCoerceFieldType(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    argument = argument === null ? `${dirtyFields[column]} = '${$that._santizeSingleQuotes(strValue, { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',` : `${argument} ${dirtyFields[column]} = '${$that._santizeSingleQuotes(strValue, { entityName: model.__entity.__name, fieldName: dirtyFields[column] })}',`;
                 break;
                 case "time" :
                     // Always quote time values so empty strings remain valid ('')
-                    argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
+                    var timeValue = model[dirtyFields[column]];
+                    // 🔥 NEW: Validate time type
+                    try {
+                        timeValue = $that._validateAndCoerceFieldType(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    argument = argument === null ? `${dirtyFields[column]} = '${timeValue}',` : `${argument} ${dirtyFields[column]} = '${timeValue}',`;
                 break;
                 case "boolean" :
-                    argument = argument === null ? `${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',` : `${argument} ${dirtyFields[column]} = '${this.boolType(model[dirtyFields[column]])}',`;
+                    var boolValue = model[dirtyFields[column]];
+                    // 🔥 NEW: Validate boolean type
+                    try {
+                        boolValue = $that._validateAndCoerceFieldType(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    argument = argument === null ? `${dirtyFields[column]} = '${this.boolType(boolValue)}',` : `${argument} ${dirtyFields[column]} = '${this.boolType(boolValue)}',`;
                 break;
                 default:
                     argument = argument === null ? `${dirtyFields[column]} = '${model[dirtyFields[column]]}',` : `${argument} ${dirtyFields[column]} = '${model[dirtyFields[column]]}',`;
@@ -493,6 +528,98 @@ class SQLLiteEngine {
         return {tableName: tableName, primaryKey : primaryKey, value : value};
     }
 
+    /**
+     * Validate and coerce field value to match entity type definition
+     * Throws detailed error if type cannot be coerced
+     * @param {*} value - The field value to validate
+     * @param {object} entityDef - The entity definition for this field
+     * @param {string} entityName - Name of the entity (for error messages)
+     * @param {string} fieldName - Name of the field (for error messages)
+     * @returns {*} - The validated/coerced value
+     */
+    _validateAndCoerceFieldType(value, entityDef, entityName, fieldName){
+        if(value === undefined || value === null){
+            return value; // Let nullable validation handle this
+        }
+
+        const expectedType = entityDef.type;
+        const actualType = typeof value;
+
+        switch(expectedType){
+            case "integer":
+                // Coerce to integer if possible
+                if(actualType === 'number'){
+                    if(!Number.isInteger(value)){
+                        console.warn(`⚠️  Field ${entityName}.${fieldName}: Expected integer but got float ${value}, rounding to ${Math.round(value)}`);
+                        return Math.round(value);
+                    }
+                    return value;
+                }
+                if(actualType === 'string'){
+                    const parsed = parseInt(value, 10);
+                    if(isNaN(parsed)){
+                        throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected integer, got string "${value}" which cannot be converted to a number`);
+                    }
+                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting string "${value}" to integer ${parsed}`);
+                    return parsed;
+                }
+                if(actualType === 'boolean'){
+                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting boolean ${value} to integer ${value ? 1 : 0}`);
+                    return value ? 1 : 0;
+                }
+                throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected integer, got ${actualType} with value ${JSON.stringify(value)}`);
+
+            case "string":
+                // Coerce to string
+                if(actualType === 'string'){
+                    return value;
+                }
+                // Allow auto-conversion from primitives
+                if(['number', 'boolean'].includes(actualType)){
+                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting ${actualType} ${value} to string "${String(value)}"`);
+                    return String(value);
+                }
+                throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected string, got ${actualType} with value ${JSON.stringify(value)}`);
+
+            case "boolean":
+                // Coerce to boolean
+                if(actualType === 'boolean'){
+                    return value;
+                }
+                if(actualType === 'number'){
+                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting number ${value} to boolean ${value !== 0}`);
+                    return value !== 0;
+                }
+                if(actualType === 'string'){
+                    const lower = value.toLowerCase().trim();
+                    if(['true', '1', 'yes'].includes(lower)){
+                        console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting string "${value}" to boolean true`);
+                        return true;
+                    }
+                    if(['false', '0', 'no', ''].includes(lower)){
+                        console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting string "${value}" to boolean false`);
+                        return false;
+                    }
+                    throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected boolean, got string "${value}" which cannot be converted`);
+                }
+                throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected boolean, got ${actualType} with value ${JSON.stringify(value)}`);
+
+            case "time":
+                // Time fields should be strings or timestamps
+                if(actualType === 'string' || actualType === 'number'){
+                    return value;
+                }
+                throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected time (string/number), got ${actualType} with value ${JSON.stringify(value)}`);
+
+            default:
+                // For unknown types, allow the value through but warn
+                if(actualType === 'object'){
+                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Setting object value for type "${expectedType}". This may cause issues.`);
+                }
+                return value;
+        }
+    }
+
 
        // return columns and value strings
     _buildSQLInsertObject(fields, modelEntity){
@@ -506,18 +633,25 @@ class SQLLiteEngine {
                 var fieldColumn = "";
                 // check if get function is avaliable if so use that
                 fieldColumn = fields[column];
-                
+
                 if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
+                    // 🔥 NEW: Validate and coerce field type before processing
+                    try {
+                        fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column);
+                    } catch(typeError) {
+                        throw new Error(`INSERT failed: ${typeError.message}`);
+                    }
+
                     switch(modelEntity[column].type){
-                        case "string" : 
-                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column], { entityName: modelEntity.__name, fieldName: column })}'`;
+                        case "string" :
+                            fieldColumn = `'${$that._santizeSingleQuotes(fieldColumn, { entityName: modelEntity.__name, fieldName: column })}'`;
                         break;
-                        case "time" : 
+                        case "time" :
                             // Quote time values to prevent blank values from producing malformed SQL
-                            fieldColumn = `'${fields[column]}'`;
+                            fieldColumn = `'${fieldColumn}'`;
                         break;
                     }
-                    
+
                     var relationship = modelEntity[column].relationshipType
                     if(relationship === "belongsTo"){
                         column = modelEntity[column].foreignKey

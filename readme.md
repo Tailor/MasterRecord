@@ -96,8 +96,14 @@ Backward-compatible rollout tip:
 - Cannot connect to DB: confirm `master=<env>` is set and `env.<env>.json` exists with correct credentials and paths.
 - MySQL type mismatches: the migration engine maps MasterRecord types to SQL types; verify your entity field `type` values are correct.
 
-### Recent improvements (2025-09)
+### Recent improvements (2025-10)
 
+- **Type validation and coercion (Entity Framework-style)**:
+  - INSERT and UPDATE operations now validate field types against entity definitions.
+  - Auto-converts compatible types with warnings (e.g., string "4" → integer 4).
+  - Throws clear errors for incompatible types with detailed context.
+  - Prevents silent failures where fields were skipped due to type mismatches.
+  - See [Type Validation](#type-validation) section below for details.
 - Query language and SQL engines:
   - Correct parsing of multi-char operators (>=, <=, ===, !==) and spaced logical operators.
   - Support for grouped OR conditions rendered as parenthesized OR in WHERE across SQLite/MySQL.
@@ -178,6 +184,90 @@ Notes:
 - Prefer additive changes (add columns) before destructive changes (drops/renames) to minimize downtime.
 - For large SQLite tables, a rebuild copies data; consider maintenance windows.
 - Use `master=development masterrecord get-migrations AppContext` to inspect migration order.
+
+## Type Validation
+
+MasterRecord now validates and coerces field types during INSERT and UPDATE operations, similar to Entity Framework. This prevents silent failures where fields were skipped due to type mismatches.
+
+### How it works
+
+When you assign a value to an entity field, MasterRecord:
+1. **Validates** the value against the field's type definition
+2. **Auto-converts** compatible types with console warnings
+3. **Throws clear errors** for incompatible types
+
+### Type conversion rules
+
+#### Integer fields (`db.integer()`)
+- ✅ **Accepts**: integer numbers
+- ⚠️ **Auto-converts with warning**:
+  - Float → integer (rounds: `3.7` → `4`)
+  - Valid string → integer (`"42"` → `42`)
+  - Boolean → integer (`true` → `1`, `false` → `0`)
+- ❌ **Throws error**: invalid strings (`"abc"`)
+
+#### String fields (`db.string()`)
+- ✅ **Accepts**: strings
+- ⚠️ **Auto-converts with warning**:
+  - Number → string (`42` → `"42"`)
+  - Boolean → string (`true` → `"true"`)
+- ❌ **Throws error**: objects, arrays
+
+#### Boolean fields (`db.boolean()`)
+- ✅ **Accepts**: booleans
+- ⚠️ **Auto-converts with warning**:
+  - Number → boolean (`0` → `false`, others → `true`)
+  - String → boolean (`"true"/"1"/"yes"` → `true`, `"false"/"0"/"no"/""`→ `false`)
+- ❌ **Throws error**: invalid strings, objects
+
+#### Time fields (`db.time()`, timestamps)
+- ✅ **Accepts**: strings or numbers
+- ❌ **Throws error**: objects, booleans
+
+### Example warnings and errors
+
+**Auto-conversion warning (non-breaking):**
+```javascript
+const chunk = new DocumentChunk();
+chunk.document_id = "4"; // string assigned to integer field
+context.DocumentChunk.add(chunk);
+context.saveChanges();
+```
+Console output:
+```
+⚠️  Field DocumentChunk.document_id: Auto-converting string "4" to integer 4
+```
+
+**Type mismatch error (breaks execution):**
+```javascript
+const chunk = new DocumentChunk();
+chunk.document_id = "invalid"; // non-numeric string
+context.DocumentChunk.add(chunk);
+context.saveChanges(); // throws error
+```
+Error thrown:
+```
+INSERT failed: Type mismatch for DocumentChunk.document_id: Expected integer, got string "invalid" which cannot be converted to a number
+```
+
+### Migration from older versions
+
+If your code relies on implicit type coercion that was previously silent:
+- **No breaking changes**: Compatible types are still auto-converted
+- **New warnings**: You'll see console warnings for auto-conversions
+- **New errors**: Incompatible types that were silently skipped now throw errors
+
+**Recommendation**: Review warnings and fix type mismatches in your code for cleaner, more predictable behavior.
+
+### Benefits
+
+1. **No more silent field skipping**: Previously, if you assigned a string to an integer field, the ORM would silently skip it in the INSERT/UPDATE statement. Now you get immediate feedback.
+
+2. **Clear error messages**: Errors include entity name, field name, expected type, actual type, and the problematic value.
+
+3. **Predictable behavior**: Auto-conversions match common patterns (e.g., database IDs returned as strings from some drivers are converted to integers).
+
+4. **Better debugging**: Type issues are caught at save time, not when you query the data later.
 
 ## Multi-context (multi-database) projects
 
