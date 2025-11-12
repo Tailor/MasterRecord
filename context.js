@@ -1,4 +1,4 @@
-// Version 0.0.15
+// Version 0.0.16
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -146,7 +146,23 @@ class context {
                 const envFileB = path.join(directFolder, `${envType}.json`);
                 const picked = fs.existsSync(envFileA) ? envFileA : (fs.existsSync(envFileB) ? envFileB : null);
                 if(picked){
-                    file = { file: picked, rootFolder: path.dirname(path.dirname(picked)) };
+                    // Smart root folder detection for plugin paths
+                    // If the env file is in a bb-plugins/<plugin-name>/config/environments/ structure,
+                    // we should set rootFolder to the project root, not the plugin's config folder
+                    let detectedRoot = path.dirname(path.dirname(picked));
+
+                    // Check if we're in a bb-plugins structure
+                    const pickedParts = picked.split(path.sep);
+                    const pluginsIndex = pickedParts.findIndex(part => part === 'bb-plugins');
+
+                    if(pluginsIndex !== -1 && pluginsIndex + 3 < pickedParts.length) {
+                        // We're in bb-plugins/<plugin-name>/config/environments/...
+                        // Set rootFolder to the project root (parent of bb-plugins)
+                        const projectRootParts = pickedParts.slice(0, pluginsIndex);
+                        detectedRoot = projectRootParts.join(path.sep) || path.sep;
+                    }
+
+                    file = { file: picked, rootFolder: detectedRoot };
                 }
             }
             if(!file){
