@@ -4,7 +4,7 @@
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "main": "MasterRecord.js",
   "bin": {
-    "masterrecord": "./Migrations/cli.js"
+    "masterrecord": "Migrations/cli.js"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
