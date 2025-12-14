@@ -140,7 +140,7 @@ class queryScript{
         else if(type === "where"){
             // If where already exists, merge new expressions into existing where so multiple
             // chained where(...) calls combine into a single WHERE clause (joined by AND).
-            if(obj.where && obj[entityName] && cachedExpr[entityName]){
+            if(obj.where && obj.where[entityName] && cachedExpr[entityName]){
                 const existingQuery = obj.where[entityName].query || {};
                 const incomingQuery = cachedExpr[entityName].query || {};
                 const existingExprs = existingQuery.expressions || [];

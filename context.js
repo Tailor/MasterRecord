@@ -1,4 +1,4 @@
-// Version 0.0.16
+// Version 0.0.17
 
 var modelBuilder  = require('./Entity/entityModelBuilder');
 var query = require('masterrecord/QueryLanguage/queryMethods');
@@ -24,6 +24,7 @@ class context {
     __relationshipModels = [];
     __environment = "";
     __name = "";
+    tablePrefix = "";
     isSQLite = false;
     isMySQL = false;
     isPostgres = false;
@@ -348,7 +349,14 @@ class context {
 
     dbset(model, name){
         var validModel = modelBuilder.create(model);
-        validModel.__name = name === undefined ? model.name : name;
+        var tableName = name === undefined ? model.name : name;
+
+        // Apply tablePrefix if set
+        if(this.tablePrefix && typeof this.tablePrefix === 'string' && this.tablePrefix.length > 0){
+            tableName = this.tablePrefix + tableName;
+        }
+
+        validModel.__name = tableName;
         this.__entities.push(validModel); // model object
         var buildMod = tools.createNewInstance(validModel, query, this);
         this.__builderEntities.push(buildMod); // query builder entites

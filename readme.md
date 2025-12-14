@@ -369,6 +369,232 @@ set master=development && masterrecord update-database-all
 - For SQLite contexts, the `connection` path will be created if the directory does not exist.
 - For MySQL contexts, `ensure-database <ContextName>` can create the DB (permissions required) before migrations run.
 - If you rename/move the project root, re-run `enable-migrations-all` or any single-context command once; snapshots use relative paths and will continue working.
-- If `update-database-all` reports “no migration files found” for a context, run `get-migrations <ContextName>`. If empty, create a migration with `add-migration <Name> <ContextName>` or use `add-migration-all <Name>`.
+- If `update-database-all` reports "no migration files found" for a context, run `get-migrations <ContextName>`. If empty, create a migration with `add-migration <Name> <ContextName>` or use `add-migration-all <Name>`.
+
+## Table Prefixes
+
+MasterRecord supports automatic table prefixing for both MySQL and SQLite databases. This is useful for:
+- Multi-tenant applications sharing a single database
+- Plugin systems where each plugin needs isolated tables
+- Avoiding table name conflicts in shared database environments
+
+### Using tablePrefix
+
+Set the `tablePrefix` property in your Context constructor before calling `dbset()`:
+
+```javascript
+var masterrecord = require('masterrecord');
+const User = require('./models/User');
+const Post = require('./models/Post');
+
+class AppContext extends masterrecord.context {
+    constructor() {
+        super();
+
+        // Set table prefix
+        this.tablePrefix = 'myapp_';
+
+        // Configure environment
+        this.env('config/environments');
+
+        // Register models - prefix will be automatically applied
+        this.dbset(User);      // Creates table: myapp_User
+        this.dbset(Post);      // Creates table: myapp_Post
+    }
+}
+
+module.exports = AppContext;
+```
+
+### How it works
+
+When `tablePrefix` is set:
+1. The prefix is automatically prepended to all table names during `dbset()` registration
+2. Works with both the default table name (model class name) and custom names
+3. Applies to all database operations: queries, inserts, updates, deletes, and migrations
+4. Supports both MySQL and SQLite databases
+
+### Example with custom table names
+
+```javascript
+class AppContext extends masterrecord.context {
+    constructor() {
+        super();
+        this.tablePrefix = 'myapp_';
+        this.env('config/environments');
+
+        // Custom table name + prefix
+        this.dbset(User, 'users');       // Creates table: myapp_users
+        this.dbset(Post, 'blog_posts');  // Creates table: myapp_blog_posts
+    }
+}
+```
+
+### Plugin example
+
+Perfect for plugin systems where each plugin needs isolated tables:
+
+```javascript
+// RAG Plugin Context
+class RagContext extends masterrecord.context {
+    constructor() {
+        super();
+
+        // Prefix all RAG plugin tables
+        this.tablePrefix = 'rag_';
+
+        this.env(path.join(__dirname, '../../config/environments'));
+
+        this.dbset(Document);       // Creates table: rag_Document
+        this.dbset(DocumentChunk);  // Creates table: rag_DocumentChunk
+        this.dbset(Settings);       // Creates table: rag_Settings
+    }
+}
+```
+
+### Migrations with table prefixes
+
+Table prefixes work seamlessly with migrations:
+
+```bash
+# Enable migrations (prefix is read from your Context)
+master=development masterrecord enable-migrations AppContext
+
+# Create migration (tables will have prefix in migration file)
+master=development masterrecord add-migration Init AppContext
+
+# Apply migration (creates prefixed tables)
+master=development masterrecord update-database AppContext
+```
+
+The generated migration files will reference the prefixed table names, so you don't need to manually add prefixes in your migration code.
+
+### Notes
+- The prefix is applied during Context construction, so it must be set before `dbset()` calls
+- The prefix is stored in migration snapshots, ensuring consistency across migration operations
+- Empty strings or non-string values are ignored (no prefix applied)
+- Both MySQL and SQLite fully support table prefixes with no special configuration needed
+
+## Query Method Chaining
+
+MasterRecord supports fluent query chaining for building complex queries. You can chain multiple `where()`, `orderBy()`, `skip()`, `take()`, and other methods together to build your query dynamically.
+
+### Chaining Multiple where() Clauses
+
+Multiple `where()` calls are automatically combined with AND logic:
+
+```javascript
+// Build query dynamically
+let query = context.QaTask;
+
+// Add first condition
+query = query.where(t => t.assigned_worker_id == $$, currentUser.id);
+
+// Add second condition (combines with AND)
+query = query.where(t => t.status == $$, 'pending');
+
+// Add ordering and execute
+let tasks = query.orderBy(t => t.created_at).toList();
+```
+
+**Generated SQL:**
+```sql
+SELECT * FROM QaTask AS t
+WHERE t.assigned_worker_id = 123
+  AND t.status = 'pending'
+ORDER BY t.created_at ASC
+```
+
+### Dynamic Query Building
+
+This is especially useful for building queries based on conditional logic:
+
+```javascript
+let query = context.User;
+
+// Always apply base filter
+query = query.where(u => u.is_active == true);
+
+// Conditionally add filters
+if (searchTerm) {
+    query = query.where(u => u.name.like($$), `%${searchTerm}%`);
+}
+
+if (roleFilter) {
+    query = query.where(u => u.role == $$, roleFilter);
+}
+
+// Add pagination
+query = query
+    .orderBy(u => u.created_at)
+    .skip(offset)
+    .take(limit);
+
+// Execute query
+let users = query.toList();
+```
+
+### Chainable Query Methods
+
+All of these methods return the query builder and can be chained:
+
+- **`where(query, ...args)`** - Add WHERE condition (multiple calls combine with AND)
+- **`and(query, ...args)`** - Explicitly add AND condition (alternative to chaining where)
+- **`orderBy(query, ...args)`** - Sort ascending
+- **`orderByDescending(query, ...args)`** - Sort descending
+- **`skip(number)`** - Skip N records (pagination offset)
+- **`take(number)`** - Limit to N records (pagination limit)
+- **`select(query, ...args)`** - Select specific fields
+- **`include(query, ...args)`** - Eager load relationships
+
+### Combining with OR Logic
+
+For OR conditions within a single where clause, use the `||` operator:
+
+```javascript
+// Single where with OR
+let tasks = context.Task
+    .where(t => t.status == 'pending' || t.status == 'in_progress')
+    .toList();
+```
+
+**Generated SQL:**
+```sql
+SELECT * FROM Task AS t
+WHERE (t.status = 'pending' OR t.status = 'in_progress')
+```
+
+### Complex Example
+
+```javascript
+// Complex query with multiple conditions
+let query = context.Order;
+
+// Base filters
+query = query.where(o => o.customer_id == $$, customerId);
+query = query.where(o => o.status == $$ || o.status == $$, 'pending', 'processing');
+
+// Date range filter
+if (startDate) {
+    query = query.where(o => o.created_at >= $$, startDate);
+}
+if (endDate) {
+    query = query.where(o => o.created_at <= $$, endDate);
+}
+
+// Sorting and pagination
+let orders = query
+    .orderByDescending(o => o.created_at)
+    .skip(page * pageSize)
+    .take(pageSize)
+    .toList();
+```
+
+### Important Notes
+
+- Each `where()` call adds an AND condition to the existing WHERE clause
+- Conditions are combined in the order they're added
+- The query is only executed when you call a terminal method: `toList()`, `single()`, `count()`
+- Query builders are reusable - calling `toList()` resets the builder for the next query
 
 
