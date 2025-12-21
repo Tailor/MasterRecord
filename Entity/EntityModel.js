@@ -137,6 +137,12 @@ class EntityModel {
         return this;
     }
 
+    // allows you to add custom field transformers for serialization/deserialization
+    transform(transformObj){
+        this.obj.transform = transformObj;
+        return this;
+    }
+
     // allows you to add a virtual object that will skipped from being used as sql objects
     virtual(){
         this.obj.virtual = true;

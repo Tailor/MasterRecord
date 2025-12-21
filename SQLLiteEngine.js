@@ -341,6 +341,12 @@ class SQLLiteEngine {
             if(func === "IN"){
                 return `${ent}.${field}  ${func} ${arg}`;
             }
+            // Check if arg is a parameterized placeholder (? for MySQL/SQLite, $1/$2/etc for Postgres)
+            var isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+            if(isPlaceholder){
+                // Don't quote placeholders - they must remain as bare ? or $1
+                return `${ent}.${field}  ${func} ${arg}`;
+            }
             return `${ent}.${field}  ${func} '${arg}'`;
         }
 
