@@ -1,28 +1,46 @@
 // Version 0.0.23
 var tools =  require('masterrecord/Tools');
+var FieldTransformer = require('masterrecord/Entity/fieldTransformer');
 
 class SQLLiteEngine {
 
     unsupportedWords = ["order"]
 
     update(query){
-        var sqlQuery = ` UPDATE [${query.tableName}]
-        SET ${query.arg}
-        WHERE [${query.tableName}].[${query.primaryKey}] = ${query.primaryKeyValue}` // primary key for that table = 
-        return this._run(sqlQuery);
+        // Use parameterized query for security
+        // query.arg now contains {sql, params} from _buildSQLEqualToParameterized
+        if(query.arg && typeof query.arg === 'object' && query.arg.sql && query.arg.params){
+            var sqlQuery = ` UPDATE [${query.tableName}]
+            SET ${query.arg.sql}
+            WHERE [${query.tableName}].[${query.primaryKey}] = ?`;
+            // Add primaryKeyValue to params array
+            var params = [...query.arg.params, query.primaryKeyValue];
+            return this._runWithParams(sqlQuery, params);
+        } else {
+            // Fallback to old method (for backwards compatibility during migration)
+            var sqlQuery = ` UPDATE [${query.tableName}]
+            SET ${query.arg}
+            WHERE [${query.tableName}].[${query.primaryKey}] = ?`;
+            return this._runWithParams(sqlQuery, [query.primaryKeyValue]);
+        }
     }
 
     delete(queryObject){
        var sqlObject = this._buildDeleteObject(queryObject);
-       var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ${sqlObject.value}`;
-       return this._execute(sqlQuery);
+       // Use parameterized query to prevent SQL injection
+       var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
+       return this._executeWithParams(sqlQuery, [sqlObject.value]);
     }
 
     insert(queryObject){
-        var sqlObject = this._buildSQLInsertObject(queryObject, queryObject.__entity);
+        // Use NEW SECURE parameterized version
+        var sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
+        if(sqlObject === -1){
+            throw new Error('INSERT failed: No columns to insert');
+        }
         var query = `INSERT INTO [${sqlObject.tableName}] (${sqlObject.columns})
-        VALUES (${sqlObject.values})`;
-        var queryObj = this._run(query);
+        VALUES (${sqlObject.placeholders})`;
+        var queryObj = this._runWithParams(query, sqlObject.params);
         var open = {
             "id": queryObj.lastInsertRowid
         };
@@ -44,8 +62,11 @@ class SQLLiteEngine {
                 }
             }
             if(queryString.query){
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
                 console.log("SQL:", queryString.query);
-                var queryReturn = this.db.prepare(queryString.query).get();
+                console.log("Params:", params);
+                var queryReturn = this.db.prepare(queryString.query).get(...params);
                 return queryReturn;
             }
             return null;
@@ -58,8 +79,9 @@ class SQLLiteEngine {
     // Introspection helpers
     tableExists(tableName){
         try{
-            const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`;
-            const row = this.db.prepare(sql).get();
+            // Use parameterized query to prevent SQL injection
+            const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
+            const row = this.db.prepare(sql).get(tableName);
             return !!row;
         }catch(_){ return false; }
     }
@@ -88,8 +110,11 @@ class SQLLiteEngine {
             }
             if(queryString.query){
                 var queryCount = queryString.query
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
                 console.log("SQL:", queryCount );
-                var queryReturn = this.db.prepare(queryCount ).get();
+                console.log("Params:", params);
+                var queryReturn = this.db.prepare(queryCount).get(...params);
                 return queryReturn;
             }
             return null;
@@ -110,8 +135,11 @@ class SQLLiteEngine {
                 selectQuery = this.buildQuery(query, entity, context);
             }
             if(selectQuery.query){
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
                 console.log("SQL:", selectQuery.query);
-                var queryReturn = this.db.prepare(selectQuery.query).all();
+                console.log("Params:", params);
+                var queryReturn = this.db.prepare(selectQuery.query).all(...params);
                 return queryReturn;
             }
             return null;
@@ -648,10 +676,172 @@ class SQLLiteEngine {
         else{
             return -1;
         }
-       
+
     }
 
-    
+    /**
+     * NEW SECURE VERSION: Build SQL SET clause with parameterized queries
+     * Returns {sql: "column1 = ?, column2 = ?", params: [value1, value2]}
+     * This prevents SQL injection by separating SQL structure from values
+     */
+    _buildSQLEqualToParameterized(model){
+        var $that = this;
+        var sqlParts = [];
+        var params = [];
+        var dirtyFields = model.__dirtyFields;
+
+        for (var column in dirtyFields) {
+            // Validate non-nullable constraints on updates
+            var fieldName = dirtyFields[column];
+            var entityDef = model.__entity[fieldName];
+            if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
+                // Determine the value that will actually be persisted for this field
+                var persistedValue;
+                switch(entityDef.type){
+                    case "integer":
+                        persistedValue = model["_" + fieldName];
+                    break;
+                    case "belongsTo":
+                        persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
+                    break;
+                    default:
+                        persistedValue = model[fieldName];
+                }
+                var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+                if(persistedValue === undefined || persistedValue === null || isEmptyString){
+                    throw `Entity ${model.__entity.__name} column ${fieldName} is a required Field`;
+                }
+            }
+
+            var type = model.__entity[dirtyFields[column]].type;
+
+            if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){
+                type = "belongsTo";
+            }
+
+            // Build parameterized SET clause
+            switch(type){
+                case "belongsTo":
+                    const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    let fkValue = model[dirtyFields[column]];
+
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        fkValue = FieldTransformer.toDatabase(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+
+                    try {
+                        fkValue = $that._validateAndCoerceFieldType(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    var fore = `_${dirtyFields[column]}`;
+                    sqlParts.push(`[${foreignKey}] = ?`);
+                    params.push(model[fore]);
+                break;
+                case "integer":
+                    var intValue = model["_" + dirtyFields[column]];
+
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        intValue = FieldTransformer.toDatabase(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+
+                    try {
+                        intValue = $that._validateAndCoerceFieldType(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(intValue);
+                break;
+                case "string":
+                    var strValue = model[dirtyFields[column]];
+
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        strValue = FieldTransformer.toDatabase(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+
+                    try {
+                        strValue = $that._validateAndCoerceFieldType(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(strValue);
+                break;
+                case "boolean":
+                    var boolValue = model[dirtyFields[column]];
+
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        boolValue = FieldTransformer.toDatabase(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+
+                    try {
+                        boolValue = $that._validateAndCoerceFieldType(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    var bool;
+                    if(model.__entity[dirtyFields[column]].valueConversion){
+                        bool = tools.convertBooleanToNumber(boolValue);
+                    }
+                    else{
+                        bool = boolValue;
+                    }
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(bool);
+                break;
+                case "time":
+                    var timeValue = model[dirtyFields[column]];
+
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        timeValue = FieldTransformer.toDatabase(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+
+                    try {
+                        timeValue = $that._validateAndCoerceFieldType(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch(typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(timeValue);
+                break;
+                case "hasMany":
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(model[dirtyFields[column]]);
+                break;
+                default:
+                    sqlParts.push(`[${dirtyFields[column]}] = ?`);
+                    params.push(model[dirtyFields[column]]);
+            }
+        }
+
+        if(sqlParts.length > 0){
+            return {
+                sql: sqlParts.join(', '),
+                params: params
+            };
+        }
+        else{
+            return -1;
+        }
+    }
+
+
     _buildDeleteObject(currentModel){
         var primaryKey = currentModel.__Key === undefined ? tools.getPrimaryKeyObject(currentModel.__entity) : currentModel.__Key;
         var value = currentModel.__value === undefined ? currentModel[primaryKey] : currentModel.__value;
@@ -817,6 +1007,76 @@ class SQLLiteEngine {
 
     }
 
+    /**
+     * NEW SECURE VERSION: Build SQL INSERT with parameterized queries
+     * Returns {tableName, columns, placeholders, params}
+     * This prevents SQL injection by separating SQL structure from values
+     */
+    _buildSQLInsertObjectParameterized(fields, modelEntity){
+        var $that = this;
+        var columnNames = [];
+        var params = [];
+
+        for (var column in modelEntity) {
+            // Skip internal properties
+            if(column.indexOf("__") === -1 ){
+                var fieldColumn = fields[column];
+
+                if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
+                    // 🔥 Apply toDatabase transformer before validation
+                    try {
+                        fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column);
+                    } catch(transformError) {
+                        throw new Error(`INSERT failed: ${transformError.message}`);
+                    }
+
+                    // Validate and coerce field type before processing
+                    try {
+                        fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column);
+                    } catch(typeError) {
+                        throw new Error(`INSERT failed: ${typeError.message}`);
+                    }
+
+                    var relationship = modelEntity[column].relationshipType;
+                    var actualColumn = relationship === "belongsTo" ? modelEntity[column].foreignKey : column;
+
+                    // Add column name and parameter
+                    columnNames.push(`[${actualColumn}]`);
+                    params.push(fieldColumn);
+                }
+                else{
+                    switch(modelEntity[column].type){
+                        case "belongsTo":
+                            var fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column);
+                            if(Object.keys(fieldObject).length > 0){
+                                var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
+                                fieldColumn = fieldObject[primaryKey];
+                                var actualColumn = modelEntity[column].foreignKey;
+                                columnNames.push(`[${actualColumn}]`);
+                                params.push(fieldColumn);
+                            } else{
+                                console.log("Cannot find belongs to relationship")
+                            }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if(columnNames.length > 0){
+            // Create placeholders: ?, ?, ?, ...
+            var placeholders = params.map(() => '?').join(', ');
+            return {
+                tableName: modelEntity.__name,
+                columns: columnNames.join(', '),
+                placeholders: placeholders,
+                params: params
+            };
+        } else {
+            return -1;
+        }
+    }
+
     // will add double single quotes to allow string to be saved.
     _santizeSingleQuotes(value, context){
         if (typeof value === 'string' || value instanceof String){
@@ -854,9 +1114,21 @@ class SQLLiteEngine {
         return this.db.exec(query);
     }
 
+    _executeWithParams(query, params = []){
+        console.log("SQL:", query);
+        console.log("Params:", params);
+        return this.db.prepare(query).run(...params);
+    }
+
     _run(query){
         console.log("SQL:", query);
         return this.db.prepare(query).run();
+    }
+
+    _runWithParams(query, params = []){
+        console.log("SQL:", query);
+        console.log("Params:", params);
+        return this.db.prepare(query).run(...params);
     }
 
     setDB(db, type){

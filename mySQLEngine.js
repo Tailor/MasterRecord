@@ -2,27 +2,43 @@
 
 var tools =  require('masterrecord/Tools');
 var util = require('util');
+var FieldTransformer = require('masterrecord/Entity/fieldTransformer');
 
 class SQLLiteEngine {
 
     unsupportedWords = ["order"]
 
     update(query){
-        var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = ${query.primaryKeyValue}` // primary key for that table = 
-        return this._run(sqlQuery);
+        // Use parameterized query for security
+        // query.arg now contains {sql, params} from _buildSQLEqualToParameterized
+        if(query.arg && typeof query.arg === 'object' && query.arg.sql && query.arg.params){
+            var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg.sql} WHERE ${query.tableName}.${query.primaryKey} = ?`;
+            // Add primaryKeyValue to params array
+            var params = [...query.arg.params, query.primaryKeyValue];
+            return this._runWithParams(sqlQuery, params);
+        } else {
+            // Fallback to old method (for backwards compatibility during migration)
+            var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = ?`;
+            return this._runWithParams(sqlQuery, [query.primaryKeyValue]);
+        }
     }
 
     delete(queryObject){
        var sqlObject = this._buildDeleteObject(queryObject);
-       var sqlQuery = `DELETE FROM ${sqlObject.tableName} WHERE ${sqlObject.tableName}.${sqlObject.primaryKey} = ${sqlObject.value}`;
-       return this._run(sqlQuery);
+       // Use parameterized query to prevent SQL injection
+       var sqlQuery = `DELETE FROM ${sqlObject.tableName} WHERE ${sqlObject.tableName}.${sqlObject.primaryKey} = ?`;
+       return this._runWithParams(sqlQuery, [sqlObject.value]);
     }
 
     insert(queryObject){
-        var sqlObject = this._buildSQLInsertObject(queryObject, queryObject.__entity);
-        var query = `INSERT INTO ${sqlObject.tableName} (${sqlObject.columns}) VALUES (${sqlObject.values})`;
-        var queryObj = this._run(query);
-        // return 
+        // Use NEW SECURE parameterized version
+        var sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
+        if(sqlObject === -1){
+            throw new Error('INSERT failed: No columns to insert');
+        }
+        var query = `INSERT INTO ${sqlObject.tableName} (${sqlObject.columns}) VALUES (${sqlObject.placeholders})`;
+        var queryObj = this._runWithParams(query, sqlObject.params);
+        // return
         var open = {
             "id": queryObj.insertId
         };
@@ -39,9 +55,12 @@ class SQLLiteEngine {
                 queryString = this.buildQuery(query, entity, context);
             }
             if(queryString.query){
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
                 console.log("SQL:", queryString.query);
+                console.log("Params:", params);
                 this.db.connect(this.db);
-                const result = this.db.query(queryString.query);
+                const result = this.db.query(queryString.query, params);
                 console.log("results:", result);
                 return result;
             }
@@ -64,9 +83,13 @@ class SQLLiteEngine {
             }
             if(queryString.query){
                 var queryCount = queryObject.count(queryString.query)
-                console.log("SQL:", queryCount );
-                var queryReturn = this.db.prepare(queryCount ).get();
-                return queryReturn;
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
+                console.log("SQL:", queryCount);
+                console.log("Params:", params);
+                this.db.connect(this.db);
+                var queryReturn = this.db.query(queryCount, params);
+                return queryReturn[0]; // MySQL returns array, get first row
             }
             return null;
         } catch (err) {
@@ -85,9 +108,12 @@ class SQLLiteEngine {
                 queryString = this.buildQuery(query, entity, context);
             }
             if(queryString.query){
+                // Get parameters from query script
+                const params = query.parameters ? query.parameters.getParams() : [];
                 console.log("SQL:", queryString.query);
+                console.log("Params:", params);
                 this.db.connect(this.db);
-                const result = this.db.query(queryString.query);
+                const result = this.db.query(queryString.query, params);
                 console.log("results:", result);
                 return result;
             }
@@ -101,18 +127,18 @@ class SQLLiteEngine {
     // Introspection helpers
     tableExists(tableName){
         try{
-            const sql = `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName}'`;
+            const sql = `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`;
             this.db.connect(this.db);
-            const res = this.db.query(sql);
+            const res = this.db.query(sql, [tableName]);
             return Array.isArray(res) ? res.length > 0 : !!res?.length;
         }catch(_){ return false; }
     }
 
     getTableInfo(tableName){
         try{
-            const sql = `SELECT COLUMN_NAME as name, COLUMN_DEFAULT as dflt_value, IS_NULLABLE as is_nullable, DATA_TYPE as data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName}'`;
+            const sql = `SELECT COLUMN_NAME as name, COLUMN_DEFAULT as dflt_value, IS_NULLABLE as is_nullable, DATA_TYPE as data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`;
             this.db.connect(this.db);
-            const res = this.db.query(sql);
+            const res = this.db.query(sql, [tableName]);
             return res || [];
         }catch(_){ return []; }
     }
@@ -529,6 +555,153 @@ class SQLLiteEngine {
     }
 
     /**
+     * NEW SECURE VERSION: Build SQL SET clause with parameterized queries (MySQL)
+     * Returns {sql: "column1 = ?, column2 = ?", params: [value1, value2]}
+     */
+    _buildSQLEqualToParameterized(model){
+        var $that = this;
+        var sqlParts = [];
+        var params = [];
+        var dirtyFields = model.__dirtyFields;
+
+        for (var column in dirtyFields) {
+            var fieldName = dirtyFields[column];
+            var entityDef = model.__entity[fieldName];
+            if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
+                var persistedValue;
+                switch(entityDef.type){
+                    case "integer": persistedValue = model["_" + fieldName]; break;
+                    case "belongsTo": persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName]; break;
+                    default: persistedValue = model[fieldName];
+                }
+                var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+                if(persistedValue === undefined || persistedValue === null || isEmptyString){
+                    throw `Entity ${model.__entity.__name} column ${fieldName} is a required Field`;
+                }
+            }
+
+            var type = model.__entity[dirtyFields[column]].type;
+            if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){ type = "belongsTo"; }
+
+            switch(type){
+                case "belongsTo":
+                    const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    let fkValue = model[dirtyFields[column]];
+                    // 🔥 Apply toDatabase transformer
+                    try { fkValue = FieldTransformer.toDatabase(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
+                    try { fkValue = $that._validateAndCoerceFieldType(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    var fore = `_${dirtyFields[column]}`;
+                    sqlParts.push(`${foreignKey} = ?`);
+                    params.push(model[fore]);
+                break;
+                case "integer":
+                    var intValue = model["_" + dirtyFields[column]];
+                    // 🔥 Apply toDatabase transformer
+                    try { intValue = FieldTransformer.toDatabase(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
+                    try { intValue = $that._validateAndCoerceFieldType(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(intValue);
+                break;
+                case "string":
+                    var strValue = model[dirtyFields[column]];
+                    // 🔥 Apply toDatabase transformer
+                    try { strValue = FieldTransformer.toDatabase(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
+                    try { strValue = $that._validateAndCoerceFieldType(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(strValue);
+                break;
+                case "boolean":
+                    var boolValue = model[dirtyFields[column]];
+                    // 🔥 Apply toDatabase transformer
+                    try { boolValue = FieldTransformer.toDatabase(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
+                    try { boolValue = $that._validateAndCoerceFieldType(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    var bool = model.__entity[dirtyFields[column]].valueConversion ? tools.convertBooleanToNumber(boolValue) : boolValue;
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(bool);
+                break;
+                case "time":
+                    var timeValue = model[dirtyFields[column]];
+                    // 🔥 Apply toDatabase transformer
+                    try { timeValue = FieldTransformer.toDatabase(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
+                    try { timeValue = $that._validateAndCoerceFieldType(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
+                    catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(timeValue);
+                break;
+                case "hasMany":
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(model[dirtyFields[column]]);
+                break;
+                default:
+                    sqlParts.push(`${dirtyFields[column]} = ?`);
+                    params.push(model[dirtyFields[column]]);
+            }
+        }
+
+        return sqlParts.length > 0 ? { sql: sqlParts.join(', '), params: params } : -1;
+    }
+
+    /**
+     * NEW SECURE VERSION: Build SQL INSERT with parameterized queries (MySQL)
+     * Returns {tableName, columns, placeholders, params}
+     */
+    _buildSQLInsertObjectParameterized(fields, modelEntity){
+        var $that = this;
+        var columnNames = [];
+        var params = [];
+
+        for (var column in modelEntity) {
+            if(column.indexOf("__") === -1 ){
+                var fieldColumn = fields[column];
+
+                if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
+                    // 🔥 Apply toDatabase transformer before validation
+                    try { fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column); }
+                    catch(transformError) { throw new Error(`INSERT failed: ${transformError.message}`); }
+
+                    try { fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column); }
+                    catch(typeError) { throw new Error(`INSERT failed: ${typeError.message}`); }
+
+                    var relationship = modelEntity[column].relationshipType;
+                    var actualColumn = relationship === "belongsTo" ? modelEntity[column].foreignKey : column;
+                    columnNames.push(actualColumn);
+                    params.push(fieldColumn);
+                }
+                else{
+                    switch(modelEntity[column].type){
+                        case "belongsTo":
+                            var fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column);
+                            if(Object.keys(fieldObject).length > 0){
+                                var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
+                                fieldColumn = fieldObject[primaryKey];
+                                var actualColumn = modelEntity[column].foreignKey;
+                                columnNames.push(actualColumn);
+                                params.push(fieldColumn);
+                            }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if(columnNames.length > 0){
+            var placeholders = params.map(() => '?').join(', ');
+            return { tableName: modelEntity.__name, columns: columnNames.join(', '), placeholders: placeholders, params: params };
+        } else {
+            return -1;
+        }
+    }
+
+    /**
      * Validate and coerce field value to match entity type definition
      * Throws detailed error if type cannot be coerced
      * @param {*} value - The field value to validate
@@ -746,6 +919,59 @@ class SQLLiteEngine {
             // Expected output: ReferenceError: nonExistentFunction is not defined
             // (Note: the exact output may be browser-dependent)
           }
+    }
+
+    /**
+     * NEW SECURE VERSION: Execute query with parameters
+     * Prevents SQL injection by using parameterized queries
+     */
+    _executeWithParams(query, params = []){
+        console.log("SQL:", query);
+        console.log("Params:", params);
+        try{
+            this.db.connect(this.db);
+            const res = this.db.query(query, params);
+            if(res === null){
+                const dbName = (this.db && this.db.config && this.db.config.database) ? this.db.config.database : '(unknown)';
+                if(this.db && this.db.lastErrorCode === 'ER_BAD_DB_ERROR'){
+                    console.error(`MySQL execute skipped: database '${dbName}' does not exist`);
+                }else{
+                    console.error('MySQL execute skipped: connection not defined');
+                }
+                return null;
+            }
+            return res;
+        }catch(err){
+            const code = err && err.code ? err.code : '';
+            if(code === 'ER_BAD_DB_ERROR' || code === 'ECONNREFUSED' || code === 'PROTOCOL_CONNECTION_LOST'){
+                const dbName = (this.db && this.db.config && this.db.config.database) ? this.db.config.database : '(unknown)';
+                if(code === 'ER_BAD_DB_ERROR'){
+                    console.error(`MySQL execute skipped: database '${dbName}' does not exist`);
+                } else {
+                    console.error('MySQL execute skipped: connection not defined');
+                }
+                return null;
+            }
+            console.error(err);
+            return null;
+        }
+    }
+
+    /**
+     * NEW SECURE VERSION: Run query with parameters
+     * Prevents SQL injection by using parameterized queries
+     */
+    _runWithParams(query, params = []){
+        try{
+            console.log("SQL:", query);
+            console.log("Params:", params);
+            this.db.connect(this.db);
+            const result = this.db.query(query, params);
+            return result;
+        }
+        catch (error) {
+            console.error(error);
+        }
     }
 
     setDB(db, type){

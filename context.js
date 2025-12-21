@@ -385,9 +385,9 @@ class context {
                                 break;
                                 case "modified":
                                     if(currentModel.__dirtyFields.length > 0){
-                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity); 
-                                        // build columns equal to value string 
-                                        var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                        // Use NEW SECURE parameterized version
+                                        var argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
                                         if(argu !== -1 ){
                                             var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
                                             var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
@@ -396,7 +396,7 @@ class context {
                                         else{
                                             console.log("Nothing has been tracked, modified, created or added");
                                         }
-                                        
+
                                     }
                                     else{
                                         console.log("Tracked entity modified with no values being changed");
@@ -427,8 +427,8 @@ class context {
                                 case "modified":
                                     if(currentModel.__dirtyFields.length > 0){
                                         var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
-                                        // build columns equal to value string 
-                                        var argu = this._SQLEngine._buildSQLEqualTo(cleanCurrentModel);
+                                        // Use NEW SECURE parameterized version
+                                        var argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
                                         if(argu !== -1 ){
                                             var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
                                             var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
@@ -437,7 +437,7 @@ class context {
                                         else{
                                             console.log("Nothing has been tracked, modified, created or added");
                                         }
-                                       
+
                                     }
                                     else{
                                         console.log("Tracked entity modified with no values being changed");

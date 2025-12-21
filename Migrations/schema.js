@@ -272,10 +272,16 @@ class schema{
             const admin = new MySQLClient(baseConfig);
             admin.connect();
             if(!admin.connection){ return; }
-            const check = admin.query(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${dbName}'`);
+
+            // Use parameterized query for checking database existence
+            const check = admin.query(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?`, [dbName]);
             const exists = Array.isArray(check) ? check.length > 0 : !!check?.length;
             if(!exists){
-                // Create with sensible defaults
+                // Validate database name (alphanumeric, underscore, hyphen only)
+                if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
+                    throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
+                }
+                // CREATE DATABASE doesn't support placeholders, but we've validated the name
                 admin.query(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
             }
             admin.close();

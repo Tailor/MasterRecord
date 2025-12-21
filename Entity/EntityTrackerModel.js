@@ -1,6 +1,8 @@
 
 // version : 0.0.9
 var tools =  require('../Tools');
+var FieldTransformer = require('./fieldTransformer');
+
 class EntityTrackerModel {
 
 
@@ -18,12 +20,27 @@ class EntityTrackerModel {
         this.buildRelationshipModels(modelClass, currentEntity, dataModel);
         
         // loop through data model fields
-        for (const [modelField, modelFieldValue] of modelFields) { 
-            
+        for (const [modelField, modelFieldValue] of modelFields) {
+
             // set the value dynamiclly
             if(!$that._isRelationship(currentEntity[modelField])){
+                // 🔥 Apply fromDatabase transformer when building entity from DB row
+                let transformedValue = modelFieldValue;
+                try {
+                    transformedValue = FieldTransformer.fromDatabase(
+                        modelFieldValue,
+                        currentEntity[modelField],
+                        currentEntity.__name,
+                        modelField
+                    );
+                } catch(transformError) {
+                    console.error(`Warning: Failed to transform ${currentEntity.__name}.${modelField} from database: ${transformError.message}`);
+                    // Use original value if transformation fails (non-fatal)
+                    transformedValue = modelFieldValue;
+                }
+
                 // current entity has a value then add
-                modelClass["__proto__"]["_" + modelField] = modelFieldValue;
+                modelClass["__proto__"]["_" + modelField] = transformedValue;
 
                 Object.defineProperty(modelClass,modelField, {
                     set: function(value) {

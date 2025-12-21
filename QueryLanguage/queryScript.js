@@ -1,11 +1,16 @@
-// version 0.0.8
+// version 0.0.9
 
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
+const QueryParameters = require('./queryParameters');
 
 class queryScript{
 
-    constructor(){ }
+    constructor(){
+        this.parameters = new QueryParameters();
+        // Initialize script.parameters reference
+        this.script.parameters = this.parameters;
+    }
 
     script = {
         select : false,
@@ -19,11 +24,13 @@ class queryScript{
         skip: 0,
         orderBy : false,
         orderByDesc : false,
-        parentName : ""
+        parentName : "",
+        parameters: null  // Will hold QueryParameters instance
     };
 
 
     reset(){
+        this.parameters.reset();
         this.script = {
             select : false,
             where: false,
@@ -35,7 +42,9 @@ class queryScript{
             take : 0,
             skip: 0,
             orderBy : false,
-            orderByDesc : false
+            orderByDesc : false,
+            parentName : "",
+            parameters: this.parameters
         };
     }
 

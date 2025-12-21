@@ -61,28 +61,28 @@ class queryMethods{
 
     ______orderByCount(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'orderByCount');
+        str = this.__validateAndCollectParameters(str, args, 'orderByCount');
         this.__queryObject.orderByCount(str, this.__entity.__name);
         return this;
     }
 
     ______orderByCountDescending(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'orderByCountDescending');
+        str = this.__validateAndCollectParameters(str, args, 'orderByCountDescending');
         this.__queryObject.orderByCountDesc(str, this.__entity.__name);
         return this;
     }
 
     orderBy(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'orderBy');
+        str = this.__validateAndCollectParameters(str, args, 'orderBy');
         this.__queryObject.orderBy(str, this.__entity.__name);
         return this;
     }
 
     orderByDescending(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'orderByDescending');
+        str = this.__validateAndCollectParameters(str, args, 'orderByDescending');
         this.__queryObject.orderByDesc(str, this.__entity.__name);
         return this;
     }
@@ -95,14 +95,22 @@ class queryMethods{
     /* WHERE and AND work together its a way to add to the WHERE CLAUSE DYNAMICALLY */
     and(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'and');
+        // Transform .includes() syntax to .any() syntax
+        var transformResult = this.__transformIncludes(str, args);
+        str = transformResult.query;
+        args = transformResult.args;
+        str = this.__validateAndCollectParameters(str, args, 'and');
         this.__queryObject.and(str, this.__entity.__name);
         return this;
     }
 
     where(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'where');
+        // Transform .includes() syntax to .any() syntax
+        var transformResult = this.__transformIncludes(str, args);
+        str = transformResult.query;
+        args = transformResult.args;
+        str = this.__validateAndCollectParameters(str, args, 'where');
         this.__queryObject.where(str, this.__entity.__name);
         return this;
     }
@@ -111,7 +119,7 @@ class queryMethods{
     //Eagerly loading
     include(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'include');
+        str = this.__validateAndCollectParameters(str, args, 'include');
         this.__queryObject.include(str, this.__entity.__name);
         return this;
     }
@@ -119,7 +127,7 @@ class queryMethods{
     // only takes a array of selected items
     select(query,  ...args){
         var str = query.toString();
-        str = this.__validateAndReplacePlaceholders(str, args, 'select');
+        str = this.__validateAndCollectParameters(str, args, 'select');
         this.__queryObject.select(str, this.__entity.__name);
         return this;
     }
@@ -141,7 +149,7 @@ class queryMethods{
     count(query,  ...args){
         if(query){
             var str = query.toString();
-            str = this.__validateAndReplacePlaceholders(str, args, 'count');
+            str = this.__validateAndCollectParameters(str, args, 'count');
             this.__queryObject.count(str, this.__entity.__name);
         }
 
@@ -152,7 +160,7 @@ class queryMethods{
             this.__reset();
             return val;
         }
-        
+
         if(this.__context.isMySQL){
             // trying to match string select and relace with select Count(*);
             var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
@@ -162,7 +170,25 @@ class queryMethods{
         }
     }
 
-    __validateAndReplacePlaceholders(str, args, methodName){
+    /**
+     * Transform .includes() syntax to .any() syntax
+     * Converts: $$.includes(entity.field) => entity.field.any($$)
+     * This allows natural JavaScript array syntax while using existing .any() infrastructure
+     */
+    __transformIncludes(str, args){
+        // Pattern: $$.includes(entity.field) or $$.includes(entity.field.nested)
+        const includesPattern = /\$\$\.includes\s*\(\s*([\w\d$_]+)\.([.\w\d_]+)\s*\)/g;
+
+        // Use replace with a function - when using a function, return value is used literally
+        const transformedStr = str.replace(includesPattern, (match, entity, field) => {
+            // Transform to .any() syntax: entity.field.any($$)
+            return entity + '.' + field + '.any($$)';
+        });
+
+        return { query: transformedStr, args: args };
+    }
+
+    __validateAndCollectParameters(str, args, methodName){
         // Count placeholders
         const placeholderCount = (str.match(/\$\$/g) || []).length;
         const providedCount = args ? args.length : 0;
@@ -171,6 +197,13 @@ class queryMethods{
             console.error(msg);
             throw new Error(msg);
         }
+
+        // Get database type from context
+        const dbType = this.__context.isSQLite ? 'sqlite' :
+                      this.__context.isMySQL ? 'mysql' :
+                      this.__context.isPostgres ? 'postgres' : 'sqlite';
+
+        // Replace $$ with ? placeholders and collect parameter values
         if(args){
             for(let argument in args){
                 var item = args[argument];
@@ -179,7 +212,39 @@ class queryMethods{
                     console.error(msg);
                     throw new Error(msg);
                 }
-                str = str.replace("$$", item);
+
+                // Check if this is an array (for IN clauses / .includes() / .any())
+                if(Array.isArray(item)){
+                    // Validate each array element
+                    try {
+                        for(const val of item){
+                            this.__queryObject.parameters.validateValue(val);
+                        }
+                    } catch(err) {
+                        const msg = `Query argument error in ${methodName}: ${err.message}`;
+                        console.error(msg);
+                        throw new Error(msg);
+                    }
+
+                    // Add array parameters and get comma-separated placeholders
+                    const placeholders = this.__queryObject.parameters.addParams(item, dbType);
+                    str = str.replace("$$", placeholders);
+                }
+                else{
+                    // Single value - existing logic
+                    // Validate parameter value is safe
+                    try {
+                        this.__queryObject.parameters.validateValue(item);
+                    } catch(err) {
+                        const msg = `Query argument error in ${methodName}: ${err.message}`;
+                        console.error(msg);
+                        throw new Error(msg);
+                    }
+
+                    // Add parameter and replace $$ with placeholder
+                    const placeholder = this.__queryObject.parameters.addParam(item, dbType);
+                    str = str.replace("$$", placeholder);
+                }
             }
         }
         return str;

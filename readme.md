@@ -269,6 +269,438 @@ If your code relies on implicit type coercion that was previously silent:
 
 4. **Better debugging**: Type issues are caught at save time, not when you query the data later.
 
+## Field Transformers
+
+Field transformers allow you to define custom serialization/deserialization logic for entity fields. This solves the common problem of needing to store complex JavaScript types (like arrays or objects) in simple database columns (like strings).
+
+### The Problem
+
+You want to store a JavaScript array in a database string column:
+
+```javascript
+class User {
+    constructor() {
+        this.certified_models = { type: "string" };  // DB column type
+    }
+}
+
+const user = new User();
+user.certified_models = [1, 2, 3];  // Assign array
+context.saveChanges();  // ❌ ERROR: Type validation rejects array for string field
+```
+
+**Before transformers**, you had two bad options:
+1. Use raw SQL (bypasses ORM, loses benefits)
+2. Manually convert before assigning (error-prone, scattered logic)
+
+**With transformers**, transformation happens automatically:
+
+```javascript
+class User {
+    constructor() {
+        this.certified_models = {
+            type: "string",
+            transform: {
+                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
+                fromDatabase: (v) => v ? JSON.parse(v) : []
+            }
+        };
+    }
+}
+
+const user = new User();
+user.certified_models = [1, 2, 3];  // ✅ Array accepted
+context.saveChanges();  // ✅ Auto-converts to "[1,2,3]" in database
+```
+
+### How It Works
+
+Transformers execute at the ORM boundary, before type validation and after database reads:
+
+**Write Path (INSERT/UPDATE):**
+1. Application assigns value: `user.field = [1, 2, 3]`
+2. **toDatabase transformer**: `[1, 2, 3] → "[1,2,3]"`
+3. Type validation: `"[1,2,3]"` passes string validation ✓
+4. Database stores: `"[1,2,3]"`
+
+**Read Path (SELECT):**
+1. Database returns: `"[1,2,3]"`
+2. **fromDatabase transformer**: `"[1,2,3]" → [1, 2, 3]`
+3. Application receives: JavaScript array
+
+### Basic Usage
+
+```javascript
+class User {
+    constructor() {
+        this.id = { type: "integer", primary: true, auto: true };
+        this.name = { type: "string" };
+
+        // Field with transformer
+        this.tags = {
+            type: "string",  // Database column type
+            transform: {
+                // Convert array to JSON string for database
+                toDatabase: (value) => {
+                    if (value === null || value === undefined) return null;
+                    return Array.isArray(value) ? JSON.stringify(value) : value;
+                },
+
+                // Convert JSON string back to array from database
+                fromDatabase: (value) => {
+                    if (!value) return [];
+                    try {
+                        return JSON.parse(value);
+                    } catch (err) {
+                        console.warn(`Failed to parse tags: ${value}`);
+                        return [];
+                    }
+                }
+            }
+        };
+    }
+}
+
+// Usage is completely natural
+const user = new User();
+user.name = "Alice";
+user.tags = ["admin", "moderator", "premium"];  // Assign array naturally
+
+context.User.add(user);
+context.saveChanges();  // Stores: name="Alice", tags='["admin","moderator","premium"]'
+
+// Reading back
+const users = context.User.where(u => u.name == $$, "Alice").toList();
+console.log(users[0].tags);  // ["admin", "moderator", "premium"] - JavaScript array!
+console.log(users[0].tags.includes("admin"));  // true - works like a normal array
+```
+
+### Transformer Definition
+
+The `transform` property accepts an object with two optional functions:
+
+```javascript
+{
+    type: "string",  // Required: database column type
+    transform: {
+        toDatabase: (value) => {
+            // Transform JavaScript value → database-compatible value
+            // Called before INSERT/UPDATE operations
+            // Must return a value (not undefined)
+            return transformedValue;
+        },
+        fromDatabase: (value) => {
+            // Transform database value → JavaScript value
+            // Called after SELECT operations
+            // Can return undefined for optional transformations
+            return transformedValue;
+        }
+    }
+}
+```
+
+**Requirements:**
+- At least one transformer function (`toDatabase` or `fromDatabase`) must be provided
+- `toDatabase` must return a value (cannot return undefined)
+- `fromDatabase` can return undefined for optional cases
+- Transformers are called before type validation (write) and after DB reads (read)
+
+### Common Patterns
+
+**Pattern 1: JSON Arrays**
+```javascript
+this.item_ids = {
+    type: "string",
+    transform: {
+        toDatabase: (v) => v ? JSON.stringify(v) : null,
+        fromDatabase: (v) => v ? JSON.parse(v) : []
+    }
+};
+```
+
+**Pattern 2: JSON Objects**
+```javascript
+this.metadata = {
+    type: "string",
+    transform: {
+        toDatabase: (v) => JSON.stringify(v || {}),
+        fromDatabase: (v) => v ? JSON.parse(v) : {}
+    }
+};
+```
+
+**Pattern 3: CSV to Array**
+```javascript
+this.permissions = {
+    type: "string",
+    transform: {
+        toDatabase: (v) => Array.isArray(v) ? v.join(',') : v,
+        fromDatabase: (v) => v ? v.split(',') : []
+    }
+};
+```
+
+**Pattern 4: Boolean as Integer**
+```javascript
+this.is_active = {
+    type: "integer",
+    transform: {
+        toDatabase: (v) => v ? 1 : 0,
+        fromDatabase: (v) => v === 1
+    }
+};
+```
+
+**Pattern 5: Date String Parsing**
+```javascript
+this.created_at = {
+    type: "string",
+    transform: {
+        toDatabase: (v) => v instanceof Date ? v.toISOString() : v,
+        fromDatabase: (v) => v ? new Date(v) : null
+    }
+};
+```
+
+### Error Handling
+
+Transformers include comprehensive error handling:
+
+```javascript
+this.data = {
+    type: "string",
+    transform: {
+        toDatabase: (value) => {
+            if (!value) return null;
+
+            try {
+                return JSON.stringify(value);
+            } catch (err) {
+                throw new Error(`Cannot serialize data: ${err.message}`);
+            }
+        },
+        fromDatabase: (value) => {
+            if (!value) return {};
+
+            try {
+                return JSON.parse(value);
+            } catch (err) {
+                // Log warning but don't fail the query
+                console.warn(`Failed to parse data field: ${value}`);
+                return {};  // Return safe default
+            }
+        }
+    }
+};
+```
+
+**Error behavior:**
+- **Write path errors** (toDatabase): Throw immediately, preventing invalid data from being saved
+- **Read path errors** (fromDatabase): Log warning and continue with fallback value (non-fatal)
+
+### Real-World Example
+
+Complete example solving the "arrays in database" problem:
+
+```javascript
+class User {
+    constructor() {
+        this.id = { type: "integer", primary: true, auto: true };
+        this.name = { type: "string" };
+        this.email = { type: "string" };
+
+        // Array fields stored as JSON strings
+        this.certified_models = {
+            type: "string",
+            nullable: true,
+            transform: {
+                toDatabase: (value) => {
+                    if (value === null || value === undefined) return null;
+                    if (Array.isArray(value)) return JSON.stringify(value);
+                    return value;  // Already a string
+                },
+                fromDatabase: (value) => {
+                    if (!value) return [];
+                    if (Array.isArray(value)) return value;  // Already parsed
+                    try {
+                        return JSON.parse(value);
+                    } catch {
+                        return [];  // Safe fallback
+                    }
+                }
+            }
+        };
+
+        this.roles = {
+            type: "string",
+            transform: {
+                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
+                fromDatabase: (v) => v ? JSON.parse(v) : []
+            }
+        };
+    }
+}
+
+// Create user with arrays
+const user = new User();
+user.name = "Alex";
+user.email = "alex@example.com";
+user.certified_models = [1, 2, 5, 8];  // Natural array assignment
+user.roles = ["admin", "calibrator"];  // Natural array assignment
+
+context.User.add(user);
+context.saveChanges();  // ✅ Works perfectly!
+
+// Update user
+const loadedUser = context.User.where(u => u.email == $$, "alex@example.com").single();
+loadedUser.certified_models.push(12);  // Add model 12
+context.saveChanges();  // ✅ Transforms and saves
+
+// Query with arrays (using .includes())
+const modelId = 5;
+const certifiedUsers = context.User
+    .where(u => $$.includes(u.certified_models), [modelId])  // Won't work directly
+    .toList();
+// Note: For IN clause queries on JSON arrays, you'd need to query differently
+// or normalize the data structure
+```
+
+### Benefits
+
+1. **Cleaner code**: No manual JSON.stringify/parse scattered everywhere
+2. **Type safety**: Validation happens after transformation
+3. **Consistency**: All data access through ORM (no raw SQL needed)
+4. **Maintainable**: Transformation logic in one place (entity definition)
+5. **Testable**: Transformers are pure functions, easy to unit test
+6. **DRY**: Define once, use everywhere
+7. **Explicit**: Clear in entity definition what transformations occur
+
+### Testing Transformers
+
+Run the transformer test suite:
+```bash
+node test/transformerTest.js
+```
+
+Example demonstrates:
+```bash
+node examples/jsonArrayTransformer.js
+```
+
+### Migration Guide
+
+If you're currently using raw SQL to bypass type validation:
+
+**Before:**
+```javascript
+// Mixed approach - some through ORM, some through raw SQL
+user.name = "Alex";
+user.email = "alex@example.com";
+context.User.add(user);
+context.saveChanges();
+
+// Bypass ORM for arrays
+const jsonModels = JSON.stringify([1, 2, 3]);
+const sql = `UPDATE User SET certified_models = ? WHERE id = ?`;
+context.User.raw(sql, [jsonModels, user.id]);
+```
+
+**After:**
+```javascript
+// Everything through ORM consistently
+class User {
+    constructor() {
+        this.certified_models = {
+            type: "string",
+            transform: {
+                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
+                fromDatabase: (v) => v ? JSON.parse(v) : []
+            }
+        };
+    }
+}
+
+user.name = "Alex";
+user.email = "alex@example.com";
+user.certified_models = [1, 2, 3];  // Natural assignment
+context.User.add(user);
+context.saveChanges();  // Everything saved consistently
+```
+
+## Security - SQL Injection Protection
+
+Master Record uses **parameterized queries** throughout to protect against SQL injection attacks. All user input is safely separated from SQL structure using database-specific parameter placeholders (`?` for MySQL/SQLite, `$1, $2, ...` for Postgres).
+
+### How It Works
+
+When you write queries with `$$` placeholders, MasterRecord:
+1. **Separates SQL structure from values** - The query structure is built first
+2. **Validates parameter types** - Rejects unsafe values (objects, functions, symbols)
+3. **Uses database placeholders** - Replaces `$$` with `?` or `$1` depending on your database
+4. **Passes values separately** - Database driver handles proper escaping
+
+### Protected Operations
+
+✅ **All operations use parameterized queries:**
+- **SELECT queries** - WHERE, ORDER BY, LIKE conditions
+- **INSERT operations** - All column values
+- **UPDATE operations** - SET clauses and WHERE conditions
+- **DELETE operations** - WHERE conditions
+- **IN clauses** - Array values for `.includes()` and `.any()` methods
+- **Table introspection** - Database metadata queries
+
+### Example: Safe Query Handling
+
+```javascript
+// User input (potentially malicious)
+const userInput = "admin' OR '1'='1";
+
+// BEFORE (❌ UNSAFE - string concatenation)
+// const query = `SELECT * FROM User WHERE name = '${userInput}'`;
+
+// AFTER (✅ SAFE - parameterized)
+const users = context.User
+    .where(u => u.name == $$, userInput)
+    .toList();
+
+// Generated: SELECT * FROM User WHERE name = ?
+// Parameters: ["admin' OR '1'='1"]
+// Result: Safely searches for the literal string, no SQL injection
+```
+
+### Testing Security
+
+MasterRecord includes comprehensive security tests:
+```bash
+node test/securityTest.js
+```
+
+These tests verify:
+- SQL injection attempts are safely parameterized
+- Array parameters are properly validated
+- Special characters are handled correctly
+- Edge cases (empty strings, unicode, null bytes) are managed safely
+
+### Best Practices
+
+1. **Always use `$$` placeholders** for dynamic values:
+   ```javascript
+   // ✅ Good
+   context.User.where(u => u.name == $$, userName).toList()
+
+   // ❌ Bad (bypasses protection)
+   context.User.raw(`SELECT * FROM User WHERE name = '${userName}'`).toList()
+   ```
+
+2. **Use `.includes()` for IN clauses** with arrays:
+   ```javascript
+   const ids = [1, 2, 3, 4, 5];
+   context.User.where(u => $$.includes(u.id), ids).toList();
+   // Safely generates: WHERE id IN (?, ?, ?, ?, ?)
+   ```
+
+3. **Validate input at boundaries** - While MasterRecord prevents SQL injection, always validate business logic constraints (valid IDs, authorized access, etc.)
+
 ## Multi-context (multi-database) projects
 
 When your project defines multiple Context files (e.g., `userContext.js`, `modelContext.js`, `mailContext.js`, `chatContext.js`) across different packages or feature directories, MasterRecord can auto-detect and operate on all of them.
@@ -596,5 +1028,116 @@ let orders = query
 - Conditions are combined in the order they're added
 - The query is only executed when you call a terminal method: `toList()`, `single()`, `count()`
 - Query builders are reusable - calling `toList()` resets the builder for the next query
+
+## Array Filtering with .includes()
+
+MasterRecord supports natural JavaScript array syntax for IN clause queries using the `.includes()` method. This provides a more intuitive way to filter records based on array values.
+
+### Basic Usage
+
+```javascript
+// Define an array of IDs
+const userIds = [1, 2, 3, 4, 5];
+
+// Use .includes() to filter
+const users = context.User
+    .where(u => $$.includes(u.id), userIds)
+    .toList();
+```
+
+**Generated SQL:**
+```sql
+SELECT * FROM User AS u
+WHERE u.id IN (?, ?, ?, ?, ?)
+-- Parameters: [1, 2, 3, 4, 5]
+```
+
+### Examples
+
+**Filter by status array:**
+```javascript
+const validStatuses = ['active', 'pending', 'processing'];
+const orders = context.Order
+    .where(o => $$.includes(o.status), validStatuses)
+    .toList();
+```
+
+**Combined with other conditions:**
+```javascript
+const departmentIds = [10, 20, 30];
+const employees = context.Employee
+    .where(e => $$.includes(e.department_id), departmentIds)
+    .and(e => e.is_active == true)
+    .orderBy(e => e.name)
+    .toList();
+```
+
+**Dynamic filtering:**
+```javascript
+let query = context.Product;
+
+// Conditionally filter by categories
+if (categoryIds && categoryIds.length > 0) {
+    query = query.where(p => $$.includes(p.category_id), categoryIds);
+}
+
+// Conditionally filter by tags
+if (tagIds && tagIds.length > 0) {
+    query = query.and(p => $$.includes(p.tag_id), tagIds);
+}
+
+const products = query.toList();
+```
+
+### .includes() vs .any()
+
+MasterRecord supports two syntaxes for IN clauses:
+
+**Option 1: `.includes()` (recommended for arrays)**
+```javascript
+const ids = [1, 2, 3];
+context.User.where(u => $$.includes(u.id), ids).toList();
+```
+
+**Option 2: `.any()` (alternative syntax)**
+```javascript
+context.User.where(u => u.id.any($$), "1,2,3").toList();
+```
+
+Both produce the same SQL, but `.includes()` is more natural when working with JavaScript arrays.
+
+### Security
+
+All array values are automatically parameterized, preventing SQL injection:
+
+```javascript
+// Even with malicious input, this is safe
+const maliciousIds = [1, 2, "3'; DROP TABLE User;--"];
+const users = context.User
+    .where(u => $$.includes(u.id), maliciousIds)
+    .toList();
+
+// Safely generates: WHERE u.id IN (?, ?, ?)
+// Parameters: [1, 2, "3'; DROP TABLE User;--"]
+// The malicious string is treated as a literal value
+```
+
+### Validation
+
+- **Empty arrays are rejected** with a clear error message
+- **Non-primitive values** (objects, functions) are rejected
+- **Type mismatches** are handled according to field type definitions
+
+```javascript
+// ❌ This will throw an error
+const emptyArray = [];
+context.User.where(u => $$.includes(u.id), emptyArray).toList();
+// Error: Cannot create IN clause with empty array
+
+// ❌ This will throw an error
+const objectArray = [{id: 1}, {id: 2}];
+context.User.where(u => $$.includes(u.id), objectArray).toList();
+// Error: Invalid parameter type: object
+```
 
 
