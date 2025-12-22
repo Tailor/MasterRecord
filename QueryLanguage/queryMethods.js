@@ -302,6 +302,55 @@ class queryMethods{
 
       // ------------------------------- FUNCTIONS THAT UPDATE SQL START FROM HERE  -----------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------------------------------------
+
+    // Creates a new empty entity instance ready for insertion
+    // Returns an object with property setters that track changes
+    new(){
+        var newEntity = {
+            __ID : Math.floor((Math.random() * 100000) + 1),
+            __dirtyFields : [],
+            __state : "insert",
+            __entity : this.__entity,
+            __context : this.__context,
+            __name : this.__entity.__name,
+            __proto__ : {}
+        };
+
+        // Set up property setters for all entity fields
+        var $that = this;
+        for (var fieldName in this.__entity) {
+            if(!fieldName.startsWith("__")){
+                var field = this.__entity[fieldName];
+                // Skip navigational properties (relationships)
+                if(!field.isNavigational && field.type !== "hasMany" && field.type !== "hasOne" && field.type !== "hasManyThrough"){
+                    (function(fname, fieldDef){
+                        Object.defineProperty(newEntity, fname, {
+                            enumerable: true,
+                            configurable: true,
+                            set: function(value) {
+                                this.__proto__["_" + fname] = value;
+                                if(!this.__dirtyFields.includes(fname)){
+                                    this.__dirtyFields.push(fname);
+                                }
+                            },
+                            get: function(){
+                                // Apply get function if defined
+                                if(fieldDef && typeof fieldDef.get === "function"){
+                                    return fieldDef.get(this.__proto__["_" + fname]);
+                                }
+                                return this.__proto__["_" + fname];
+                            }
+                        });
+                    })(fieldName, field);
+                }
+            }
+        }
+
+        // Track the entity
+        this.__context.__track(newEntity);
+        return newEntity;
+    }
+
     add(entityValue){
         entityValue.__state = "insert";
         entityValue.__entity = this.__entity;
