@@ -275,16 +275,28 @@ class SQLLiteEngine {
                             if(item.expressions[exp].arg === "null"){
                                 strQuery = `${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
                             }else{
-                                strQuery = `${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
+                                // Check if arg is a parameterized placeholder
+                                var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
+                                if(isPlaceholder){
+                                    strQuery = `${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
+                                }else{
+                                    strQuery = `${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
+                                }
                             }
                         }
                         else{
                             if(item.expressions[exp].arg === "null"){
                                 strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
                             }else{
-                                strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
+                                // Check if arg is a parameterized placeholder
+                                var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
+                                if(isPlaceholder){
+                                    strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
+                                }else{
+                                    strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
+                                }
                             }
-                           
+
                         }
                     }
                     andList.push(strQuery);
