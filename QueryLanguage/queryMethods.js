@@ -189,11 +189,29 @@ class queryMethods{
     }
 
     __validateAndCollectParameters(str, args, methodName){
-        // Count placeholders
-        const placeholderCount = (str.match(/\$\$/g) || []).length;
+        // Count placeholders - support both $$ (standard) and $ (backwards compatibility)
+        // Match $$ first to avoid double-counting, then match remaining single $
+        let placeholderCount = 0;
+        let tempStr = str;
+
+        // Count $$ placeholders first
+        const doubleDollarMatches = tempStr.match(/\$\$/g);
+        if(doubleDollarMatches){
+            placeholderCount += doubleDollarMatches.length;
+            // Remove $$ from string to avoid double-counting
+            tempStr = tempStr.replace(/\$\$/g, '');
+        }
+
+        // Count remaining single $ placeholders
+        // Exclude $N (postgres placeholders like $1, $2) and $$ (already counted)
+        const singleDollarMatches = tempStr.match(/\$(?!\d)/g);
+        if(singleDollarMatches){
+            placeholderCount += singleDollarMatches.length;
+        }
+
         const providedCount = args ? args.length : 0;
         if(placeholderCount !== providedCount){
-            const msg = `Query argument error in ${methodName}: expected ${placeholderCount} value(s) for '$$', but received ${providedCount}.`;
+            const msg = `Query argument error in ${methodName}: expected ${placeholderCount} value(s) for parameter placeholders, but received ${providedCount}. Use $$ or $ for parameters.`;
             console.error(msg);
             throw new Error(msg);
         }
@@ -228,7 +246,13 @@ class queryMethods{
 
                     // Add array parameters and get comma-separated placeholders
                     const placeholders = this.__queryObject.parameters.addParams(item, dbType);
-                    str = str.replace("$$", placeholders);
+                    // Replace $$ first (preferred), then $ (backwards compatibility)
+                    if(str.includes('$$')){
+                        str = str.replace("$$", placeholders);
+                    } else {
+                        // Replace single $ but not $N (postgres placeholders)
+                        str = str.replace(/\$(?!\d)/, placeholders);
+                    }
                 }
                 else{
                     // Single value - existing logic
@@ -241,9 +265,15 @@ class queryMethods{
                         throw new Error(msg);
                     }
 
-                    // Add parameter and replace $$ with placeholder
+                    // Add parameter and replace placeholder
                     const placeholder = this.__queryObject.parameters.addParam(item, dbType);
-                    str = str.replace("$$", placeholder);
+                    // Replace $$ first (preferred), then $ (backwards compatibility)
+                    if(str.includes('$$')){
+                        str = str.replace("$$", placeholder);
+                    } else {
+                        // Replace single $ but not $N (postgres placeholders)
+                        str = str.replace(/\$(?!\d)/, placeholder);
+                    }
                 }
             }
         }
