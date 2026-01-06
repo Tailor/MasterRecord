@@ -232,10 +232,20 @@ class queryMethods{
                 }
 
                 // Check if this is an array (for IN clauses / .includes() / .any())
+                let itemArray = null;
                 if(Array.isArray(item)){
+                    itemArray = item;
+                }
+                // Also handle comma-separated strings for .any() method
+                else if(typeof item === 'string' && item.includes(',')){
+                    // Split comma-separated string into array
+                    itemArray = item.split(',').map(v => v.trim());
+                }
+
+                if(itemArray){
                     // Validate each array element
                     try {
-                        for(const val of item){
+                        for(const val of itemArray){
                             this.__queryObject.parameters.validateValue(val);
                         }
                     } catch(err) {
@@ -245,7 +255,7 @@ class queryMethods{
                     }
 
                     // Add array parameters and get comma-separated placeholders
-                    const placeholders = this.__queryObject.parameters.addParams(item, dbType);
+                    const placeholders = this.__queryObject.parameters.addParams(itemArray, dbType);
                     // Replace $$ first (preferred), then $ (backwards compatibility)
                     if(str.includes('$$')){
                         str = str.replace("$$", placeholders);
