@@ -290,6 +290,30 @@ class queryMethods{
         return str;
     }
 
+    // Convenience method: Find record by primary key ID
+    findById(id){
+        // Find the primary key field in the entity
+        let primaryKeyField = null;
+        for (const fieldName in this.__entity) {
+            const field = this.__entity[fieldName];
+            if (field && field.primary === true) {
+                primaryKeyField = fieldName;
+                break;
+            }
+        }
+
+        if (!primaryKeyField) {
+            throw new Error(`findById error: No primary key defined on entity '${this.__entity.__name}'`);
+        }
+
+        // Build where clause: entity.primaryKey == id
+        const entityParam = 'r'; // Standard parameter name
+        const whereClause = `${entityParam} => ${entityParam}.${primaryKeyField} == $$`;
+
+        // Chain where() and single()
+        return this.where(whereClause, id).single();
+    }
+
     single(){
         // If no clauses were used before single(), seed defaults so SQL is valid
         if(this.__queryObject.script.entityMap.length === 0){
