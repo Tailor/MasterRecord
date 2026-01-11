@@ -38,6 +38,14 @@ class schema{
                 var query = queryBuilder.addColum(table);
                 this.context._execute(query);
             }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                table.realDataType = queryBuilder.typeManager(table.type);
+                var query = queryBuilder.addColum(table);
+                this.context._execute(query);
+            }
         }
 
         // add column to database
@@ -46,7 +54,7 @@ class schema{
     dropColumn(table){
         if(table){
             if(this.fullTable){
-                // drop column 
+                // drop column
                 if(this.context.isSQLite){
                     var sqliteQuery = require("./migrationSQLiteQuery");
                     var queryBuilder = new sqliteQuery();
@@ -57,6 +65,13 @@ class schema{
                 if(this.context.isMySQL){
                     var sqlquery = require("./migrationMySQLQuery");
                     var queryBuilder = new sqlquery();
+                    var query = queryBuilder.dropColumn(table);
+                    this.context._execute(query);
+                }
+
+                if(this.context.isPostgres){
+                    var postgresQuery = require("./migrationPostgresQuery");
+                    var queryBuilder = new postgresQuery();
                     var query = queryBuilder.dropColumn(table);
                     this.context._execute(query);
                 }
@@ -85,6 +100,13 @@ class schema{
                 if(this.context.isMySQL){
                     var sqlquery = require("./migrationMySQLQuery");
                     var queryBuilder = new sqlquery();
+                    var query = queryBuilder.createTable(table);
+                    this.context._execute(query);
+                }
+
+                if(this.context.isPostgres){
+                    var postgresQuery = require("./migrationPostgresQuery");
+                    var queryBuilder = new postgresQuery();
                     var query = queryBuilder.createTable(table);
                     this.context._execute(query);
                 }
@@ -126,6 +148,13 @@ class schema{
                     if(this.context.isMySQL){
                         var sqlquery = require("./migrationMySQLQuery");
                         var queryBuilder = new sqlquery();
+                        newCol.realDataType = queryBuilder.typeManager(col.type);
+                        const query = queryBuilder.addColum(newCol);
+                        this.context._execute(query);
+                    }
+                    if(this.context.isPostgres){
+                        var postgresQuery = require("./migrationPostgresQuery");
+                        var queryBuilder = new postgresQuery();
                         newCol.realDataType = queryBuilder.typeManager(col.type);
                         const query = queryBuilder.addColum(newCol);
                         this.context._execute(query);
@@ -255,6 +284,13 @@ class schema{
                 var query = queryBuilder.dropTable(table.__name);
                 this.context._execute(query);
             }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.dropTable(table.__name);
+                this.context._execute(query);
+            }
         }
     }
 
@@ -319,6 +355,13 @@ class schema{
                     this.context._execute(query);
                 }
 
+                if(this.context.isPostgres){
+                    var postgresQuery = require("./migrationPostgresQuery");
+                    var queryBuilder = new postgresQuery();
+                    var query = queryBuilder.alterColumn(table);
+                    this.context._execute(query);
+                }
+
             }else{
                 console.log("Must call the addTable function.");
             }
@@ -340,38 +383,92 @@ class schema{
                 var query = queryBuilder.renameColumn(table);
                 this.context._execute(query);
             }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.renameColumn(table);
+                this.context._execute(query);
+            }
         }
     }
 
     seed(tableName, rows){
         if(!tableName || !rows){ return; }
         const items = Array.isArray(rows) ? rows : [rows];
-        for(const row of items){
-            const cols = Object.keys(row);
-            if(cols.length === 0){ continue; }
-            const colList = cols.map(c => this.context.isSQLite ? `[${c}]` : `${c}`).join(", ");
-            const vals = cols.map(k => {
-                const v = row[k];
-                if(v === null || v === undefined){ return 'NULL'; }
-                if(typeof v === 'boolean'){
-                    return this.context.isSQLite ? (v ? 1 : 0) : (v ? 1 : 0);
-                }
-                if(typeof v === 'number'){
-                    return String(v);
-                }
-                const esc = String(v).replace(/'/g, "''");
-                return `'${esc}'`;
-            }).join(", ");
-            // Idempotent seed: ignore duplicates on unique indexes
-            let sql;
-            if(this.context.isSQLite){
-                sql = `INSERT OR IGNORE INTO ${tableName} (${colList}) VALUES (${vals})`;
-            } else if(this.context.isMySQL){
-                sql = `INSERT IGNORE INTO ${tableName} (${colList}) VALUES (${vals})`;
-            } else {
-                sql = `INSERT INTO ${tableName} (${colList}) VALUES (${vals})`;
+
+        // Use query builders for consistent seed data handling
+        if(this.context.isSQLite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            for(const row of items){
+                // SQLite: Use INSERT OR IGNORE for idempotency
+                const query = queryBuilder.insertSeedData(tableName, row);
+                const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT OR IGNORE INTO');
+                this.context._execute(idempotentQuery);
             }
-            this.context._execute(sql);
+        }
+
+        if(this.context.isMySQL){
+            var sqlquery = require("./migrationMySQLQuery");
+            var queryBuilder = new sqlquery();
+            for(const row of items){
+                // MySQL: Use INSERT IGNORE for idempotency
+                const query = queryBuilder.insertSeedData(tableName, row);
+                const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT IGNORE INTO');
+                this.context._execute(idempotentQuery);
+            }
+        }
+
+        if(this.context.isPostgres){
+            var postgresQuery = require("./migrationPostgresQuery");
+            var queryBuilder = new postgresQuery();
+            for(const row of items){
+                // PostgreSQL: Use INSERT ... ON CONFLICT DO NOTHING for idempotency
+                // Note: This requires a unique constraint or primary key
+                const query = queryBuilder.insertSeedData(tableName, row);
+                const idempotentQuery = query + ' ON CONFLICT DO NOTHING';
+                this.context._execute(idempotentQuery);
+            }
+        }
+    }
+
+    /**
+     * Bulk seed data insertion (more efficient for multiple rows)
+     * @param {string} tableName - Name of the table
+     * @param {Array} rows - Array of data objects
+     */
+    bulkSeed(tableName, rows){
+        if(!tableName || !rows || rows.length === 0){ return; }
+
+        if(this.context.isSQLite){
+            var sqliteQuery = require("./migrationSQLiteQuery");
+            var queryBuilder = new sqliteQuery();
+            const query = queryBuilder.bulkInsertSeedData(tableName, rows);
+            if(query){
+                const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT OR IGNORE INTO');
+                this.context._execute(idempotentQuery);
+            }
+        }
+
+        if(this.context.isMySQL){
+            var sqlquery = require("./migrationMySQLQuery");
+            var queryBuilder = new sqlquery();
+            const query = queryBuilder.bulkInsertSeedData(tableName, rows);
+            if(query){
+                const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT IGNORE INTO');
+                this.context._execute(idempotentQuery);
+            }
+        }
+
+        if(this.context.isPostgres){
+            var postgresQuery = require("./migrationPostgresQuery");
+            var queryBuilder = new postgresQuery();
+            const query = queryBuilder.bulkInsertSeedData(tableName, rows);
+            if(query){
+                const idempotentQuery = query + ' ON CONFLICT DO NOTHING';
+                this.context._execute(idempotentQuery);
+            }
         }
     }
     

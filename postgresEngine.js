@@ -1,642 +1,561 @@
-// Version 0.0.12
-var tools =  require('masterrecord/Tools');
+// Version 0.1.0 - Complete PostgreSQL implementation with pg 8.16.3
+const tools = require('./Tools');
+const FieldTransformer = require('./Entity/fieldTransformer');
+const { Pool } = require('pg');
 
 class postgresEngine {
 
-    unsupportedWords = ["order"]
-
-    update(query){
-        var sqlQuery = ` UPDATE [${query.tableName}]
-        SET ${query.arg}
-        WHERE [${query.tableName}].[${query.primaryKey}] = ${query.primaryKeyValue}` // primary key for that table = 
-        return this._run(sqlQuery);
+    constructor() {
+        this.pool = null;
+        this.db = null;
+        this.dbType = 'postgres';
+        this.unsupportedWords = ["order"];
     }
 
-    delete(queryObject){
-       var sqlObject = this._buildDeleteObject(queryObject);
-       var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ${sqlObject.value}`;
-       return this._execute(sqlQuery);
-    }
+    /**
+     * Initialize PostgreSQL connection pool
+     * @param {Object} config - PostgreSQL connection config
+     */
+    async initialize(config) {
+        this.pool = new Pool({
+            host: config.host || 'localhost',
+            port: config.port || 5432,
+            database: config.database,
+            user: config.user,
+            password: config.password,
+            max: config.max || 20,
+            idleTimeoutMillis: config.idleTimeoutMillis || 30000,
+            connectionTimeoutMillis: config.connectionTimeoutMillis || 2000,
+        });
 
-    insert(queryObject){
-        var sqlObject = this._buildSQLInsertObject(queryObject, queryObject.__entity);
-        var query = `INSERT INTO [${sqlObject.tableName}] (${sqlObject.columns})
-        VALUES (${sqlObject.values})`;
-        var queryObj = this._run(query);
-        var open = {
-            "id": queryObj.lastInsertRowid
-        };
-        return open;
-    }
-
-    get(query, entity, context){
-        var queryString = {};
+        // Test connection
         try {
-            if(query.raw){
-                queryString.query = query.raw;
+            const client = await this.pool.connect();
+            console.log('PostgreSQL connected successfully');
+            client.release();
+        } catch (err) {
+            console.error('PostgreSQL connection error:', err);
+            throw err;
+        }
+    }
+
+    /**
+     * UPDATE with parameterized query
+     */
+    async update(query) {
+        if (query.arg && query.arg.query && query.arg.params) {
+            // Parameterized UPDATE
+            const params = [...query.arg.params, query.primaryKeyValue];
+            return await this._runWithParams(query.arg.query, params);
+        } else {
+            // Fallback for legacy support
+            const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = $1`;
+            return await this._runWithParams(sqlQuery, [query.primaryKeyValue]);
+        }
+    }
+
+    /**
+     * DELETE with parameterized query
+     */
+    async delete(queryObject) {
+        const sqlObject = this._buildDeleteObject(queryObject);
+        const sqlQuery = `DELETE FROM ${sqlObject.tableName} WHERE ${sqlObject.tableName}.${sqlObject.primaryKey} = $1`;
+        return await this._runWithParams(sqlQuery, [sqlObject.value]);
+    }
+
+    /**
+     * INSERT with parameterized query
+     * Postgres uses RETURNING to get the inserted ID
+     */
+    async insert(queryObject) {
+        const sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
+        if (sqlObject === -1) {
+            throw new Error('INSERT failed: No columns to insert');
+        }
+
+        // Get primary key name for RETURNING clause
+        const primaryKey = tools.getPrimaryKeyObject(queryObject.__entity);
+        const query = `INSERT INTO ${sqlObject.tableName} (${sqlObject.columns}) VALUES (${sqlObject.placeholders}) RETURNING ${primaryKey}`;
+
+        const result = await this._runWithParams(query, sqlObject.params);
+
+        return {
+            id: result.rows[0][primaryKey]
+        };
+    }
+
+    /**
+     * SELECT single record
+     */
+    async get(query, entity, context) {
+        try {
+            let queryString;
+            if (query.raw) {
+                queryString = { query: query.raw, params: [] };
+            } else if (typeof query === 'string') {
+                queryString = { query: query, params: [] };
+            } else {
+                queryString = this.buildQuery(query, entity, context);
             }
-            else{
-                if(typeof query === 'string'){
-                    queryString.query = query;
-                }
-                else{
-                    queryString = this.buildQuery(query, entity, context);
-                }
-            }
-            if(queryString.query){
+
+            if (queryString.query) {
                 console.log("SQL:", queryString.query);
-                var queryReturn = this.db.prepare(queryString.query).get();
-                return queryReturn;
+                console.log("Params:", queryString.params || []);
+                const result = await this._runWithParams(queryString.query, queryString.params || []);
+                return result.rows[0] || null;
             }
             return null;
         } catch (err) {
-            console.error(err);
+            console.error('PostgreSQL get error:', err);
             return null;
         }
     }
 
-    getCount(queryObject, entity, context){
-        var query = queryObject.script;
-        var queryString = {};
+    /**
+     * SELECT COUNT
+     */
+    async getCount(queryObject, entity, context) {
+        const query = queryObject.script;
         try {
-            if(query.raw){
-                queryString.query = query.raw;
-            }
-            else{
-                if(query.count === undefined){
+            let queryString;
+            if (query.raw) {
+                queryString = { query: query.raw, params: [] };
+            } else {
+                if (query.count === undefined) {
                     query.count = "none";
                 }
-                queryString.entity = this.getEntity(entity.__name, query.entityMap);
-                queryString.query = `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)}`
+                const entityAlias = this.getEntity(entity.__name, query.entityMap);
+                queryString = {
+                    query: `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)}`,
+                    params: query.parameters ? query.parameters.getParams() : []
+                };
             }
-            if(queryString.query){
-                var queryCount = queryString.query
-                console.log("SQL:", queryCount );
-                var queryReturn = this.db.prepare(queryCount ).get();
-                return queryReturn;
+
+            if (queryString.query) {
+                console.log("SQL:", queryString.query);
+                console.log("Params:", queryString.params);
+                const result = await this._runWithParams(queryString.query, queryString.params);
+                return result.rows[0] || null;
             }
             return null;
         } catch (err) {
-            console.error(err);
+            console.error('PostgreSQL getCount error:', err);
             return null;
         }
     }
 
-    all(query, entity, context){
-        var selectQuery = {};
+    /**
+     * SELECT multiple records
+     */
+    async all(query, entity, context) {
         try {
-            if(query.raw){
-                selectQuery.query = query.raw;
-            }
-            else{
-              
+            let selectQuery;
+            if (query.raw) {
+                selectQuery = { query: query.raw, params: [] };
+            } else {
                 selectQuery = this.buildQuery(query, entity, context);
             }
-            if(selectQuery.query){
+
+            if (selectQuery.query) {
                 console.log("SQL:", selectQuery.query);
-                var queryReturn = this.db.prepare(selectQuery.query).all();
-                return queryReturn;
+                console.log("Params:", selectQuery.params || []);
+                const result = await this._runWithParams(selectQuery.query, selectQuery.params || []);
+                return result.rows || [];
             }
-            return null;
+            return [];
         } catch (err) {
-            console.error(err);
-            return null;
+            console.error('PostgreSQL all error:', err);
+            return [];
         }
     }
 
-    changeNullQuery(query){
-        if(query.where){
-            var whereClaus;
-            whereClaus = query.where.expr.replace("=== null", "is null");
-            if(whereClaus === query.where.expr){
-                whereClaus = query.where.expr.replace("!= null", "is not null");
-            }
-            query.where.expr = whereClaus;
-        }
-
+    /**
+     * Execute raw SQL with parameters
+     */
+    async exec(query, params = []) {
+        return await this._runWithParams(query, params);
     }
 
-    buildCount(query, mainQuery){
-            var entity = this.getEntity(query.parentName, query.entityMap);
-            if(query.count){
-                if(query.count !== "none"){
-                    return `COUNT(${entity}.${query.count.selectFields[0]})`
-                }
-                else{
-                    return `COUNT(*)`
-                }             
-            }
-            else{
-                return ""
-            }
+    /**
+     * Build complete SELECT query with parameters
+     */
+    buildQuery(query, entity, context) {
+        const entityStr = this.getEntity(entity.__name, query.entityMap);
+        const params = query.parameters ? query.parameters.getParams() : [];
+
+        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)} ${this.buildOrderBy(query)}`;
+
+        return {
+            query: sql,
+            params: params
+        };
     }
 
-    buildQuery(query, entity, context, limit){
-
-        var queryObject = {};
-        queryObject.entity = this.getEntity(entity.__name, query.entityMap);
-        queryObject.select = this.buildSelect(query, entity);
-        queryObject.count = this.buildCount(query, entity);
-        queryObject.from = this.buildFrom(query, entity);
-        queryObject.include = this.buildInclude(query, entity, context, queryObject);
-        queryObject.where = this.buildWhere(query, entity);
-        queryObject.and = this.buildAnd(query, entity);
-        queryObject.take = this.buildTake(query);
-        queryObject.skip = this.buildSkip(query);
-        queryObject.orderBy = this.buildOrderBy(query);
-
-
-        var queryString = `${queryObject.select} ${queryObject.count} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
-        return { 
-                query : queryString,
-                entity : this.getEntity(entity.__name, query.entityMap)
+    buildSelectString(query, entity) {
+        if (query.select) {
+            return query.select;
         }
-
+        return `${tools.convertEntityToSelectParameterString(entity)}`;
     }
 
-    buildOrderBy(query){
-        // ORDER BY column1, column2, ... ASC|DESC;
-        var $that = this;
-        var orderByType = "ASC";
-        var orderByEntity = query.orderBy;
-        var strQuery = "";
-        if(orderByEntity === false){
-            orderByType = "DESC";
-            orderByEntity = query.orderByDesc;
+    buildCount(query, entity) {
+        const entityStr = this.getEntity(entity.__name, query.entityMap);
+        if (query.count === "none") {
+            return `COUNT(${entityStr}.*)`;
         }
-        if(orderByEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
-            var fieldList = "";
-            for (const item in orderByEntity.selectFields) {
-                fieldList += `${entity}.${orderByEntity.selectFields[item]}, `;
-            };
-            fieldList = fieldList.replace(/,\s*$/, "");
-            strQuery = "ORDER BY";
-            strQuery += ` ${fieldList} ${orderByType}`;
-        }
-        return strQuery;
+        return `COUNT(${entityStr}.${query.count})`;
     }
 
-    buildTake(query){
-        if(query.take){
-            return `LIMIT ${query.take}`
-        }
-        else{
-            return "";
-        }
+    buildFrom(query, entity) {
+        return `FROM ${entity.__name}`;
     }
 
-    buildSkip(query){
-        if(query.skip){
-            return `OFFSET ${query.skip}`
-        }
-        else{
-            return "";
-        }
-    }
+    /**
+     * Build AND clause with placeholder detection
+     */
+    buildAnd(query, mainQuery) {
+        const andEntity = query.and;
+        let strQuery = "";
+        const $that = this;
 
-    buildAnd(query, mainQuery){
-        // loop through the AND
-        // loop update ther where .expr
-        var andEntity = query.and;
-        var strQuery = "";
-        var $that = this;
-        var str = "";
+        if (andEntity) {
+            const entity = this.getEntity(query.parentName, query.entityMap);
+            const andList = [];
 
-        if(andEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
-            var andList = [];
-            for (let entityPart in andEntity) { // loop through list of and's
-                    var itemEntity = andEntity[entityPart]; // get the entityANd
-                for (let table in itemEntity[query.parentName]) { // find the main table
-                     var item = itemEntity[query.parentName][table];
+            for (let entityPart in andEntity) {
+                const itemEntity = andEntity[entityPart];
+                for (let table in itemEntity[query.parentName]) {
+                    const item = itemEntity[query.parentName][table];
                     for (let exp in item.expressions) {
-                        var field = tools.capitalizeFirstLetter(item.expressions[exp].field);
-                        if(mainQuery[field]){
-                            if(mainQuery[field].isNavigational){
-                                entity = $that.getEntity(field, query.entityMap);
-                                field = item.fields[1];
-                            }
-                        }
-                        if(item.expressions[exp].arg === "null"){
-                            if(item.expressions[exp].func === "="){
-                                item.expressions[exp].func = "is"
-                            }
-                            if(item.expressions[exp].func === "!="){
-                                item.expressions[exp].func = "is not"
-                            }
-                        }
-                        if(strQuery === ""){
-                            if(item.expressions[exp].arg === "null"){
-                                strQuery = `${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                            }else{
-                                // Check if arg is a parameterized placeholder
-                                var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
-                                if(isPlaceholder){
-                                    strQuery = `${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                                }else{
-                                    strQuery = `${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                                }
-                            }
-                        }
-                        else{
-                            if(item.expressions[exp].arg === "null"){
-                                strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                            }else{
-                                // Check if arg is a parameterized placeholder
-                                var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
-                                if(isPlaceholder){
-                                    strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                                }else{
-                                    strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                                }
-                            }
+                        let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                        let entityRef = entity;
 
+                        if (mainQuery[field] && mainQuery[field].isNavigational) {
+                            entityRef = $that.getEntity(field, query.entityMap);
+                            field = item.fields[1];
+                        }
+
+                        let func = item.expressions[exp].func;
+                        const arg = item.expressions[exp].arg;
+
+                        // Handle NULL
+                        if (arg === "null") {
+                            if (func === "=") func = "IS";
+                            if (func === "!=") func = "IS NOT";
+                        }
+
+                        if (strQuery === "") {
+                            if (arg === "null") {
+                                strQuery = `${entityRef}.${field} ${func} ${arg}`;
+                            } else {
+                                // Check if arg is a parameterized placeholder
+                                const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                                if (isPlaceholder || func === "IN") {
+                                    strQuery = `${entityRef}.${field} ${func} ${arg}`;
+                                } else {
+                                    strQuery = `${entityRef}.${field} ${func} '${arg}'`;
+                                }
+                            }
+                        } else {
+                            if (arg === "null") {
+                                strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                            } else {
+                                // Check if arg is a parameterized placeholder
+                                const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                                if (isPlaceholder || func === "IN") {
+                                    strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                                } else {
+                                    strQuery = `${strQuery} AND ${entityRef}.${field} ${func} '${arg}'`;
+                                }
+                            }
                         }
                     }
                     andList.push(strQuery);
                 }
             }
+
+            if (andList.length > 0) {
+                return `AND ${andList.join(" AND ")}`;
+            }
         }
-        
-        if(andList.length > 0){
-            str = `and ${andList.join(" and ")}`;
-        }
-        return str
+
+        return "";
     }
 
-    buildWhere(query, mainQuery){
-        var whereEntity = query.where;
+    /**
+     * Build WHERE clause with placeholder detection
+     */
+    buildWhere(query, mainQuery) {
+        const whereEntity = query.where;
+        let strQuery = "";
+        const $that = this;
 
-        var strQuery = "";
-        var $that = this;
-        if(whereEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
+        if (whereEntity) {
+            const entity = this.getEntity(query.parentName, query.entityMap);
+            const item = whereEntity[query.parentName].query;
 
-            var item = whereEntity[query.parentName].query;
             for (let exp in item.expressions) {
-                var field = tools.capitalizeFirstLetter(item.expressions[exp].field);
-                if(mainQuery[field]){
-                    if(mainQuery[field].isNavigational){
-                        entity = $that.getEntity(field, query.entityMap);
-                        field = item.fields[1];
-                    }
-                }
-                if(item.expressions[exp].arg === "null"){
-                    if(item.expressions[exp].func === "="){
-                        item.expressions[exp].func = "is"
-                    }
-                    if(item.expressions[exp].func === "!="){
-                        item.expressions[exp].func = "is not"
-                    }
-                }
-                if(strQuery === ""){
-                    if(item.expressions[exp].arg === "null"){
-                        strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                    }else{
-                        if(item.expressions[exp].func === "IN"){
-                            strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                        }
-                        else{
-                            // Check if arg is a parameterized placeholder (? for MySQL/SQLite, $1/$2/etc for Postgres)
-                            var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
-                            if(isPlaceholder){
-                                strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                            }else{
-                                strQuery = `WHERE ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                            }
-                        }
-                    }
-                }
-                else{
-                    if(item.expressions[exp].arg === "null"){
-                        strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                    }else{
-                        // Check if arg is a parameterized placeholder (? for MySQL/SQLite, $1/$2/etc for Postgres)
-                        var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
-                        if(isPlaceholder){
-                            strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`;
-                        }else{
-                            strQuery = `${strQuery} and ${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`;
-                        }
-                    }
+                let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                let entityRef = entity;
 
+                if (mainQuery[field] && mainQuery[field].isNavigational) {
+                    entityRef = $that.getEntity(field, query.entityMap);
+                    field = item.fields[1];
+                }
+
+                let func = item.expressions[exp].func;
+                const arg = item.expressions[exp].arg;
+
+                // Handle NULL
+                if (arg === "null") {
+                    if (func === "=") func = "IS";
+                    if (func === "!=") func = "IS NOT";
+                }
+
+                if (strQuery === "") {
+                    if (arg === "null") {
+                        strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
+                    } else if (func === "IN") {
+                        strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
+                    } else {
+                        // Check if arg is a parameterized placeholder ($1, $2, etc.)
+                        const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                        if (isPlaceholder) {
+                            strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
+                        } else {
+                            strQuery = `WHERE ${entityRef}.${field} ${func} '${arg}'`;
+                        }
+                    }
+                } else {
+                    if (arg === "null") {
+                        strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                    } else if (func === "IN") {
+                        strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                    } else {
+                        // Check if arg is a parameterized placeholder
+                        const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                        if (isPlaceholder) {
+                            strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                        } else {
+                            strQuery = `${strQuery} AND ${entityRef}.${field} ${func} '${arg}'`;
+                        }
+                    }
                 }
             }
-
-            
-                
         }
+
         return strQuery;
     }
 
-    buildInclude( query, entity, context){
-        var includeQuery =  "";
-        for (let part in query.include) {
-            var includeEntity = query.include[part];
-            var $that = this;
-            if(includeEntity){
-                var parentObj = includeEntity[query.parentName];
-                var currentContext = "";
-                if(includeEntity.selectFields){
-                    currentContext = context[tools.capitalizeFirstLetter(includeEntity.selectFields[0])];
-                }
-                
-                if(parentObj){
-                    parentObj.entityMap = query.entityMap;
-                    var foreignKey = $that.getForeignKey(entity.__name, currentContext.__entity);
-                    var mainPrimaryKey = $that.getPrimarykey(entity);
-                    var mainEntity = $that.getEntity(entity.__name, query.entityMap);
-                    if(currentContext.__entity[entity.__name].type === "hasManyThrough"){
-                        var foreignTable = tools.capitalizeFirstLetter(currentContext.__entity[entity.__name].foreignTable); //to uppercase letter
-                        foreignKey = $that.getPrimarykey(currentContext.__entity);
-                        mainPrimaryKey = context[foreignTable].__entity[currentContext.__entity.__name].foreignKey;
-                        var mainEntity = $that.getEntity(foreignTable,query.entityMap);
-                    }
-                    // add foreign key to select so that it picks it up
-                    if(parentObj.select){
-                        parentObj.select.selectFields.push(foreignKey);
-                    }else{
-                        parentObj.select = {};
-                        parentObj.select.selectFields = [];
-                        parentObj.select.selectFields.push(foreignKey);
-                    }
-
-                    var innerQuery = $that.buildQuery(parentObj, currentContext.__entity, context);
-
-                    includeQuery += `LEFT JOIN (${innerQuery.query}) AS ${innerQuery.entity} ON ${ mainEntity}.${mainPrimaryKey} = ${innerQuery.entity}.${foreignKey} `;
-
-                }
-            }
-        }
-        return includeQuery;
-    }
-
-    buildFrom(query, entity){
-        var entityName = this.getEntity(entity.__name, query.entityMap);
-        if(entityName ){
-            return `FROM ${entity.__name } AS ${entityName}`;
-        }
-        else{ return "" }
-    }
-
-    buildSelect(query, entity){
-        // this means that there is a select statement
-        var select = "SELECT";
-        var arr = "";
-        var $that = this;
-        if(query.select){
-            for (const item in query.select.selectFields) {
-                arr += `${$that.getEntity(entity.__name, query.entityMap)}.${query.select.selectFields[item]}, `;
-            };
-          
-        }
-        else{
-            var entityList = this.getEntityList(entity);
-            for (const item in entityList) {
-                arr += `${$that.getEntity(entity.__name, query.entityMap)}.${entityList[item]}, `;
-            };
-        }
-        arr = arr.replace(/,\s*$/, "");
-        return `${select} ${arr} `;
-    }
-
-    getForeignKey(name, entity){
-        if(entity && name){
-           return entity[name].foreignKey;
-        }
-    }
-
-    getPrimarykey(entity){
-            for (const item in entity) {
-                if(entity[item].primary){
-                    if(entity[item].primary === true){
-                        return entity[item].name;
-                    }
-                }
-            };
-    }
-
-    getForeignTable(name, entity){
-        if(entity && name){
-           return entity[name].foreignTable;
-        }
-    }
-
-    getInclude(name, query){
-        var include = query.include;
-        if(include){
-            for (let part in include) {
-                if(tools.capitalizeFirstLetter(include[part].selectFields[0]) === name){
-                    return include[part];
-                }
-            }
-        }
-        else{
-            return "";
-        }
-    }
-
-    getEntity(name, maps){
-        for (let item in maps) {
-            var map = maps[item];
-            if(tools.capitalizeFirstLetter(name) === tools.capitalizeFirstLetter(map.name)){
-                return map.entity
-            }
+    buildLimit(query) {
+        if (query.take) {
+            return `LIMIT ${query.take}`;
         }
         return "";
     }
 
-    // return a list of entity names and skip foreign keys and underscore.
-    getEntityList(entity){
-        var entitiesList = [];
-        var $that = this;
-        for (var ent in entity) {
-                if(!ent.startsWith("_")){
-                    if(!entity[ent].foreignKey){
-                        if($that.chechUnsupportedWords(ent)){
-                            entitiesList.push(`'${ent}'`);
-                        }
-                        else{
-                            entitiesList.push(ent);
-                        }
+    buildSkip(query) {
+        if (query.skip) {
+            return `OFFSET ${query.skip}`;
+        }
+        return "";
+    }
+
+    buildOrderBy(query) {
+        if (query.orderBy) {
+            const entityStr = this.getEntity(query.parentName, query.entityMap);
+            return `ORDER BY ${entityStr}.${query.orderBy} ASC`;
+        } else if (query.orderByDescending) {
+            const entityStr = this.getEntity(query.parentName, query.entityMap);
+            return `ORDER BY ${entityStr}.${query.orderByDescending} DESC`;
+        }
+        return "";
+    }
+
+    getEntity(name, list) {
+        for (let i = 0; i < list.length; i++) {
+            if (list[i].name === name) {
+                return list[i].entity;
+            }
+        }
+        return name;
+    }
+
+    /**
+     * Build parameterized INSERT object for PostgreSQL
+     * Uses $1, $2, $3... instead of ?
+     */
+    _buildSQLInsertObjectParameterized(fields, modelEntity) {
+        const $that = this;
+        const columnNames = [];
+        const params = [];
+        let paramIndex = 1;
+
+        for (const column in modelEntity) {
+            if (column.indexOf("__") === -1) {
+                let fieldColumn = fields[column];
+
+                if ((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object") {
+                    // Apply toDatabase transformer
+                    try {
+                        fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column);
+                    } catch (transformError) {
+                        throw new Error(`INSERT failed: ${transformError.message}`);
                     }
-                    else{
-                        if(entity[ent].type === 'belongsTo'){
-                            entitiesList.push(`${entity[ent].foreignKey}`);
-                        }
+
+                    // Validate and coerce type
+                    try {
+                        fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column);
+                    } catch (typeError) {
+                        throw new Error(`INSERT failed: ${typeError.message}`);
+                    }
+
+                    // Skip auto-increment primary keys
+                    if (modelEntity[column].auto !== true) {
+                        columnNames.push(column);
+                        params.push(fieldColumn);
                     }
                 }
             }
-        return entitiesList
-    }
-
-    chechUnsupportedWords(word){
-        for (var item in this.unsupportedWords) {
-            var text = this.unsupportedWords[item];
-            if(text === word){
-                return true
-            }
         }
-        return false;
-    }
 
-    startTransaction(){
-        this.db.prepare('BEGIN').run();
-    }
-
-    endTransaction(){
-        this.db.prepare('COMMIT').run();
-    }
-
-    errorTransaction(){
-        this.db.prepare('ROLLBACK').run();
-    }
-
-    _buildSQLEqualTo(model){
-        var $that = this;
-        var argument = null;
-        var dirtyFields = model.__dirtyFields;
-
-        for (var column in dirtyFields) {
-
-            // TODO Boolean value is a string with a letter
-            switch(model.__entity[dirtyFields[column]].type){
-                 case "integer" :
-                    //model.__entity[dirtyFields[column]].skipGetFunction = true;
-                    argument = argument === null ? `[${dirtyFields[column]}] = ${model[dirtyFields[column]]},` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
-                    //model.__entity[dirtyFields[column]].skipGetFunction = false;
-                break;
-                case "string" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',` : `${argument} [${dirtyFields[column]}] = '${$that._santizeSingleQuotes(model[dirtyFields[column]])}',`;
-                break;
-                case "boolean" :
-                    var bool = "";
-                    if(model.__entity[dirtyFields[column]].valueConversion){
-                        bool = tools.convertBooleanToNumber(model[dirtyFields[column]]);
-                    }
-                    else{
-                        bool = model[dirtyFields[column]];
-                    }
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${bool}',` : `${argument} [${dirtyFields[column]}] = ${bool},`;
-                break;
-                case "time" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = ${model[dirtyFields[column]]},`;
-                break;
-                case "belongsTo" :
-                    var fore = `_${dirtyFields[column]}`;
-                    argument = argument === null ? `[${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',` : `${argument} [${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',`;
-                break;
-                case "hasMany" :
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
-                break;
-                default:
-                    argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
-            }
+        if (columnNames.length === 0) {
+            return -1;
         }
-        return argument.replace(/,\s*$/, "");
+
+        // Generate PostgreSQL placeholders: $1, $2, $3...
+        const placeholders = params.map((_, index) => `$${index + 1}`).join(', ');
+
+        return {
+            tableName: modelEntity.__name,
+            columns: columnNames.join(', '),
+            placeholders: placeholders,
+            params: params
+        };
     }
 
-    
-    _buildDeleteObject(currentModel){
-        var primaryKey = currentModel.__Key === undefined ? tools.getPrimaryKeyObject(currentModel.__entity) : currentModel.__Key;
-        var value = currentModel.__value === undefined ? currentModel[primaryKey] : currentModel.__value;
-        var tableName = currentModel.__tableName === undefined ? currentModel.__entity.__name : currentModel.__tableName;
-        return {tableName: tableName, primaryKey : primaryKey, value : value};
+    _buildDeleteObject(queryObject) {
+        const primaryKey = tools.getPrimaryKeyObject(queryObject.__entity);
+        return {
+            tableName: queryObject.__entity.__name,
+            primaryKey: primaryKey,
+            value: queryObject[primaryKey]
+        };
     }
 
+    /**
+     * Validate and coerce field type
+     */
+    _validateAndCoerceFieldType(value, fieldDef, entityName, fieldName) {
+        if (value === null || value === undefined) {
+            if (fieldDef.nullable === false || fieldDef.notNullable === true) {
+                throw new Error(`Field '${entityName}.${fieldName}' cannot be null`);
+            }
+            return null;
+        }
 
-       // return columns and value strings
-    _buildSQLInsertObject(fields, modelEntity){
-        var $that = this;
-        var columns = null;
-        var values = null;
-        for (var column in modelEntity) {
-            // column1 = value1, column2 = value2, ...
-            if(column.indexOf("__") === -1 ){
-                // call the get method if avlable
-                var fieldColumn = "";
-                // check if get function is avaliable if so use that
-                fieldColumn = fields[column];
+        const fieldType = fieldDef.type;
 
-                if((fieldColumn !== undefined && fieldColumn !== null && fieldColumn !== "" ) && typeof(fieldColumn) !== "object"){
-                    switch(modelEntity[column].type){
-                        case "belongsTo" :
-                            column = modelEntity[column].foreignKey === undefined ? column : modelEntity[column].foreignKey;
-                        break;
-                        case "string" : 
-                            fieldColumn = `'${$that._santizeSingleQuotes(fields[column])}'`;
-                        break;
-                        case "time" : 
-                            fieldColumn = fields[column];
-                        break;
-                    }
+        switch (fieldType) {
+            case 'string':
+            case 'text':
+                return String(value);
 
-                    columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
-                    values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
-
+            case 'integer':
+            case 'int':
+                const intVal = parseInt(value, 10);
+                if (isNaN(intVal)) {
+                    throw new Error(`Field '${entityName}.${fieldName}' must be an integer, got: ${value}`);
                 }
-                else{
-                    switch(modelEntity[column].type){
-                        case "belongsTo" :
-                            var fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column );
-                            if( Object.keys(fieldObject).length > 0){
-                                var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
-                                fieldColumn = fieldObject[primaryKey];
-                                column = modelEntity[column].foreignKey;
-                                columns = columns === null ? `'${column}',` : `${columns} '${column}',`;
-                                values = values === null ? `${fieldColumn},` : `${values} ${fieldColumn},`;
-                            }else{
-                                console.log("Cannot find belings to relationship")
-                            }
-    
-                        break;
-                    }
-                
-                }
-            }
-        }
-        return {tableName: modelEntity.__name, columns: columns.replace(/,\s*$/, ""), values: values.replace(/,\s*$/, "")};
+                return intVal;
 
+            case 'float':
+            case 'double':
+            case 'decimal':
+                const floatVal = parseFloat(value);
+                if (isNaN(floatVal)) {
+                    throw new Error(`Field '${entityName}.${fieldName}' must be a number, got: ${value}`);
+                }
+                return floatVal;
+
+            case 'boolean':
+            case 'bool':
+                return Boolean(value);
+
+            case 'date':
+            case 'datetime':
+            case 'timestamp':
+                if (value instanceof Date) {
+                    return value;
+                }
+                const dateVal = new Date(value);
+                if (isNaN(dateVal.getTime())) {
+                    throw new Error(`Field '${entityName}.${fieldName}' must be a valid date, got: ${value}`);
+                }
+                return dateVal;
+
+            case 'json':
+            case 'jsonb':
+                if (typeof value === 'object') {
+                    return JSON.stringify(value);
+                }
+                return value;
+
+            default:
+                return value;
+        }
     }
 
-    // will add double single quotes to allow sting to be saved.
-    _santizeSingleQuotes(string){
-        if (typeof string === 'string' || string instanceof String){
+    /**
+     * Execute parameterized query with pg library
+     */
+    async _runWithParams(query, params = []) {
+        try {
+            console.log("SQL:", query);
+            console.log("Params:", params);
+
+            const client = await this.pool.connect();
+            try {
+                const result = await client.query(query, params);
+                return result;
+            } finally {
+                client.release();
+            }
+        } catch (error) {
+            console.error('PostgreSQL query error:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Sanitize single quotes (legacy, prefer parameterized queries)
+     */
+    _santizeSingleQuotes(string, context = {}) {
+        if (typeof string === 'string' || string instanceof String) {
             return string.replace(/'/g, "''");
         }
-    else{
-        console.log("warning - Field being passed is not a string");
-        throw "warning - Field being passed is not a string";
-    }
+        console.warn(`Warning - Field ${context.entityName}.${context.fieldName} is not a string`);
+        throw new Error(`Field ${context.entityName}.${context.fieldName} must be a string`);
     }
 
-    // converts any object into SQL parameter select string
-    _convertEntityToSelectParameterString(obj, entityName){
-        // todo: loop throgh object and append string with comma to 
-        var mainString = "";
-        const entries = Object.keys(obj);
+    /**
+     * Set database connection
+     */
+    setDB(db, type) {
+        this.db = db;
+        this.pool = db;
+        this.dbType = type || 'postgres';
+    }
 
-        for (const [name] of entries) {
-         mainString += `${mainString}, ${entityName}.${name}`;
+    /**
+     * Close database connection pool
+     */
+    async close() {
+        if (this.pool) {
+            await this.pool.end();
+            console.log('PostgreSQL pool closed');
         }
-        return mainString;;
     }
-
-    _execute(query){
-        console.log("SQL:", query);
-        return this.db.exec(query);
-    }
-
-    _run(query){
-        console.log("SQL:", query);
-        return this.db.prepare(query).run();
-    }
-
-    setDB(db, type){
-       this.db = db;
-       this.dbType = type; // this will let us know which type of sqlengine to use.
-   }
 }
 
 module.exports = postgresEngine;

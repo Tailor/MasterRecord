@@ -5,6 +5,7 @@ var query = require('masterrecord/QueryLanguage/queryMethods');
 var tools =  require('./Tools');
 var SQLLiteEngine = require('masterrecord/SQLLiteEngine');
 var MYSQLEngine = require('masterrecord/mySQLEngine');
+var PostgresEngine = require('masterrecord/postgresEngine');
 var insertManager = require('./insertManager');
 var deleteManager = require('./deleteManager');
 var globSearch = require("glob");
@@ -12,6 +13,7 @@ var fs = require('fs');
 var path = require('path');
 const appRoot = require('app-root-path');
 const MySQLClient = require('masterrecord/mySQLSyncConnect');
+const PostgresClient = require('masterrecord/postgresSyncConnect');
 
 class context {
     _isModelValid = {
@@ -72,7 +74,7 @@ class context {
           */
     __mysqlInit(env, sqlName){
         try{
- 
+
             //const mysql = require(sqlName);
             const connection = new MySQLClient(env);
             this._SQLEngine = new MYSQLEngine();
@@ -82,6 +84,31 @@ class context {
         }
         catch (e) {
             console.log("error SQL", e);
+        }
+    }
+
+    /*
+    postgres expected model
+         {
+             "type": "postgres",
+            host     : 'localhost',
+            port     : 5432,
+            user     : 'me',
+            password : 'secret',
+            database : 'my_db'
+          }
+          */
+    async __postgresInit(env, sqlName){
+        try{
+            const connection = new PostgresClient();
+            await connection.connect(env);
+            this._SQLEngine = connection.getEngine();
+            this._SQLEngine.__name = sqlName;
+            return connection.getPool();
+        }
+        catch (e) {
+            console.log("error PostgreSQL", e);
+            throw e;
         }
     }
 
@@ -212,13 +239,23 @@ class context {
             }
 
             if(type === 'mysql'){
-                this.isMySQL = true; this.isSQLite = false;
+                this.isMySQL = true; this.isSQLite = false; this.isPostgres = false;
                 this.db = this.__mysqlInit(options, 'mysql2');
                 this._SQLEngine.setDB(this.db, 'mysql');
                 return this;
             }
 
-            throw new Error(`Unsupported database type '${options.type}'. Expected 'sqlite' or 'mysql'.`);
+            if(type === 'postgres' || type === 'postgresql'){
+                this.isPostgres = true; this.isMySQL = false; this.isSQLite = false;
+                // Postgres is async, so we need to handle promises
+                (async () => {
+                    this.db = await this.__postgresInit(options, 'pg');
+                    // Note: engine is already set in __postgresInit
+                })();
+                return this;
+            }
+
+            throw new Error(`Unsupported database type '${options.type}'. Expected 'sqlite', 'mysql', or 'postgres'.`);
         }
         catch(err){
             console.log("error:", err);

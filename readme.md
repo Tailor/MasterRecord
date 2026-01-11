@@ -1,1143 +1,1230 @@
-
-
 # MasterRecord
 
-MasterRecord is a lightweight, code-first ORM and migration tool for Node.js with a fluent query API. It lets you define entities in JavaScript, generate migrations, and query with expressive syntax.
+[![npm version](https://img.shields.io/npm/v/masterrecord.svg)](https://www.npmjs.com/package/masterrecord)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-- Supported databases: MySQL, SQLite
-- Synchronous API by default (no await needed)
-- Built-in CLI for migrations and seeding
+**MasterRecord** is a lightweight, code-first ORM for Node.js with a fluent query API, comprehensive migrations, and multi-database support. Build type-safe queries with lambda expressions, manage schema changes with CLI-driven migrations, and work seamlessly across MySQL, PostgreSQL, and SQLite.
+
+## Key Features
+
+🔹 **Multi-Database Support** - MySQL, PostgreSQL, SQLite with consistent API
+🔹 **Code-First Design** - Define entities in JavaScript, generate schema automatically
+🔹 **Fluent Query API** - Lambda-based queries with parameterized placeholders
+🔹 **Migration System** - CLI-driven migrations with rollback support
+🔹 **SQL Injection Protection** - Automatic parameterized queries throughout
+🔹 **Field Transformers** - Custom serialization/deserialization for complex types
+🔹 **Type Validation** - Runtime type checking and coercion
+🔹 **Relationship Mapping** - One-to-many, many-to-one, many-to-many support
+🔹 **Seed Data** - Built-in seeding with idempotent operations
+
+## Database Support
+
+| Database   | Version      | Features                                          |
+|------------|--------------|---------------------------------------------------|
+| PostgreSQL | 9.6+ (12+)   | JSONB, UUID, async/await, connection pooling      |
+| MySQL      | 5.7+ (8.0+)  | JSON, transactions, AUTO_INCREMENT                |
+| SQLite     | 3.x          | Embedded, zero-config, file-based                 |
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Database Configuration](#database-configuration)
+- [Entity Definitions](#entity-definitions)
+- [Querying](#querying)
+- [Migrations](#migrations)
+- [Advanced Features](#advanced-features)
+- [API Reference](#api-reference)
+- [Examples](#examples)
 
 ## Installation
 
 ```bash
-# npm
+# Global installation (recommended for CLI)
 npm install -g masterrecord
 
-# pnpm
-pnpm add -g masterrecord
+# Local installation
+npm install masterrecord
 
-# yarn
-yarn global add masterrecord
+# With specific database drivers
+npm install masterrecord pg           # PostgreSQL
+npm install masterrecord mysql2       # MySQL
+npm install masterrecord better-sqlite3  # SQLite
 ```
+
+### Dependencies
+
+MasterRecord includes the following database drivers by default:
+- `pg@^8.16.3` - PostgreSQL
+- `sync-mysql2@^1.0.8` - MySQL
+- `better-sqlite3@^12.6.0` - SQLite
 
 ## Quick Start
 
-1) Create an environment config file (see Environment below), then enable migrations:
-
-```bash
-masterrecord enable-migrations AppContext
-```
-
-2) Make or change your entities, then create a migration file:
-
-```bash
- masterrecord add-migration Init AppContext
-```
-
-3) Apply the migration to your database:
-
-```bash
-master=development masterrecord update-database AppContext
-```
-
-### Enable migrations (one-time per Context)
-
-- Run from the project root where your Context file lives. Use the Context file name (without extension) as the argument.
-```bash
-master=development masterrecord enable-migrations AppContext
-```
-This creates `db/migrations/<context>_contextSnapShot.json` and the `db/migrations` directory.
-
-### Create a migration
-
-- After you change your entity models, generate a migration file:
-```bash
-master=development masterrecord add-migration <MigrationName> AppContext
-```
-This writes a new file to `db/migrations/<timestamp>_<MigrationName>_migration.js`.
-
-###  Apply migrations to the database
-
-- Apply only the latest pending migration:
-```bash
-master=development masterrecord update-database AppContext
-```
-- Apply all migrations from the beginning (useful for a clean DB):
-```bash
-master=development masterrecord update-database-restart AppContext
-```
-- List migration files (debug/inspection):
-```bash
-master=development masterrecord get-migrations AppContext
-```
-
-Notes:
-- The CLI searches for `<context>_contextSnapShot.json` under `db/migrations` relative to your current working directory.
-- For MySQL, ensure your credentials allow DDL. For SQLite, the data directory is created if missing.
-
-### Updating the running server
-
-General flow to roll out schema changes:
-- Stop the server or put it into maintenance mode (optional but recommended for non-backward-compatible changes).
-- Pull the latest code (containing updated models and generated migration files).
-- Run migrations against the target environment:
-```bash
-master=production masterrecord update-database AppContext
-```
-- Restart your server/process manager (e.g., `pm2 restart <app>`, `docker compose up -d`, or your platform’s restart command).
-
-Backward-compatible rollout tip:
-- If possible, deploy additive changes first (new tables/columns), release app code that begins using them, then later clean up/removal migrations.
-
-### Troubleshooting
-
-- Cannot find Context file: ensure you run commands from the app root and pass the correct Context file name used when defining your class (case-insensitive in the snapshot, but supply the same name you used).
-- Cannot connect to DB: confirm `master=<env>` is set and `env.<env>.json` exists with correct credentials and paths.
-- MySQL type mismatches: the migration engine maps MasterRecord types to SQL types; verify your entity field `type` values are correct.
-
-### Recent improvements (2025-10)
-
-- **Type validation and coercion (Entity Framework-style)**:
-  - INSERT and UPDATE operations now validate field types against entity definitions.
-  - Auto-converts compatible types with warnings (e.g., string "4" → integer 4).
-  - Throws clear errors for incompatible types with detailed context.
-  - Prevents silent failures where fields were skipped due to type mismatches.
-  - See [Type Validation](#type-validation) section below for details.
-- Query language and SQL engines:
-  - Correct parsing of multi-char operators (>=, <=, ===, !==) and spaced logical operators.
-  - Support for grouped OR conditions rendered as parenthesized OR in WHERE across SQLite/MySQL.
-  - Resilient fallback for partially parsed expressions.
-- Relationships:
-  - `hasManyThrough` supported in insert and delete cascades.
-- Environment file discovery:
-  - Context now walks up directories to find `config/environments/env.<env>.json`; fixed error throwing.
-- Migrations (DDL generation):
-  - Default values emitted for SQLite/MySQL (including boolean coercion).
-  - `CREATE TABLE IF NOT EXISTS` to avoid failures when rerunning.
-  - Table introspection added; existing tables are synced: missing columns are added, MySQL applies `ALTER ... MODIFY` for NULL/DEFAULT changes, SQLite rebuilds table when necessary.
-- Migration API additions in `schema.js`:
-  - `renameColumn(table)` implemented for SQLite/MySQL.
-  - `seed(tableName, rows)` implemented for bulk/single inserts with safe quoting.
-
-### Using renameColumn and seed in migrations
-
-Basic migration skeleton (generated by CLI):
-```js
-var masterrecord = require('masterrecord');
-
-class AddSettings extends masterrecord.schema { 
-  constructor(context){ super(context); }
-
-  up(table){
-    this.init(table);
-    // Add a new table
-    this.createTable(table.MailSettings);
-
-    // Rename a column on an existing table
-    this.renameColumn({ tableName: 'MailSettings', name: 'from_email', newName: 'reply_to' });
-
-    // Seed initial data (single row)
-    this.seed('MailSettings', {
-      from_name: 'System',
-      reply_to: 'no-reply@example.com',
-      return_path_matches_from: 0,
-      weekly_summary_enabled: 0,
-      created_at: Date.now(),
-      updated_at: Date.now()
-    });
-
-    // Seed multiple rows
-    this.seed('MailSettings', [
-      { from_name: 'Support', reply_to: 'support@example.com', created_at: Date.now(), updated_at: Date.now() },
-      { from_name: 'Marketing', reply_to: 'marketing@example.com', created_at: Date.now(), updated_at: Date.now() }
-    ]);
-  }
-
-  down(table){
-    this.init(table);
-    // Revert the rename
-    this.renameColumn({ tableName: 'MailSettings', name: 'reply_to', newName: 'from_email' });
-
-    // Optionally clean up seeded rows
-    // this.context._execute("DELETE FROM MailSettings WHERE reply_to IN ('no-reply@example.com','support@example.com','marketing@example.com')");
-
-    // Drop table if that was part of up
-    // this.dropTable(table.MailSettings);
-  }
-}
-module.exports = AddSettings;
-```
-
-Notes:
-- `renameColumn` expects an object: `{ tableName, name, newName }` and works in both SQLite and MySQL.
-- `seed(tableName, rows)` accepts:
-  - a single object: `{ col: value, ... }`
-  - or an array of objects: `[{...}, {...}]`
-  Values are auto-quoted; booleans become 1/0.
-- When a table already exists, `update-database` will sync schema:
-  - Add missing columns.
-  - MySQL: adjust default/nullability via `ALTER ... MODIFY`.
-  - SQLite: rebuilds the table when nullability/default/type changes require it.
-
-### Tips
-- Prefer additive changes (add columns) before destructive changes (drops/renames) to minimize downtime.
-- For large SQLite tables, a rebuild copies data; consider maintenance windows.
-- Use `master=development masterrecord get-migrations AppContext` to inspect migration order.
-
-## Type Validation
-
-MasterRecord now validates and coerces field types during INSERT and UPDATE operations, similar to Entity Framework. This prevents silent failures where fields were skipped due to type mismatches.
-
-### How it works
-
-When you assign a value to an entity field, MasterRecord:
-1. **Validates** the value against the field's type definition
-2. **Auto-converts** compatible types with console warnings
-3. **Throws clear errors** for incompatible types
-
-### Type conversion rules
-
-#### Integer fields (`db.integer()`)
-- ✅ **Accepts**: integer numbers
-- ⚠️ **Auto-converts with warning**:
-  - Float → integer (rounds: `3.7` → `4`)
-  - Valid string → integer (`"42"` → `42`)
-  - Boolean → integer (`true` → `1`, `false` → `0`)
-- ❌ **Throws error**: invalid strings (`"abc"`)
-
-#### String fields (`db.string()`)
-- ✅ **Accepts**: strings
-- ⚠️ **Auto-converts with warning**:
-  - Number → string (`42` → `"42"`)
-  - Boolean → string (`true` → `"true"`)
-- ❌ **Throws error**: objects, arrays
-
-#### Boolean fields (`db.boolean()`)
-- ✅ **Accepts**: booleans
-- ⚠️ **Auto-converts with warning**:
-  - Number → boolean (`0` → `false`, others → `true`)
-  - String → boolean (`"true"/"1"/"yes"` → `true`, `"false"/"0"/"no"/""`→ `false`)
-- ❌ **Throws error**: invalid strings, objects
-
-#### Time fields (`db.time()`, timestamps)
-- ✅ **Accepts**: strings or numbers
-- ❌ **Throws error**: objects, booleans
-
-### Example warnings and errors
-
-**Auto-conversion warning (non-breaking):**
-```javascript
-const chunk = new DocumentChunk();
-chunk.document_id = "4"; // string assigned to integer field
-context.DocumentChunk.add(chunk);
-context.saveChanges();
-```
-Console output:
-```
-⚠️  Field DocumentChunk.document_id: Auto-converting string "4" to integer 4
-```
-
-**Type mismatch error (breaks execution):**
-```javascript
-const chunk = new DocumentChunk();
-chunk.document_id = "invalid"; // non-numeric string
-context.DocumentChunk.add(chunk);
-context.saveChanges(); // throws error
-```
-Error thrown:
-```
-INSERT failed: Type mismatch for DocumentChunk.document_id: Expected integer, got string "invalid" which cannot be converted to a number
-```
-
-### Migration from older versions
-
-If your code relies on implicit type coercion that was previously silent:
-- **No breaking changes**: Compatible types are still auto-converted
-- **New warnings**: You'll see console warnings for auto-conversions
-- **New errors**: Incompatible types that were silently skipped now throw errors
-
-**Recommendation**: Review warnings and fix type mismatches in your code for cleaner, more predictable behavior.
-
-### Benefits
-
-1. **No more silent field skipping**: Previously, if you assigned a string to an integer field, the ORM would silently skip it in the INSERT/UPDATE statement. Now you get immediate feedback.
-
-2. **Clear error messages**: Errors include entity name, field name, expected type, actual type, and the problematic value.
-
-3. **Predictable behavior**: Auto-conversions match common patterns (e.g., database IDs returned as strings from some drivers are converted to integers).
-
-4. **Better debugging**: Type issues are caught at save time, not when you query the data later.
-
-## Field Transformers
-
-Field transformers allow you to define custom serialization/deserialization logic for entity fields. This solves the common problem of needing to store complex JavaScript types (like arrays or objects) in simple database columns (like strings).
-
-### The Problem
-
-You want to store a JavaScript array in a database string column:
+### 1. Create a Context
 
 ```javascript
-class User {
-    constructor() {
-        this.certified_models = { type: "string" };  // DB column type
-    }
-}
-
-const user = new User();
-user.certified_models = [1, 2, 3];  // Assign array
-context.saveChanges();  // ❌ ERROR: Type validation rejects array for string field
-```
-
-**Before transformers**, you had two bad options:
-1. Use raw SQL (bypasses ORM, loses benefits)
-2. Manually convert before assigning (error-prone, scattered logic)
-
-**With transformers**, transformation happens automatically:
-
-```javascript
-class User {
-    constructor() {
-        this.certified_models = {
-            type: "string",
-            transform: {
-                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
-                fromDatabase: (v) => v ? JSON.parse(v) : []
-            }
-        };
-    }
-}
-
-const user = new User();
-user.certified_models = [1, 2, 3];  // ✅ Array accepted
-context.saveChanges();  // ✅ Auto-converts to "[1,2,3]" in database
-```
-
-### How It Works
-
-Transformers execute at the ORM boundary, before type validation and after database reads:
-
-**Write Path (INSERT/UPDATE):**
-1. Application assigns value: `user.field = [1, 2, 3]`
-2. **toDatabase transformer**: `[1, 2, 3] → "[1,2,3]"`
-3. Type validation: `"[1,2,3]"` passes string validation ✓
-4. Database stores: `"[1,2,3]"`
-
-**Read Path (SELECT):**
-1. Database returns: `"[1,2,3]"`
-2. **fromDatabase transformer**: `"[1,2,3]" → [1, 2, 3]`
-3. Application receives: JavaScript array
-
-### Basic Usage
-
-```javascript
-class User {
-    constructor() {
-        this.id = { type: "integer", primary: true, auto: true };
-        this.name = { type: "string" };
-
-        // Field with transformer
-        this.tags = {
-            type: "string",  // Database column type
-            transform: {
-                // Convert array to JSON string for database
-                toDatabase: (value) => {
-                    if (value === null || value === undefined) return null;
-                    return Array.isArray(value) ? JSON.stringify(value) : value;
-                },
-
-                // Convert JSON string back to array from database
-                fromDatabase: (value) => {
-                    if (!value) return [];
-                    try {
-                        return JSON.parse(value);
-                    } catch (err) {
-                        console.warn(`Failed to parse tags: ${value}`);
-                        return [];
-                    }
-                }
-            }
-        };
-    }
-}
-
-// Usage is completely natural
-const user = new User();
-user.name = "Alice";
-user.tags = ["admin", "moderator", "premium"];  // Assign array naturally
-
-context.User.add(user);
-context.saveChanges();  // Stores: name="Alice", tags='["admin","moderator","premium"]'
-
-// Reading back
-const users = context.User.where(u => u.name == $$, "Alice").toList();
-console.log(users[0].tags);  // ["admin", "moderator", "premium"] - JavaScript array!
-console.log(users[0].tags.includes("admin"));  // true - works like a normal array
-```
-
-### Transformer Definition
-
-The `transform` property accepts an object with two optional functions:
-
-```javascript
-{
-    type: "string",  // Required: database column type
-    transform: {
-        toDatabase: (value) => {
-            // Transform JavaScript value → database-compatible value
-            // Called before INSERT/UPDATE operations
-            // Must return a value (not undefined)
-            return transformedValue;
-        },
-        fromDatabase: (value) => {
-            // Transform database value → JavaScript value
-            // Called after SELECT operations
-            // Can return undefined for optional transformations
-            return transformedValue;
-        }
-    }
-}
-```
-
-**Requirements:**
-- At least one transformer function (`toDatabase` or `fromDatabase`) must be provided
-- `toDatabase` must return a value (cannot return undefined)
-- `fromDatabase` can return undefined for optional cases
-- Transformers are called before type validation (write) and after DB reads (read)
-
-### Common Patterns
-
-**Pattern 1: JSON Arrays**
-```javascript
-this.item_ids = {
-    type: "string",
-    transform: {
-        toDatabase: (v) => v ? JSON.stringify(v) : null,
-        fromDatabase: (v) => v ? JSON.parse(v) : []
-    }
-};
-```
-
-**Pattern 2: JSON Objects**
-```javascript
-this.metadata = {
-    type: "string",
-    transform: {
-        toDatabase: (v) => JSON.stringify(v || {}),
-        fromDatabase: (v) => v ? JSON.parse(v) : {}
-    }
-};
-```
-
-**Pattern 3: CSV to Array**
-```javascript
-this.permissions = {
-    type: "string",
-    transform: {
-        toDatabase: (v) => Array.isArray(v) ? v.join(',') : v,
-        fromDatabase: (v) => v ? v.split(',') : []
-    }
-};
-```
-
-**Pattern 4: Boolean as Integer**
-```javascript
-this.is_active = {
-    type: "integer",
-    transform: {
-        toDatabase: (v) => v ? 1 : 0,
-        fromDatabase: (v) => v === 1
-    }
-};
-```
-
-**Pattern 5: Date String Parsing**
-```javascript
-this.created_at = {
-    type: "string",
-    transform: {
-        toDatabase: (v) => v instanceof Date ? v.toISOString() : v,
-        fromDatabase: (v) => v ? new Date(v) : null
-    }
-};
-```
-
-### Error Handling
-
-Transformers include comprehensive error handling:
-
-```javascript
-this.data = {
-    type: "string",
-    transform: {
-        toDatabase: (value) => {
-            if (!value) return null;
-
-            try {
-                return JSON.stringify(value);
-            } catch (err) {
-                throw new Error(`Cannot serialize data: ${err.message}`);
-            }
-        },
-        fromDatabase: (value) => {
-            if (!value) return {};
-
-            try {
-                return JSON.parse(value);
-            } catch (err) {
-                // Log warning but don't fail the query
-                console.warn(`Failed to parse data field: ${value}`);
-                return {};  // Return safe default
-            }
-        }
-    }
-};
-```
-
-**Error behavior:**
-- **Write path errors** (toDatabase): Throw immediately, preventing invalid data from being saved
-- **Read path errors** (fromDatabase): Log warning and continue with fallback value (non-fatal)
-
-### Real-World Example
-
-Complete example solving the "arrays in database" problem:
-
-```javascript
-class User {
-    constructor() {
-        this.id = { type: "integer", primary: true, auto: true };
-        this.name = { type: "string" };
-        this.email = { type: "string" };
-
-        // Array fields stored as JSON strings
-        this.certified_models = {
-            type: "string",
-            nullable: true,
-            transform: {
-                toDatabase: (value) => {
-                    if (value === null || value === undefined) return null;
-                    if (Array.isArray(value)) return JSON.stringify(value);
-                    return value;  // Already a string
-                },
-                fromDatabase: (value) => {
-                    if (!value) return [];
-                    if (Array.isArray(value)) return value;  // Already parsed
-                    try {
-                        return JSON.parse(value);
-                    } catch {
-                        return [];  // Safe fallback
-                    }
-                }
-            }
-        };
-
-        this.roles = {
-            type: "string",
-            transform: {
-                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
-                fromDatabase: (v) => v ? JSON.parse(v) : []
-            }
-        };
-    }
-}
-
-// Create user with arrays
-const user = new User();
-user.name = "Alex";
-user.email = "alex@example.com";
-user.certified_models = [1, 2, 5, 8];  // Natural array assignment
-user.roles = ["admin", "calibrator"];  // Natural array assignment
-
-context.User.add(user);
-context.saveChanges();  // ✅ Works perfectly!
-
-// Update user
-const loadedUser = context.User.where(u => u.email == $$, "alex@example.com").single();
-loadedUser.certified_models.push(12);  // Add model 12
-context.saveChanges();  // ✅ Transforms and saves
-
-// Query with arrays (using .includes())
-const modelId = 5;
-const certifiedUsers = context.User
-    .where(u => $$.includes(u.certified_models), [modelId])  // Won't work directly
-    .toList();
-// Note: For IN clause queries on JSON arrays, you'd need to query differently
-// or normalize the data structure
-```
-
-### Benefits
-
-1. **Cleaner code**: No manual JSON.stringify/parse scattered everywhere
-2. **Type safety**: Validation happens after transformation
-3. **Consistency**: All data access through ORM (no raw SQL needed)
-4. **Maintainable**: Transformation logic in one place (entity definition)
-5. **Testable**: Transformers are pure functions, easy to unit test
-6. **DRY**: Define once, use everywhere
-7. **Explicit**: Clear in entity definition what transformations occur
-
-### Testing Transformers
-
-Run the transformer test suite:
-```bash
-node test/transformerTest.js
-```
-
-Example demonstrates:
-```bash
-node examples/jsonArrayTransformer.js
-```
-
-### Migration Guide
-
-If you're currently using raw SQL to bypass type validation:
-
-**Before:**
-```javascript
-// Mixed approach - some through ORM, some through raw SQL
-user.name = "Alex";
-user.email = "alex@example.com";
-context.User.add(user);
-context.saveChanges();
-
-// Bypass ORM for arrays
-const jsonModels = JSON.stringify([1, 2, 3]);
-const sql = `UPDATE User SET certified_models = ? WHERE id = ?`;
-context.User.raw(sql, [jsonModels, user.id]);
-```
-
-**After:**
-```javascript
-// Everything through ORM consistently
-class User {
-    constructor() {
-        this.certified_models = {
-            type: "string",
-            transform: {
-                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
-                fromDatabase: (v) => v ? JSON.parse(v) : []
-            }
-        };
-    }
-}
-
-user.name = "Alex";
-user.email = "alex@example.com";
-user.certified_models = [1, 2, 3];  // Natural assignment
-context.User.add(user);
-context.saveChanges();  // Everything saved consistently
-```
-
-## Security - SQL Injection Protection
-
-Master Record uses **parameterized queries** throughout to protect against SQL injection attacks. All user input is safely separated from SQL structure using database-specific parameter placeholders (`?` for MySQL/SQLite, `$1, $2, ...` for Postgres).
-
-### How It Works
-
-When you write queries with `$$` placeholders, MasterRecord:
-1. **Separates SQL structure from values** - The query structure is built first
-2. **Validates parameter types** - Rejects unsafe values (objects, functions, symbols)
-3. **Uses database placeholders** - Replaces `$$` with `?` or `$1` depending on your database
-4. **Passes values separately** - Database driver handles proper escaping
-
-### Protected Operations
-
-✅ **All operations use parameterized queries:**
-- **SELECT queries** - WHERE, ORDER BY, LIKE conditions
-- **INSERT operations** - All column values
-- **UPDATE operations** - SET clauses and WHERE conditions
-- **DELETE operations** - WHERE conditions
-- **IN clauses** - Array values for `.includes()` and `.any()` methods
-- **Table introspection** - Database metadata queries
-
-### Example: Safe Query Handling
-
-```javascript
-// User input (potentially malicious)
-const userInput = "admin' OR '1'='1";
-
-// BEFORE (❌ UNSAFE - string concatenation)
-// const query = `SELECT * FROM User WHERE name = '${userInput}'`;
-
-// AFTER (✅ SAFE - parameterized)
-const users = context.User
-    .where(u => u.name == $$, userInput)
-    .toList();
-
-// Generated: SELECT * FROM User WHERE name = ?
-// Parameters: ["admin' OR '1'='1"]
-// Result: Safely searches for the literal string, no SQL injection
-```
-
-### Testing Security
-
-MasterRecord includes comprehensive security tests:
-```bash
-node test/securityTest.js
-```
-
-These tests verify:
-- SQL injection attempts are safely parameterized
-- Array parameters are properly validated
-- Special characters are handled correctly
-- Edge cases (empty strings, unicode, null bytes) are managed safely
-
-### Best Practices
-
-1. **Always use `$$` placeholders** for dynamic values:
-   ```javascript
-   // ✅ Good
-   context.User.where(u => u.name == $$, userName).toList()
-
-   // ❌ Bad (bypasses protection)
-   context.User.raw(`SELECT * FROM User WHERE name = '${userName}'`).toList()
-   ```
-
-2. **Use `.includes()` for IN clauses** with arrays:
-   ```javascript
-   const ids = [1, 2, 3, 4, 5];
-   context.User.where(u => $$.includes(u.id), ids).toList();
-   // Safely generates: WHERE id IN (?, ?, ?, ?, ?)
-   ```
-
-3. **Validate input at boundaries** - While MasterRecord prevents SQL injection, always validate business logic constraints (valid IDs, authorized access, etc.)
-
-## Multi-context (multi-database) projects
-
-When your project defines multiple Context files (e.g., `userContext.js`, `modelContext.js`, `mailContext.js`, `chatContext.js`) across different packages or feature directories, MasterRecord can auto-detect and operate on all of them.
-
-### New bulk commands
-
-- enable-migrations-all (alias: ema)
-  - Scans the project for MasterRecord Context files (heuristic) and enables migrations for each by writing a portable snapshot next to the context at `<ContextDir>/db/migrations/<context>_contextSnapShot.json`.
-
-- add-migration-all <Name> (alias: ama)
-  - Creates a migration named `<Name>` (e.g., `Init`) for every detected context that has a snapshot. Migrations are written into each context’s own migrations folder.
-
-- update-database-all (alias: uda)
-  - Applies the latest migration for every detected context with migrations.
-
-- update-database-down <ContextName> (alias: udd)
-  - Runs the latest migration’s `down()` for the specified context.
-
-- update-database-target <migrationFileName> (alias: udt)
-  - Rolls back migrations newer than the given migration file within that context’s migrations folder.
-
-- ensure-database <ContextName> (alias: ed)
-  - For MySQL contexts, ensures the database exists (like EF’s `Database.EnsureCreated`). Auto-detects connection info from your Context env settings.
-
-### Portable snapshots (no hardcoded absolute paths)
-
-Snapshots are written with relative paths, so moving/renaming the project root does not break CLI resolution:
-- `contextLocation`: path from the migrations folder to the Context file
-- `migrationFolder`: `.` (the snapshot resides in the migrations folder)
-- `snapShotLocation`: the snapshot filename
-
-### Typical flow for multiple contexts
-
-1) Enable migrations everywhere:
-```bash
-# macOS/Linux
-master=development masterrecord enable-migrations-all
-
-# Windows PowerShell
-$env:master = 'development'
-masterrecord enable-migrations-all
-```
-
-2) Create an initial migration for all contexts:
-```bash
-# macOS/Linux
-master=development masterrecord add-migration-all Init
-
-# Windows PowerShell
-$env:master = 'development'
-masterrecord add-migration-all Init
-```
-
-3) Apply migrations everywhere:
-```bash
-# macOS/Linux
-master=development masterrecord update-database-all
-
-# Windows PowerShell
-$env:master = 'development'
-masterrecord update-database-all
-```
-
-4) Inspect migrations for a specific context:
-```bash
-# macOS/Linux
-master=development masterrecord get-migrations userContext
-
-# Windows PowerShell
-$env:master = 'development'
-masterrecord get-migrations userContext
-```
-
-5) Roll back latest for a specific context:
-```bash
-# macOS/Linux
-master=development masterrecord update-database-down userContext
-
-# Windows PowerShell
-$env:master = 'development'
-masterrecord update-database-down userContext
-```
-
-### Environment selection (cross-platform)
-- macOS/Linux prefix: `master=development ...` or `NODE_ENV=development ...`
-- Windows PowerShell:
-```powershell
-$env:master = 'development'
-masterrecord update-database-all
-```
-- Windows cmd.exe:
-```cmd
-set master=development && masterrecord update-database-all
-```
-
-### Notes and tips
-- Each Context should define its own env settings and tables; `update-database-all` operates context-by-context so separate databases are handled cleanly.
-- For SQLite contexts, the `connection` path will be created if the directory does not exist.
-- For MySQL contexts, `ensure-database <ContextName>` can create the DB (permissions required) before migrations run.
-- If you rename/move the project root, re-run `enable-migrations-all` or any single-context command once; snapshots use relative paths and will continue working.
-- If `update-database-all` reports "no migration files found" for a context, run `get-migrations <ContextName>`. If empty, create a migration with `add-migration <Name> <ContextName>` or use `add-migration-all <Name>`.
-
-## Table Prefixes
-
-MasterRecord supports automatic table prefixing for both MySQL and SQLite databases. This is useful for:
-- Multi-tenant applications sharing a single database
-- Plugin systems where each plugin needs isolated tables
-- Avoiding table name conflicts in shared database environments
-
-### Using tablePrefix
-
-Set the `tablePrefix` property in your Context constructor before calling `dbset()`:
-
-```javascript
-var masterrecord = require('masterrecord');
-const User = require('./models/User');
-const Post = require('./models/Post');
-
-class AppContext extends masterrecord.context {
+// app/models/context.js
+const context = require('masterrecord/context');
+const User = require('./User');
+const Post = require('./Post');
+
+class AppContext extends context {
     constructor() {
         super();
 
-        // Set table prefix
-        this.tablePrefix = 'myapp_';
+        // Configure database connection
+        this.env({
+            type: 'postgres',  // or 'mysql', 'sqlite'
+            host: 'localhost',
+            port: 5432,
+            database: 'myapp',
+            user: 'postgres',
+            password: 'password'
+        });
 
-        // Configure environment
-        this.env('config/environments');
-
-        // Register models - prefix will be automatically applied
-        this.dbset(User);      // Creates table: myapp_User
-        this.dbset(Post);      // Creates table: myapp_Post
+        // Register entities
+        this.dbset(User);
+        this.dbset(Post);
     }
 }
 
 module.exports = AppContext;
 ```
 
-### How it works
-
-When `tablePrefix` is set:
-1. The prefix is automatically prepended to all table names during `dbset()` registration
-2. Works with both the default table name (model class name) and custom names
-3. Applies to all database operations: queries, inserts, updates, deletes, and migrations
-4. Supports both MySQL and SQLite databases
-
-### Example with custom table names
+### 2. Define Entities
 
 ```javascript
-class AppContext extends masterrecord.context {
+// app/models/User.js
+class User {
     constructor() {
-        super();
-        this.tablePrefix = 'myapp_';
-        this.env('config/environments');
-
-        // Custom table name + prefix
-        this.dbset(User, 'users');       // Creates table: myapp_users
-        this.dbset(Post, 'blog_posts');  // Creates table: myapp_blog_posts
+        this.id = { type: 'integer', primary: true, auto: true };
+        this.name = { type: 'string', nullable: false };
+        this.email = { type: 'string', nullable: false, unique: true };
+        this.age = { type: 'integer', nullable: true };
+        this.created_at = { type: 'timestamp', default: 'CURRENT_TIMESTAMP' };
     }
 }
+
+module.exports = User;
 ```
 
-### Plugin example
-
-Perfect for plugin systems where each plugin needs isolated tables:
-
-```javascript
-// RAG Plugin Context
-class RagContext extends masterrecord.context {
-    constructor() {
-        super();
-
-        // Prefix all RAG plugin tables
-        this.tablePrefix = 'rag_';
-
-        this.env(path.join(__dirname, '../../config/environments'));
-
-        this.dbset(Document);       // Creates table: rag_Document
-        this.dbset(DocumentChunk);  // Creates table: rag_DocumentChunk
-        this.dbset(Settings);       // Creates table: rag_Settings
-    }
-}
-```
-
-### Migrations with table prefixes
-
-Table prefixes work seamlessly with migrations:
+### 3. Run Migrations
 
 ```bash
-# Enable migrations (prefix is read from your Context)
-master=development masterrecord enable-migrations AppContext
+# Enable migrations (one-time setup)
+masterrecord enable-migrations AppContext
 
-# Create migration (tables will have prefix in migration file)
-master=development masterrecord add-migration Init AppContext
+# Create initial migration
+masterrecord add-migration InitialCreate AppContext
 
-# Apply migration (creates prefixed tables)
-master=development masterrecord update-database AppContext
+# Apply migrations
+masterrecord migrate AppContext
 ```
 
-The generated migration files will reference the prefixed table names, so you don't need to manually add prefixes in your migration code.
-
-### Notes
-- The prefix is applied during Context construction, so it must be set before `dbset()` calls
-- The prefix is stored in migration snapshots, ensuring consistency across migration operations
-- Empty strings or non-string values are ignored (no prefix applied)
-- Both MySQL and SQLite fully support table prefixes with no special configuration needed
-
-## Query Method Chaining
-
-MasterRecord supports fluent query chaining for building complex queries. You can chain multiple `where()`, `orderBy()`, `skip()`, `take()`, and other methods together to build your query dynamically.
-
-### Chaining Multiple where() Clauses
-
-Multiple `where()` calls are automatically combined with AND logic:
+### 4. Query Your Data
 
 ```javascript
+const AppContext = require('./app/models/context');
+const db = new AppContext();
+
+// Create
+const user = db.User.new();
+user.name = 'Alice';
+user.email = 'alice@example.com';
+user.age = 28;
+await db.saveChanges();
+
+// Read with parameterized query
+const alice = db.User
+    .where(u => u.email == $$, 'alice@example.com')
+    .single();
+
+// Update
+alice.age = 29;
+await db.saveChanges();
+
+// Delete
+db.remove(alice);
+await db.saveChanges();
+```
+
+## Database Configuration
+
+### PostgreSQL (Async)
+
+```javascript
+class AppContext extends context {
+    constructor() {
+        super();
+
+        this.env({
+            type: 'postgres',
+            host: 'localhost',
+            port: 5432,
+            database: 'myapp',
+            user: 'postgres',
+            password: 'password',
+            max: 20,  // Connection pool size
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 2000
+        });
+
+        this.dbset(User);
+    }
+}
+
+// Usage requires await
+const db = new AppContext();
+await db.saveChanges();  // PostgreSQL is async
+```
+
+### MySQL (Synchronous)
+
+```javascript
+class AppContext extends context {
+    constructor() {
+        super();
+
+        this.env({
+            type: 'mysql',
+            host: 'localhost',
+            port: 3306,
+            database: 'myapp',
+            user: 'root',
+            password: 'password'
+        });
+
+        this.dbset(User);
+    }
+}
+
+// Usage is synchronous
+const db = new AppContext();
+db.saveChanges();  // No await needed
+```
+
+### SQLite (Synchronous)
+
+```javascript
+class AppContext extends context {
+    constructor() {
+        super();
+
+        this.env({
+            type: 'sqlite',
+            connection: './data/myapp.db'  // File path
+        });
+
+        this.dbset(User);
+    }
+}
+```
+
+### Environment Files
+
+Store configurations in JSON files:
+
+```json
+// config/environments/env.development.json
+{
+    "type": "postgres",
+    "host": "localhost",
+    "port": 5432,
+    "database": "myapp_dev",
+    "user": "postgres",
+    "password": "dev_password"
+}
+```
+
+```javascript
+// Load environment file
+class AppContext extends context {
+    constructor() {
+        super();
+        this.env('config/environments');  // Loads env.<NODE_ENV>.json
+        this.dbset(User);
+    }
+}
+```
+
+```bash
+# Set environment
+export NODE_ENV=development
+node app.js
+```
+
+## Entity Definitions
+
+### Basic Entity
+
+```javascript
+class User {
+    constructor() {
+        // Primary key with auto-increment
+        this.id = {
+            type: 'integer',
+            primary: true,
+            auto: true
+        };
+
+        // Required string field
+        this.name = {
+            type: 'string',
+            nullable: false
+        };
+
+        // Optional field with default
+        this.status = {
+            type: 'string',
+            nullable: true,
+            default: 'active'
+        };
+
+        // Unique constraint
+        this.email = {
+            type: 'string',
+            unique: true
+        };
+
+        // Timestamp
+        this.created_at = {
+            type: 'timestamp',
+            default: 'CURRENT_TIMESTAMP'
+        };
+    }
+}
+```
+
+### Field Types
+
+| MasterRecord Type | PostgreSQL    | MySQL         | SQLite    |
+|-------------------|---------------|---------------|-----------|
+| `integer`         | INTEGER       | INT           | INTEGER   |
+| `bigint`          | BIGINT        | BIGINT        | INTEGER   |
+| `string`          | VARCHAR(255)  | VARCHAR(255)  | TEXT      |
+| `text`            | TEXT          | TEXT          | TEXT      |
+| `float`           | REAL          | FLOAT         | REAL      |
+| `decimal`         | DECIMAL       | DECIMAL       | REAL      |
+| `boolean`         | BOOLEAN       | TINYINT       | INTEGER   |
+| `date`            | DATE          | DATE          | TEXT      |
+| `time`            | TIME          | TIME          | TEXT      |
+| `datetime`        | TIMESTAMP     | DATETIME      | TEXT      |
+| `timestamp`       | TIMESTAMP     | TIMESTAMP     | TEXT      |
+| `json`            | JSON          | JSON          | TEXT      |
+| `jsonb`           | JSONB         | JSON          | TEXT      |
+| `uuid`            | UUID          | VARCHAR(36)   | TEXT      |
+| `binary`          | BYTEA         | BLOB          | BLOB      |
+
+### Relationships
+
+```javascript
+class User {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+        this.name = { type: 'string' };
+
+        // One-to-many: User has many Posts
+        this.Posts = {
+            type: 'hasMany',
+            model: 'Post',
+            foreignKey: 'user_id'
+        };
+    }
+}
+
+class Post {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+        this.title = { type: 'string' };
+        this.user_id = { type: 'integer' };
+
+        // Many-to-one: Post belongs to User
+        this.User = {
+            type: 'belongsTo',
+            model: 'User',
+            foreignKey: 'user_id'
+        };
+    }
+}
+```
+
+### Field Transformers
+
+Store complex JavaScript types in simple database columns:
+
+```javascript
+class User {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+
+        // Store arrays as JSON strings
+        this.tags = {
+            type: 'string',
+            transform: {
+                toDatabase: (value) => {
+                    return Array.isArray(value) ? JSON.stringify(value) : value;
+                },
+                fromDatabase: (value) => {
+                    return value ? JSON.parse(value) : [];
+                }
+            }
+        };
+    }
+}
+
+// Usage is natural
+const user = db.User.new();
+user.tags = ['admin', 'moderator'];  // Assign array
+await db.saveChanges();  // Stored as '["admin","moderator"]'
+
+const loaded = db.User.findById(user.id);
+console.log(loaded.tags);  // ['admin', 'moderator'] - JavaScript array!
+```
+
+## Querying
+
+### Basic Queries
+
+```javascript
+// Find all
+const users = db.User.all();
+
+// Find by primary key
+const user = db.User.findById(123);
+
+// Find single with where clause
+const alice = db.User
+    .where(u => u.email == $$, 'alice@example.com')
+    .single();
+
+// Find multiple with conditions
+const adults = db.User
+    .where(u => u.age >= $$, 18)
+    .toList();
+```
+
+### Parameterized Queries
+
+**Always use `$$` placeholders** for SQL injection protection:
+
+```javascript
+// Single parameter
+const user = db.User.where(u => u.id == $$, 123).single();
+
+// Multiple parameters
+const results = db.User
+    .where(u => u.age > $$ && u.status == $$, 25, 'active')
+    .toList();
+
+// Single $ for OR conditions
+const results = db.User
+    .where(u => u.status == $ || u.status == null, 'active')
+    .toList();
+```
+
+### IN Clauses
+
+```javascript
+// Array parameter with .includes()
+const ids = [1, 2, 3, 4, 5];
+const users = db.User
+    .where(u => $$.includes(u.id), ids)
+    .toList();
+
+// Generated SQL: WHERE id IN ($1, $2, $3, $4, $5)
+// PostgreSQL parameters: [1, 2, 3, 4, 5]
+
+// Alternative .any() syntax
+const users = db.User
+    .where(u => u.id.any($$), [1, 2, 3])
+    .toList();
+
+// Comma-separated strings (auto-splits)
+const users = db.User
+    .where(u => u.id.any($$), "1,2,3,4,5")
+    .toList();
+```
+
+### Query Chaining
+
+```javascript
+let query = db.User;
+
 // Build query dynamically
-let query = context.QaTask;
-
-// Add first condition
-query = query.where(t => t.assigned_worker_id == $$, currentUser.id);
-
-// Add second condition (combines with AND)
-query = query.where(t => t.status == $$, 'pending');
-
-// Add ordering and execute
-let tasks = query.orderBy(t => t.created_at).toList();
-```
-
-**Generated SQL:**
-```sql
-SELECT * FROM QaTask AS t
-WHERE t.assigned_worker_id = 123
-  AND t.status = 'pending'
-ORDER BY t.created_at ASC
-```
-
-### Dynamic Query Building
-
-This is especially useful for building queries based on conditional logic:
-
-```javascript
-let query = context.User;
-
-// Always apply base filter
-query = query.where(u => u.is_active == true);
-
-// Conditionally add filters
 if (searchTerm) {
     query = query.where(u => u.name.like($$), `%${searchTerm}%`);
 }
 
-if (roleFilter) {
-    query = query.where(u => u.role == $$, roleFilter);
+if (minAge) {
+    query = query.where(u => u.age >= $$, minAge);
 }
 
-// Add pagination
-query = query
+// Add sorting and pagination
+const users = query
     .orderBy(u => u.created_at)
     .skip(offset)
-    .take(limit);
-
-// Execute query
-let users = query.toList();
-```
-
-### Chainable Query Methods
-
-All of these methods return the query builder and can be chained:
-
-- **`where(query, ...args)`** - Add WHERE condition (multiple calls combine with AND)
-- **`and(query, ...args)`** - Explicitly add AND condition (alternative to chaining where)
-- **`orderBy(query, ...args)`** - Sort ascending
-- **`orderByDescending(query, ...args)`** - Sort descending
-- **`skip(number)`** - Skip N records (pagination offset)
-- **`take(number)`** - Limit to N records (pagination limit)
-- **`select(query, ...args)`** - Select specific fields
-- **`include(query, ...args)`** - Eager load relationships
-
-### Combining with OR Logic
-
-For OR conditions within a single where clause, use the `||` operator:
-
-```javascript
-// Single where with OR
-let tasks = context.Task
-    .where(t => t.status == 'pending' || t.status == 'in_progress')
+    .take(limit)
     .toList();
 ```
 
-**Generated SQL:**
-```sql
-SELECT * FROM Task AS t
-WHERE (t.status = 'pending' OR t.status = 'in_progress')
-```
-
-### Complex Example
+### Ordering
 
 ```javascript
-// Complex query with multiple conditions
-let query = context.Order;
+// Ascending
+const users = db.User
+    .orderBy(u => u.name)
+    .toList();
 
-// Base filters
-query = query.where(o => o.customer_id == $$, customerId);
-query = query.where(o => o.status == $$ || o.status == $$, 'pending', 'processing');
+// Descending
+const users = db.User
+    .orderByDescending(u => u.created_at)
+    .toList();
+```
 
-// Date range filter
-if (startDate) {
-    query = query.where(o => o.created_at >= $$, startDate);
-}
-if (endDate) {
-    query = query.where(o => o.created_at <= $$, endDate);
-}
+### Pagination
 
-// Sorting and pagination
-let orders = query
-    .orderByDescending(o => o.created_at)
+```javascript
+// Skip 20, take 10
+const users = db.User
+    .orderBy(u => u.id)
+    .skip(20)
+    .take(10)
+    .toList();
+
+// Page-based pagination
+const page = 2;
+const pageSize = 10;
+const users = db.User
     .skip(page * pageSize)
     .take(pageSize)
     .toList();
 ```
 
-### Important Notes
-
-- Each `where()` call adds an AND condition to the existing WHERE clause
-- Conditions are combined in the order they're added
-- The query is only executed when you call a terminal method: `toList()`, `single()`, `count()`
-- Query builders are reusable - calling `toList()` resets the builder for the next query
-
-## Array Filtering with .includes()
-
-MasterRecord supports natural JavaScript array syntax for IN clause queries using the `.includes()` method. This provides a more intuitive way to filter records based on array values.
-
-### Basic Usage
+### Counting
 
 ```javascript
-// Define an array of IDs
-const userIds = [1, 2, 3, 4, 5];
+// Count all
+const total = db.User.count();
 
-// Use .includes() to filter
-const users = context.User
-    .where(u => $$.includes(u.id), userIds)
+// Count with conditions
+const activeCount = db.User
+    .where(u => u.status == $$, 'active')
+    .count();
+```
+
+### Complex Queries
+
+```javascript
+// Multiple conditions with OR
+const results = db.User
+    .where(u => (u.status == 'active' || u.status == 'pending') && u.age >= $$, 18)
+    .orderBy(u => u.name)
+    .toList();
+
+// Nullable checks
+const usersWithoutEmail = db.User
+    .where(u => u.email == null)
+    .toList();
+
+// LIKE queries
+const matching = db.User
+    .where(u => u.name.like($$), '%john%')
     .toList();
 ```
 
-**Generated SQL:**
-```sql
-SELECT * FROM User AS u
-WHERE u.id IN (?, ?, ?, ?, ?)
--- Parameters: [1, 2, 3, 4, 5]
+## Migrations
+
+### CLI Commands
+
+```bash
+# Enable migrations (one-time per context)
+masterrecord enable-migrations AppContext
+
+# Create a migration
+masterrecord add-migration MigrationName AppContext
+
+# Apply migrations
+masterrecord migrate AppContext
+
+# Apply all migrations from scratch
+masterrecord migrate-restart AppContext
+
+# List migrations
+masterrecord get-migrations AppContext
+
+# Multi-context commands
+masterrecord enable-migrations-all          # Enable for all contexts
+masterrecord add-migration-all Init         # Create migration for all
+masterrecord migrate-all                    # Apply all pending migrations
 ```
 
-### Examples
+### Migration File Structure
 
-**Filter by status array:**
 ```javascript
-const validStatuses = ['active', 'pending', 'processing'];
-const orders = context.Order
-    .where(o => $$.includes(o.status), validStatuses)
-    .toList();
+// db/migrations/20250111_143052_CreateUser.js
+module.exports = {
+    up: function(table, schema) {
+        // Create table
+        schema.createTable(table.User);
+
+        // Seed initial data
+        schema.seed('User', {
+            name: 'Admin',
+            email: 'admin@example.com',
+            role: 'admin'
+        });
+    },
+
+    down: function(table, schema) {
+        // Rollback
+        schema.dropTable(table.User);
+    }
+};
 ```
 
-**Combined with other conditions:**
+### Migration Operations
+
 ```javascript
-const departmentIds = [10, 20, 30];
-const employees = context.Employee
-    .where(e => $$.includes(e.department_id), departmentIds)
-    .and(e => e.is_active == true)
-    .orderBy(e => e.name)
-    .toList();
+module.exports = {
+    up: function(table, schema) {
+        // Create table
+        schema.createTable(table.User);
+
+        // Add column
+        schema.addColumn({
+            tableName: 'User',
+            name: 'phone',
+            type: 'string'
+        });
+
+        // Alter column
+        schema.alterColumn({
+            tableName: 'User',
+            table: {
+                name: 'age',
+                type: 'integer',
+                nullable: false,
+                default: 0
+            }
+        });
+
+        // Rename column
+        schema.renameColumn({
+            tableName: 'User',
+            name: 'old_name',
+            newName: 'new_name'
+        });
+
+        // Drop column
+        schema.dropColumn({
+            tableName: 'User',
+            name: 'deprecated_field'
+        });
+
+        // Drop table
+        schema.dropTable(table.OldTable);
+    },
+
+    down: function(table, schema) {
+        // Reverse operations
+    }
+};
 ```
 
-**Dynamic filtering:**
-```javascript
-let query = context.Product;
+### Seed Data
 
-// Conditionally filter by categories
-if (categoryIds && categoryIds.length > 0) {
-    query = query.where(p => $$.includes(p.category_id), categoryIds);
+```javascript
+module.exports = {
+    up: function(table, schema) {
+        schema.createTable(table.User);
+
+        // Single record
+        schema.seed('User', {
+            name: 'Admin',
+            email: 'admin@example.com'
+        });
+
+        // Multiple records (efficient bulk insert)
+        schema.bulkSeed('User', [
+            { name: 'Alice', email: 'alice@example.com', age: 25 },
+            { name: 'Bob', email: 'bob@example.com', age: 30 },
+            { name: 'Charlie', email: 'charlie@example.com', age: 35 }
+        ]);
+    },
+
+    down: function(table, schema) {
+        schema.dropTable(table.User);
+    }
+};
+```
+
+**Seed data is idempotent** - re-running migrations won't create duplicates:
+- SQLite: `INSERT OR IGNORE`
+- MySQL: `INSERT IGNORE`
+- PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING`
+
+## Advanced Features
+
+### Type Validation
+
+MasterRecord validates and coerces field types at runtime:
+
+```javascript
+const user = db.User.new();
+user.age = "25";  // String assigned to integer field
+await db.saveChanges();
+// ⚠️  Console: Auto-converting string "25" to integer 25
+
+user.age = "invalid";
+await db.saveChanges();
+// ❌ Error: Field User.age must be an integer, got string "invalid"
+```
+
+### Field Transformers (Advanced)
+
+```javascript
+class Post {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+
+        // Store array as JSON
+        this.tags = {
+            type: 'string',
+            transform: {
+                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
+                fromDatabase: (v) => v ? JSON.parse(v) : []
+            }
+        };
+
+        // PostgreSQL JSONB (native JSON support)
+        this.metadata = {
+            type: 'jsonb',  // PostgreSQL only
+            transform: {
+                toDatabase: (v) => JSON.stringify(v || {}),
+                fromDatabase: (v) => typeof v === 'string' ? JSON.parse(v) : v
+            }
+        };
+    }
+}
+```
+
+### Table Prefixes
+
+Useful for multi-tenant applications or plugin systems:
+
+```javascript
+class AppContext extends context {
+    constructor() {
+        super();
+
+        this.tablePrefix = 'myapp_';  // Set before dbset()
+        this.env('config/environments');
+
+        this.dbset(User);  // Creates table: myapp_User
+        this.dbset(Post);  // Creates table: myapp_Post
+    }
+}
+```
+
+### Transactions (PostgreSQL)
+
+```javascript
+const { PostgresSyncConnect } = require('masterrecord/postgresSyncConnect');
+
+const connection = new PostgresSyncConnect();
+await connection.connect(config);
+
+const result = await connection.transaction(async (client) => {
+    // Insert user
+    const userResult = await client.query(
+        'INSERT INTO User (name, email) VALUES ($1, $2) RETURNING id',
+        ['Alice', 'alice@example.com']
+    );
+
+    // Insert related record
+    await client.query(
+        'INSERT INTO Profile (user_id, bio) VALUES ($1, $2)',
+        [userResult.rows[0].id, 'Software Engineer']
+    );
+
+    return userResult.rows[0].id;
+});
+
+// Automatically commits on success, rolls back on error
+```
+
+### Multi-Context Applications
+
+Manage multiple databases in one application:
+
+```javascript
+// contexts/userContext.js
+class UserContext extends context {
+    constructor() {
+        super();
+        this.env({ type: 'postgres', database: 'users_db', ... });
+        this.dbset(User);
+        this.dbset(Profile);
+    }
 }
 
-// Conditionally filter by tags
-if (tagIds && tagIds.length > 0) {
-    query = query.and(p => $$.includes(p.tag_id), tagIds);
+// contexts/analyticsContext.js
+class AnalyticsContext extends context {
+    constructor() {
+        super();
+        this.env({ type: 'postgres', database: 'analytics_db', ... });
+        this.dbset(Event);
+        this.dbset(Metric);
+    }
 }
 
-const products = query.toList();
+// Usage
+const userDb = new UserContext();
+const analyticsDb = new AnalyticsContext();
+
+const user = userDb.User.findById(123);
+analyticsDb.Event.new().log('user_login', user.id);
+await analyticsDb.saveChanges();
 ```
 
-### .includes() vs .any()
+```bash
+# Migrate all contexts at once
+masterrecord migrate-all
+```
 
-MasterRecord supports two syntaxes for IN clauses:
+### Raw SQL Queries
 
-**Option 1: `.includes()` (recommended for arrays)**
+When you need full control:
+
 ```javascript
+// PostgreSQL parameterized query
+const users = await db._SQLEngine.exec(
+    'SELECT * FROM "User" WHERE age > $1 AND status = $2',
+    [25, 'active']
+);
+
+// MySQL parameterized query
+const users = db._SQLEngine.exec(
+    'SELECT * FROM User WHERE age > ? AND status = ?',
+    [25, 'active']
+);
+```
+
+## API Reference
+
+### Context Methods
+
+```javascript
+// Entity registration
+context.dbset(EntityClass)
+context.dbset(EntityClass, 'custom_table_name')
+
+// Save changes
+await context.saveChanges()  // PostgreSQL (async)
+context.saveChanges()        // MySQL/SQLite (sync)
+
+// Add/Remove entities
+context.EntityName.add(entity)
+context.remove(entity)
+```
+
+### Query Methods
+
+```javascript
+// Chainable query builders
+.where(query, ...params)         // Add WHERE condition
+.and(query, ...params)           // Add AND condition
+.orderBy(field)                  // Sort ascending
+.orderByDescending(field)        // Sort descending
+.skip(number)                    // Skip N records
+.take(number)                    // Limit to N records
+.include(relationship)           // Eager load
+
+// Terminal methods (execute query)
+.toList()                        // Return array
+.single()                        // Return one or null
+.first()                         // Return first or null
+.count()                         // Return count
+.any()                           // Return boolean
+.all()                           // Return all records
+
+// Convenience methods
+.findById(id)                    // Find by primary key
+.new()                           // Create new entity instance
+```
+
+### Migration Methods
+
+```javascript
+// In migration up/down functions
+schema.createTable(table.EntityName)
+schema.dropTable(table.EntityName)
+schema.addColumn({ tableName, name, type })
+schema.dropColumn({ tableName, name })
+schema.alterColumn({ tableName, table: { name, type, nullable, default } })
+schema.renameColumn({ tableName, name, newName })
+schema.seed(tableName, data)
+schema.bulkSeed(tableName, dataArray)
+```
+
+## Examples
+
+### Complete CRUD Example
+
+```javascript
+const AppContext = require('./app/models/context');
+
+async function demo() {
+    const db = new AppContext();
+
+    // CREATE
+    const user = db.User.new();
+    user.name = 'Alice';
+    user.email = 'alice@example.com';
+    user.age = 28;
+    await db.saveChanges();
+    console.log('Created user:', user.id);
+
+    // READ
+    const alice = db.User
+        .where(u => u.email == $$, 'alice@example.com')
+        .single();
+    console.log('Found user:', alice.name);
+
+    // UPDATE
+    alice.age = 29;
+    await db.saveChanges();
+    console.log('Updated age to:', alice.age);
+
+    // DELETE
+    db.remove(alice);
+    await db.saveChanges();
+    console.log('User deleted');
+}
+
+demo();
+```
+
+### Pagination Example
+
+```javascript
+async function getUsers(page = 0, pageSize = 10) {
+    const db = new AppContext();
+
+    const users = db.User
+        .where(u => u.status == $$, 'active')
+        .orderBy(u => u.created_at)
+        .skip(page * pageSize)
+        .take(pageSize)
+        .toList();
+
+    const total = db.User
+        .where(u => u.status == $$, 'active')
+        .count();
+
+    return {
+        users,
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize)
+    };
+}
+```
+
+### Search with Filters
+
+```javascript
+async function searchUsers(filters) {
+    const db = new AppContext();
+    let query = db.User;
+
+    // Apply filters dynamically
+    if (filters.name) {
+        query = query.where(u => u.name.like($$), `%${filters.name}%`);
+    }
+
+    if (filters.minAge) {
+        query = query.where(u => u.age >= $$, filters.minAge);
+    }
+
+    if (filters.status) {
+        query = query.where(u => u.status == $$, filters.status);
+    }
+
+    // Add sorting
+    const sortField = filters.sortBy || 'created_at';
+    const sortOrder = filters.sortOrder || 'desc';
+
+    if (sortOrder === 'asc') {
+        query = query.orderBy(sortField);
+    } else {
+        query = query.orderByDescending(sortField);
+    }
+
+    // Add pagination
+    if (filters.page && filters.pageSize) {
+        query = query
+            .skip(filters.page * filters.pageSize)
+            .take(filters.pageSize);
+    }
+
+    return query.toList();
+}
+```
+
+### Relationship Example
+
+```javascript
+class BlogContext extends context {
+    constructor() {
+        super();
+        this.env('config/environments');
+        this.dbset(Author);
+        this.dbset(Post);
+    }
+}
+
+// Create author with posts
+const db = new BlogContext();
+
+const author = db.Author.new();
+author.name = 'John Doe';
+await db.saveChanges();
+
+const post = db.Post.new();
+post.title = 'My First Post';
+post.content = 'Hello World!';
+post.author_id = author.id;
+await db.saveChanges();
+
+// Query with relationships
+const posts = db.Post
+    .where(p => p.author_id == $$, author.id)
+    .toList();
+
+console.log(`${author.name} has ${posts.length} posts`);
+```
+
+## Performance Tips
+
+### 1. Use Bulk Operations
+
+```javascript
+// ❌ BAD: Multiple inserts
+for (const item of items) {
+    const entity = db.Entity.new();
+    entity.data = item;
+    await db.saveChanges();
+}
+
+// ✅ GOOD: Single bulk insert
+for (const item of items) {
+    const entity = db.Entity.new();
+    entity.data = item;
+}
+await db.saveChanges();  // Batch insert
+```
+
+### 2. Use Indexes
+
+```javascript
+class User {
+    constructor() {
+        this.email = {
+            type: 'string',
+            unique: true  // Automatically creates index
+        };
+    }
+}
+
+// For complex queries, add database indexes manually
+// CREATE INDEX idx_user_status ON User(status);
+```
+
+### 3. Limit Result Sets
+
+```javascript
+// ✅ GOOD: Limit results
+const recentUsers = db.User
+    .orderByDescending(u => u.created_at)
+    .take(100)
+    .toList();
+
+// ❌ BAD: Load everything
+const allUsers = db.User.all();
+```
+
+### 4. Use Connection Pooling (PostgreSQL)
+
+```javascript
+this.env({
+    type: 'postgres',
+    max: 20,  // Pool size
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000
+});
+```
+
+## Security
+
+### SQL Injection Protection
+
+MasterRecord uses **parameterized queries throughout** to prevent SQL injection:
+
+```javascript
+// ✅ SAFE: Parameterized
+const user = db.User.where(u => u.name == $$, userInput).single();
+
+// ❌ UNSAFE: Never do this
+// const query = `SELECT * FROM User WHERE name = '${userInput}'`;
+```
+
+All operations use parameterized queries:
+- SELECT queries
+- INSERT operations
+- UPDATE operations
+- DELETE operations
+- IN clauses
+- LIKE patterns
+
+### Input Validation
+
+While SQL injection is prevented, always validate business logic:
+
+```javascript
+// Validate input before querying
+function getUser(userId) {
+    if (!Number.isInteger(userId) || userId <= 0) {
+        throw new Error('Invalid user ID');
+    }
+
+    return db.User.findById(userId);
+}
+```
+
+## Troubleshooting
+
+### PostgreSQL Connection Issues
+
+```bash
+# Error: Cannot find module 'pg'
+npm install pg@^8.16.3
+
+# Error: Connection refused
+# Check PostgreSQL is running: sudo service postgresql status
+
+# Error: Database does not exist
+createdb myapp
+
+# Error: Authentication failed
+# Check pg_hba.conf and user permissions
+```
+
+### MySQL Connection Issues
+
+```bash
+# Error: ER_NOT_SUPPORTED_AUTH_MODE
+# Use mysql_native_password for MySQL 8.0+
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password';
+
+# Error: ER_ACCESS_DENIED_ERROR
+# Check user permissions
+GRANT ALL PRIVILEGES ON myapp.* TO 'user'@'localhost';
+```
+
+### Migration Issues
+
+```bash
+# Cannot find context file
+# Ensure you're running from project root
+cd /path/to/project
+masterrecord migrate AppContext
+
+# No migrations found
+# Check migrations directory exists
+ls app/models/db/migrations/
+
+# Type errors in migration
+# Check entity definitions match database types
+```
+
+### Common Errors
+
+```javascript
+// Error: "expected N value(s) for '$', but received M"
+// Solution: Match placeholder count with parameters
+db.User.where(u => u.age > $$ && u.status == $$, 25, 'active');
+//         Two $$ placeholders         ↑    ↑  Two parameters
+
+// Error: "Cannot create IN clause with empty array"
+// Solution: Check array has values before querying
 const ids = [1, 2, 3];
-context.User.where(u => $$.includes(u.id), ids).toList();
+if (ids.length > 0) {
+    db.User.where(u => $$.includes(u.id), ids).toList();
+}
+
+// Error: "Field X cannot be null"
+// Solution: Entity defines field as non-nullable
+user.name = null;  // Error if name is { nullable: false }
 ```
 
-**Option 2: `.any()` (alternative syntax)**
-```javascript
-context.User.where(u => u.id.any($$), "1,2,3").toList();
+## Version Compatibility
+
+| Component     | Version       | Notes                                    |
+|---------------|---------------|------------------------------------------|
+| MasterRecord  | 0.3.0+        | Current version with PostgreSQL support  |
+| Node.js       | 14+           | Async/await support required             |
+| PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
+| MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |
+| SQLite        | 3.x           | Any recent version                       |
+| pg            | 8.16.3+       | PostgreSQL driver                        |
+| sync-mysql2   | 1.0.8+        | MySQL driver                            |
+| better-sqlite3| 12.6.0+       | SQLite driver                           |
+
+## Documentation
+
+- [PostgreSQL Setup Guide](./docs/POSTGRESQL_SETUP.md) - Complete PostgreSQL configuration
+- [Migrations Guide](./docs/MIGRATIONS_GUIDE.md) - Detailed migration tutorial
+- [Methods Reference](./docs/METHODS_REFERENCE.md) - Complete API reference
+- [Field Transformers](./docs/FIELD_TRANSFORMERS.md) - Custom type handling
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Submit a pull request
+
+### Running Tests
+
+```bash
+# PostgreSQL engine tests
+node test/postgresEngineTest.js
+
+# Integration tests (requires database)
+node test/postgresIntegrationTest.js
+
+# All tests
+npm test
 ```
 
-Both produce the same SQL, but `.includes()` is more natural when working with JavaScript arrays.
+## License
 
-### Security
+MIT License - see [LICENSE](LICENSE) file for details.
 
-All array values are automatically parameterized, preventing SQL injection:
+## Credits
 
-```javascript
-// Even with malicious input, this is safe
-const maliciousIds = [1, 2, "3'; DROP TABLE User;--"];
-const users = context.User
-    .where(u => $$.includes(u.id), maliciousIds)
-    .toList();
+Created by Alexander Rich
 
-// Safely generates: WHERE u.id IN (?, ?, ?)
-// Parameters: [1, 2, "3'; DROP TABLE User;--"]
-// The malicious string is treated as a literal value
-```
+## Support
 
-### Validation
+- GitHub Issues: [Report bugs or request features](https://github.com/Tailor/MasterRecord/issues)
+- npm: [masterrecord](https://www.npmjs.com/package/masterrecord)
 
-- **Empty arrays are rejected** with a clear error message
-- **Non-primitive values** (objects, functions) are rejected
-- **Type mismatches** are handled according to field type definitions
+---
 
-```javascript
-// ❌ This will throw an error
-const emptyArray = [];
-context.User.where(u => $$.includes(u.id), emptyArray).toList();
-// Error: Cannot create IN clause with empty array
-
-// ❌ This will throw an error
-const objectArray = [{id: 1}, {id: 2}];
-context.User.where(u => $$.includes(u.id), objectArray).toList();
-// Error: Invalid parameter type: object
-```
-
-
+**MasterRecord** - Code-first ORM for Node.js with multi-database support

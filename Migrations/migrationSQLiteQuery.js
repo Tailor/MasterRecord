@@ -180,7 +180,151 @@ class migrationSQLiteQuery {
         return `ALTER TABLE ${table.tableName} RENAME COLUMN ${table.name} TO ${table.newName}`
     }
 
-    
+    /**
+     * SEED DATA METHODS
+     * Support for inserting seed data during migrations
+     */
+
+    /**
+     * Insert seed data into a table
+     * @param {string} tableName - Name of the table
+     * @param {Object} data - Data object with column names as keys
+     * @returns {string} INSERT query
+     */
+    insertSeedData(tableName, data){
+        const columns = Object.keys(data).filter(k => !k.startsWith('__'));
+        const values = columns.map(col => {
+            const val = data[col];
+            if(val === null || val === undefined){
+                return 'NULL';
+            }
+            if(typeof val === 'boolean'){
+                return val ? '1' : '0';  // SQLite INTEGER for boolean
+            }
+            if(typeof val === 'number'){
+                return val;
+            }
+            // Escape strings
+            const escaped = String(val).replace(/'/g, "''");
+            return `'${escaped}'`;
+        });
+
+        const columnList = columns.join(', ');
+        const valueList = values.join(', ');
+
+        return `INSERT INTO ${tableName} (${columnList}) VALUES (${valueList})`;
+    }
+
+    /**
+     * Insert multiple seed records at once
+     * @param {string} tableName - Name of the table
+     * @param {Array} dataArray - Array of data objects
+     * @returns {string} Bulk INSERT query
+     */
+    bulkInsertSeedData(tableName, dataArray){
+        if(!dataArray || dataArray.length === 0){
+            return '';
+        }
+
+        const firstRow = dataArray[0];
+        const columns = Object.keys(firstRow).filter(k => !k.startsWith('__'));
+        const columnList = columns.join(', ');
+
+        const valueRows = dataArray.map(data => {
+            const values = columns.map(col => {
+                const val = data[col];
+                if(val === null || val === undefined){
+                    return 'NULL';
+                }
+                if(typeof val === 'boolean'){
+                    return val ? '1' : '0';
+                }
+                if(typeof val === 'number'){
+                    return val;
+                }
+                const escaped = String(val).replace(/'/g, "''");
+                return `'${escaped}'`;
+            });
+            return `(${values.join(', ')})`;
+        });
+
+        return `INSERT INTO ${tableName} (${columnList}) VALUES ${valueRows.join(', ')}`;
+    }
+
+    /**
+     * Update seed data (useful for down migrations)
+     * @param {string} tableName - Name of the table
+     * @param {Object} data - Data to update
+     * @param {Object} where - WHERE conditions
+     * @returns {string} UPDATE query
+     */
+    updateSeedData(tableName, data, where){
+        const setClause = Object.keys(data)
+            .filter(k => !k.startsWith('__'))
+            .map(col => {
+                const val = data[col];
+                if(val === null || val === undefined){
+                    return `${col} = NULL`;
+                }
+                if(typeof val === 'boolean'){
+                    return `${col} = ${val ? '1' : '0'}`;
+                }
+                if(typeof val === 'number'){
+                    return `${col} = ${val}`;
+                }
+                const escaped = String(val).replace(/'/g, "''");
+                return `${col} = '${escaped}'`;
+            })
+            .join(', ');
+
+        const whereClause = Object.keys(where)
+            .map(col => {
+                const val = where[col];
+                if(val === null || val === undefined){
+                    return `${col} IS NULL`;
+                }
+                if(typeof val === 'boolean'){
+                    return `${col} = ${val ? '1' : '0'}`;
+                }
+                if(typeof val === 'number'){
+                    return `${col} = ${val}`;
+                }
+                const escaped = String(val).replace(/'/g, "''");
+                return `${col} = '${escaped}'`;
+            })
+            .join(' AND ');
+
+        return `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`;
+    }
+
+    /**
+     * Delete seed data (useful for down migrations)
+     * @param {string} tableName - Name of the table
+     * @param {Object} where - WHERE conditions
+     * @returns {string} DELETE query
+     */
+    deleteSeedData(tableName, where){
+        const whereClause = Object.keys(where)
+            .map(col => {
+                const val = where[col];
+                if(val === null || val === undefined){
+                    return `${col} IS NULL`;
+                }
+                if(typeof val === 'boolean'){
+                    return `${col} = ${val ? '1' : '0'}`;
+                }
+                if(typeof val === 'number'){
+                    return `${col} = ${val}`;
+                }
+                const escaped = String(val).replace(/'/g, "''");
+                return `${col} = '${escaped}'`;
+            })
+            .join(' AND ');
+
+        return `DELETE FROM ${tableName} WHERE ${whereClause}`;
+    }
+
+
 }
 
 
