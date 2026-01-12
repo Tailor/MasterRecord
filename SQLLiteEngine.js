@@ -810,15 +810,12 @@ class SQLLiteEngine {
                     } catch(typeError) {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
-                    var bool;
-                    if(model.__entity[dirtyFields[column]].valueConversion){
-                        bool = tools.convertBooleanToNumber(boolValue);
-                    }
-                    else{
-                        bool = boolValue;
-                    }
+
+                    // Convert to database-specific format (e.g., boolean → 1/0 for SQLite)
+                    boolValue = $that._convertValueForDatabase(boolValue, model.__entity[dirtyFields[column]].type);
+
                     sqlParts.push(`[${dirtyFields[column]}] = ?`);
-                    params.push(bool);
+                    params.push(boolValue);
                 break;
                 case "time":
                     var timeValue = model[dirtyFields[column]];
@@ -921,7 +918,7 @@ class SQLLiteEngine {
                 throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected string, got ${actualType} with value ${JSON.stringify(value)}`);
 
             case "boolean":
-                // Coerce to boolean
+                // Coerce to boolean (then convert for database)
                 if(actualType === 'boolean'){
                     return value;
                 }
@@ -957,6 +954,27 @@ class SQLLiteEngine {
                 }
                 return value;
         }
+    }
+
+    /**
+     * Convert validated value to database-specific format
+     * Modern ORM pattern: transparent database-specific conversions
+     *
+     * @param {*} value - Already validated value
+     * @param {string} fieldType - Field type from entity definition
+     * @returns {*} Database-ready value
+     */
+    _convertValueForDatabase(value, fieldType){
+        if(value === undefined || value === null){
+            return value;
+        }
+
+        // SQLite boolean conversion: JavaScript boolean → INTEGER (1/0)
+        if(fieldType === 'boolean' && typeof value === 'boolean'){
+            return value ? 1 : 0;
+        }
+
+        return value;
     }
 
 
@@ -1054,6 +1072,9 @@ class SQLLiteEngine {
                     } catch(typeError) {
                         throw new Error(`INSERT failed: ${typeError.message}`);
                     }
+
+                    // Convert to database-specific format (e.g., boolean → 1/0 for SQLite)
+                    fieldColumn = $that._convertValueForDatabase(fieldColumn, modelEntity[column].type);
 
                     var relationship = modelEntity[column].relationshipType;
                     var actualColumn = relationship === "belongsTo" ? modelEntity[column].foreignKey : column;

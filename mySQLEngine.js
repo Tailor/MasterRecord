@@ -629,6 +629,7 @@ class SQLLiteEngine {
                     catch(transformError) { throw new Error(`UPDATE failed: ${transformError.message}`); }
                     try { boolValue = $that._validateAndCoerceFieldType(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]); }
                     catch(typeError) { throw new Error(`UPDATE failed: ${typeError.message}`); }
+                    boolValue = $that._convertValueForDatabase(boolValue, model.__entity[dirtyFields[column]].type);
                     var bool = model.__entity[dirtyFields[column]].valueConversion ? tools.convertBooleanToNumber(boolValue) : boolValue;
                     sqlParts.push(`${dirtyFields[column]} = ?`);
                     params.push(bool);
@@ -677,6 +678,8 @@ class SQLLiteEngine {
                     try { fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column); }
                     catch(typeError) { throw new Error(`INSERT failed: ${typeError.message}`); }
 
+                    fieldColumn = $that._convertValueForDatabase(fieldColumn, modelEntity[column].type);
+
                     var relationship = modelEntity[column].relationshipType;
                     var actualColumn = relationship === "belongsTo" ? modelEntity[column].foreignKey : column;
                     columnNames.push(actualColumn);
@@ -705,6 +708,27 @@ class SQLLiteEngine {
         } else {
             return -1;
         }
+    }
+
+    /**
+     * Convert validated value to database-specific format
+     * Modern ORM pattern: transparent database-specific conversions
+     *
+     * @param {*} value - Already validated value
+     * @param {string} fieldType - Field type from entity definition
+     * @returns {*} Database-ready value
+     */
+    _convertValueForDatabase(value, fieldType){
+        if(value === undefined || value === null){
+            return value;
+        }
+
+        // MySQL boolean conversion: JavaScript boolean → TINYINT (1/0)
+        if(fieldType === 'boolean' && typeof value === 'boolean'){
+            return value ? 1 : 0;
+        }
+
+        return value;
     }
 
     /**

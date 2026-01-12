@@ -456,10 +456,10 @@ class context {
                     for (var model in tracked) {
                         var currentModel = tracked[model];
                             switch(currentModel.__state) {
-                                case "insert": 
+                                case "insert":
                                     var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
                                     insert.init(currentModel);
-                                    
+
                                 break;
                                 case "modified":
                                     if(currentModel.__dirtyFields.length > 0){
@@ -485,12 +485,52 @@ class context {
                                 case "delete":
                                     var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
                                     deleteObject.init(currentModel);
-                                    
+
                                 break;
-                            } 
+                            }
                     }
                     this.__clearErrorHandler();
                     //this._SQLEngine.endTransaction();
+                }
+                if(this.isPostgres){
+                    // PostgreSQL async operations (no transaction control here)
+                    for (var model in tracked) {
+                        var currentModel = tracked[model];
+                            switch(currentModel.__state) {
+                                case "insert":
+                                    var insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                                    insert.init(currentModel);
+
+                                break;
+                                case "modified":
+                                    if(currentModel.__dirtyFields.length > 0){
+                                        var cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                                        // Use NEW SECURE parameterized version
+                                        var argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
+                                        if(argu !== -1 ){
+                                            var primaryKey  = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+                                            var sqlUpdate = {tableName: cleanCurrentModel.__entity.__name, arg: argu, primaryKey : primaryKey, primaryKeyValue : cleanCurrentModel[primaryKey] };
+                                            this._SQLEngine.update(sqlUpdate);
+                                        }
+                                        else{
+                                            console.log("Nothing has been tracked, modified, created or added");
+                                        }
+
+                                    }
+                                    else{
+                                        console.log("Tracked entity modified with no values being changed");
+                                    }
+
+                                // code block
+                                break;
+                                case "delete":
+                                    var deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                                    deleteObject.init(currentModel);
+
+                                break;
+                            }
+                    }
+                    this.__clearErrorHandler();
                 }
             }
             else{

@@ -43,10 +43,13 @@ class postgresEngine {
      * UPDATE with parameterized query
      */
     async update(query) {
-        if (query.arg && query.arg.query && query.arg.params) {
-            // Parameterized UPDATE
+        // Use parameterized query for security
+        // query.arg now contains {query, params} from _buildSQLEqualToParameterized
+        if (query.arg && typeof query.arg === 'object' && query.arg.query && query.arg.params) {
+            const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg.query} WHERE ${query.tableName}.${query.primaryKey} = $${query.arg.params.length + 1}`;
+            // Add primaryKeyValue to params array
             const params = [...query.arg.params, query.primaryKeyValue];
-            return await this._runWithParams(query.arg.query, params);
+            return await this._runWithParams(sqlQuery, params);
         } else {
             // Fallback for legacy support
             const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = $1`;
@@ -382,6 +385,152 @@ class postgresEngine {
     }
 
     /**
+     * Build SQL SET clause with parameterized queries for UPDATE (PostgreSQL)
+     * Returns {query: "column1 = $1, column2 = $2", params: [value1, value2]}
+     */
+    _buildSQLEqualToParameterized(model) {
+        const $that = this;
+        const sqlParts = [];
+        const params = [];
+        const dirtyFields = model.__dirtyFields;
+        let paramIndex = 1;
+
+        for (let column in dirtyFields) {
+            const fieldName = dirtyFields[column];
+            const entityDef = model.__entity[fieldName];
+
+            // Check for required fields
+            if (entityDef && entityDef.nullable === false && entityDef.primary !== true) {
+                let persistedValue;
+                switch (entityDef.type) {
+                    case "integer":
+                        persistedValue = model["_" + fieldName];
+                        break;
+                    case "belongsTo":
+                        persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
+                        break;
+                    default:
+                        persistedValue = model[fieldName];
+                }
+                const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+                if (persistedValue === undefined || persistedValue === null || isEmptyString) {
+                    throw new Error(`Entity ${model.__entity.__name} column ${fieldName} is a required Field`);
+                }
+            }
+
+            let type = model.__entity[dirtyFields[column]].type;
+            if (model.__entity[dirtyFields[column]].relationshipType === "belongsTo") {
+                type = "belongsTo";
+            }
+
+            switch (type) {
+                case "belongsTo":
+                    const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
+                    let fkValue = model[dirtyFields[column]];
+                    // Apply toDatabase transformer
+                    try {
+                        fkValue = FieldTransformer.toDatabase(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+                    try {
+                        fkValue = $that._validateAndCoerceFieldType(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    fkValue = $that._convertValueForDatabase(fkValue, model.__entity[dirtyFields[column]].type);
+                    const fore = `_${dirtyFields[column]}`;
+                    sqlParts.push(`${foreignKey} = $${paramIndex++}`);
+                    params.push(model[fore]);
+                    break;
+
+                case "integer":
+                    let intValue = model["_" + dirtyFields[column]];
+                    // Apply toDatabase transformer
+                    try {
+                        intValue = FieldTransformer.toDatabase(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+                    try {
+                        intValue = $that._validateAndCoerceFieldType(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    intValue = $that._convertValueForDatabase(intValue, model.__entity[dirtyFields[column]].type);
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(intValue);
+                    break;
+
+                case "string":
+                    let strValue = model[dirtyFields[column]];
+                    // Apply toDatabase transformer
+                    try {
+                        strValue = FieldTransformer.toDatabase(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+                    try {
+                        strValue = $that._validateAndCoerceFieldType(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    strValue = $that._convertValueForDatabase(strValue, model.__entity[dirtyFields[column]].type);
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(strValue);
+                    break;
+
+                case "boolean":
+                    let boolValue = model[dirtyFields[column]];
+                    // Apply toDatabase transformer
+                    try {
+                        boolValue = FieldTransformer.toDatabase(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+                    try {
+                        boolValue = $that._validateAndCoerceFieldType(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    boolValue = $that._convertValueForDatabase(boolValue, model.__entity[dirtyFields[column]].type);
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(boolValue);
+                    break;
+
+                case "time":
+                    let timeValue = model[dirtyFields[column]];
+                    // Apply toDatabase transformer
+                    try {
+                        timeValue = FieldTransformer.toDatabase(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
+                    try {
+                        timeValue = $that._validateAndCoerceFieldType(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (typeError) {
+                        throw new Error(`UPDATE failed: ${typeError.message}`);
+                    }
+                    timeValue = $that._convertValueForDatabase(timeValue, model.__entity[dirtyFields[column]].type);
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(timeValue);
+                    break;
+
+                case "hasMany":
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(model[dirtyFields[column]]);
+                    break;
+
+                default:
+                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    params.push(model[dirtyFields[column]]);
+            }
+        }
+
+        return sqlParts.length > 0 ? { query: sqlParts.join(', '), params: params } : -1;
+    }
+
+    /**
      * Build parameterized INSERT object for PostgreSQL
      * Uses $1, $2, $3... instead of ?
      */
@@ -409,6 +558,9 @@ class postgresEngine {
                     } catch (typeError) {
                         throw new Error(`INSERT failed: ${typeError.message}`);
                     }
+
+                    // Convert to database-specific format
+                    fieldColumn = $that._convertValueForDatabase(fieldColumn, modelEntity[column].type);
 
                     // Skip auto-increment primary keys
                     if (modelEntity[column].auto !== true) {
@@ -504,6 +656,28 @@ class postgresEngine {
             default:
                 return value;
         }
+    }
+
+    /**
+     * Convert validated value to database-specific format
+     * Modern ORM pattern: transparent database-specific conversions
+     *
+     * @param {*} value - Already validated value
+     * @param {string} fieldType - Field type from entity definition
+     * @returns {*} Database-ready value
+     */
+    _convertValueForDatabase(value, fieldType){
+        if(value === undefined || value === null){
+            return value;
+        }
+
+        // PostgreSQL accepts native booleans, but we convert to 1/0 for consistency
+        // The pg driver will convert to PostgreSQL TRUE/FALSE
+        if(fieldType === 'boolean' && typeof value === 'boolean'){
+            return value ? 1 : 0;
+        }
+
+        return value;
     }
 
     /**
