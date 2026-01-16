@@ -108,6 +108,13 @@ class migrationSQLiteQuery {
             return `ALTER TABLE ${table.tableName}
         ADD COLUMN ${def}`;
         }
+        // Fixed: Support direct column definitions (when table itself IS the column spec)
+        // This matches MySQL/PostgreSQL behavior for explicit column definitions
+        if(table.type && table.tableName && table.name){
+            const def = this.#columnMapping(table);
+            return `ALTER TABLE ${table.tableName}
+        ADD COLUMN ${def}`;
+        }
         // Fallback legacy behavior: raw name provided must include full definition if caller wants type/constraints
         return `ALTER TABLE ${table.tableName}
         ADD COLUMN ${table.name}`;

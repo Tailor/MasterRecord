@@ -167,7 +167,14 @@ class migrationPostgresQuery {
     }
 
     addColum(table){
-        // PostgreSQL add column syntax
+        // Fixed: Use columnMapping to generate full column definition with constraints
+        // This includes NOT NULL, DEFAULT, UNIQUE, PRIMARY KEY
+        if(table.type && table.tableName && table.name){
+            const def = this.#columnMapping(table);
+            return `ALTER TABLE "${table.tableName}"
+        ADD COLUMN ${def}`;
+        }
+        // Fallback for legacy behavior with just realDataType
         return `ALTER TABLE "${table.tableName}"
         ADD COLUMN "${table.name}" ${table.realDataType}`;
     }

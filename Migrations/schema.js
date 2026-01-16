@@ -24,11 +24,11 @@ class schema{
             if(this.context.isSQLite){
                 var sqliteQuery = require("./migrationSQLiteQuery");
                 var queryBuilder = new sqliteQuery();
-                var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
-                for (var key in queryObj) {
-                    var query = queryObj[key];
-                    this.context._execute(query);
-                }
+                // Fixed: Use addColum (consistent with MySQL/PostgreSQL) instead of alterColumn
+                // This allows explicit column definitions to work, not just CLI-generated migrations
+                table.realDataType = queryBuilder.typeManager(table.type);
+                var query = queryBuilder.addColum(table);
+                this.context._execute(query);
             }
 
             if(this.context.isMySQL){

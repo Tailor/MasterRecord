@@ -152,6 +152,14 @@ class migrationMySQLQuery {
 
 
     addColum(table){
+        // Fixed: Use columnMapping to generate full column definition with constraints
+        // This includes NOT NULL, DEFAULT, UNIQUE, PRIMARY KEY, AUTO_INCREMENT
+        if(table.type && table.tableName && table.name){
+            const def = this.#columnMapping(table);
+            return `ALTER TABLE \`${table.tableName}\`
+        ADD ${def}`;
+        }
+        // Fallback for legacy behavior with just realDataType
         return `ALTER TABLE \`${table.tableName}\`
         ADD \`${table.name}\` ${table.realDataType}`;
 
