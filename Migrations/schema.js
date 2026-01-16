@@ -26,7 +26,7 @@ class schema{
                 var queryBuilder = new sqliteQuery();
                 // Fixed: Use addColum (consistent with MySQL/PostgreSQL) instead of alterColumn
                 // This allows explicit column definitions to work, not just CLI-generated migrations
-                table.realDataType = queryBuilder.typeManager(table.type);
+                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 this.context._execute(query);
             }
@@ -34,7 +34,7 @@ class schema{
             if(this.context.isMySQL){
                 var sqlquery = require("./migrationMySQLQuery");
                 var queryBuilder = new sqlquery();
-                table.realDataType = queryBuilder.typeManager(table.type);
+                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 this.context._execute(query);
             }
@@ -42,7 +42,7 @@ class schema{
             if(this.context.isPostgres){
                 var postgresQuery = require("./migrationPostgresQuery");
                 var queryBuilder = new postgresQuery();
-                table.realDataType = queryBuilder.typeManager(table.type);
+                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 this.context._execute(query);
             }
