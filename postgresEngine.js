@@ -43,18 +43,16 @@ class postgresEngine {
      * UPDATE with parameterized query
      */
     async update(query) {
-        // Use parameterized query for security
-        // query.arg now contains {query, params} from _buildSQLEqualToParameterized
-        if (query.arg && typeof query.arg === 'object' && query.arg.query && query.arg.params) {
-            const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg.query} WHERE ${query.tableName}.${query.primaryKey} = $${query.arg.params.length + 1}`;
-            // Add primaryKeyValue to params array
-            const params = [...query.arg.params, query.primaryKeyValue];
-            return await this._runWithParams(sqlQuery, params);
-        } else {
-            // Fallback for legacy support
-            const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = $1`;
-            return await this._runWithParams(sqlQuery, [query.primaryKeyValue]);
+        // Security: ONLY use parameterized queries - no fallback to string concatenation
+        // query.arg must contain {query, params} from _buildSQLEqualToParameterized
+        if (!query.arg || typeof query.arg !== 'object' || !query.arg.query || !query.arg.params) {
+            throw new Error('UPDATE failed: Invalid parameterized query structure. Check entity definition.');
         }
+
+        const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg.query} WHERE ${query.tableName}.${query.primaryKey} = $${query.arg.params.length + 1}`;
+        // Add primaryKeyValue to params array
+        const params = [...query.arg.params, query.primaryKeyValue];
+        return await this._runWithParams(sqlQuery, params);
     }
 
     /**
@@ -88,6 +86,69 @@ class postgresEngine {
     }
 
     /**
+     * Batch insert using PostgreSQL's multi-value INSERT with RETURNING
+     */
+    async bulkInsert(entities) {
+        if (!entities || entities.length === 0) return [];
+
+        // Group by table name
+        const byTable = {};
+        for (const entity of entities) {
+            const tableName = entity.__entity.__name;
+            if (!byTable[tableName]) byTable[tableName] = [];
+            byTable[tableName].push(entity);
+        }
+
+        const results = [];
+        for (const tableName in byTable) {
+            const tableEntities = byTable[tableName];
+            const primaryKey = tools.getPrimaryKeyObject(tableEntities[0].__entity);
+
+            // Build multi-value INSERT
+            const first = this._buildSQLInsertObjectParameterized(tableEntities[0], tableEntities[0].__entity);
+            const allParams = [...first.params];
+            let paramIndex = first.params.length + 1;
+            const valueGroups = [`(${first.placeholders})`];
+
+            for (let i = 1; i < tableEntities.length; i++) {
+                const sqlObj = this._buildSQLInsertObjectParameterized(tableEntities[i], tableEntities[i].__entity);
+                // Renumber placeholders
+                const placeholders = sqlObj.params.map(() => `$${paramIndex++}`).join(', ');
+                valueGroups.push(`(${placeholders})`);
+                allParams.push(...sqlObj.params);
+            }
+
+            const query = `INSERT INTO "${first.tableName}" (${first.columns}) VALUES ${valueGroups.join(', ')} RETURNING ${primaryKey}`;
+            const result = await this._runWithParams(query, allParams);
+            results.push(result.rows);
+        }
+
+        return results;
+    }
+
+    /**
+     * Batch update (execute in sequence for PostgreSQL)
+     */
+    async bulkUpdate(updateQueries) {
+        if (!updateQueries || updateQueries.length === 0) return;
+
+        for (const query of updateQueries) {
+            await this.update(query);
+        }
+    }
+
+    /**
+     * Batch delete using WHERE IN
+     */
+    async bulkDelete(tableName, ids) {
+        if (!ids || ids.length === 0) return;
+
+        const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+        const query = `DELETE FROM "${tableName}" WHERE id IN (${placeholders})`;
+        return await this._runWithParams(query, ids);
+    }
+
+    /**
      * SELECT single record
      */
     async get(query, entity, context) {
@@ -102,8 +163,10 @@ class postgresEngine {
             }
 
             if (queryString.query) {
-                console.log("SQL:", queryString.query);
-                console.log("Params:", queryString.params || []);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", queryString.query);
+                    console.debug("[Params]", queryString.params || []);
+                }
                 const result = await this._runWithParams(queryString.query, queryString.params || []);
                 return result.rows[0] || null;
             }
@@ -135,8 +198,10 @@ class postgresEngine {
             }
 
             if (queryString.query) {
-                console.log("SQL:", queryString.query);
-                console.log("Params:", queryString.params);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", queryString.query);
+                    console.debug("[Params]", queryString.params);
+                }
                 const result = await this._runWithParams(queryString.query, queryString.params);
                 return result.rows[0] || null;
             }
@@ -160,8 +225,10 @@ class postgresEngine {
             }
 
             if (selectQuery.query) {
-                console.log("SQL:", selectQuery.query);
-                console.log("Params:", selectQuery.params || []);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", selectQuery.query);
+                    console.debug("[Params]", selectQuery.params || []);
+                }
                 const result = await this._runWithParams(selectQuery.query, selectQuery.params || []);
                 return result.rows || [];
             }
@@ -186,7 +253,7 @@ class postgresEngine {
         const entityStr = this.getEntity(entity.__name, query.entityMap);
         const params = query.parameters ? query.parameters.getParams() : [];
 
-        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)} ${this.buildOrderBy(query)}`;
+        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)} ${this.buildOrderBy(query, entity)}`;
 
         return {
             query: sql,
@@ -218,7 +285,6 @@ class postgresEngine {
      */
     buildAnd(query, mainQuery) {
         const andEntity = query.and;
-        let strQuery = "";
         const $that = this;
 
         if (andEntity) {
@@ -229,6 +295,7 @@ class postgresEngine {
                 const itemEntity = andEntity[entityPart];
                 for (let table in itemEntity[query.parentName]) {
                     const item = itemEntity[query.parentName][table];
+                    const expressions = [];
                     for (let exp in item.expressions) {
                         let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
                         let entityRef = entity;
@@ -247,33 +314,21 @@ class postgresEngine {
                             if (func === "!=") func = "IS NOT";
                         }
 
-                        if (strQuery === "") {
-                            if (arg === "null") {
-                                strQuery = `${entityRef}.${field} ${func} ${arg}`;
-                            } else {
-                                // Check if arg is a parameterized placeholder
-                                const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
-                                if (isPlaceholder || func === "IN") {
-                                    strQuery = `${entityRef}.${field} ${func} ${arg}`;
-                                } else {
-                                    strQuery = `${entityRef}.${field} ${func} '${arg}'`;
-                                }
-                            }
+                        if (arg === "null") {
+                            expressions.push(`${entityRef}.${field} ${func} ${arg}`);
                         } else {
-                            if (arg === "null") {
-                                strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                            // Check if arg is a parameterized placeholder
+                            const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                            if (isPlaceholder || func === "IN") {
+                                expressions.push(`${entityRef}.${field} ${func} ${arg}`);
                             } else {
-                                // Check if arg is a parameterized placeholder
-                                const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
-                                if (isPlaceholder || func === "IN") {
-                                    strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
-                                } else {
-                                    strQuery = `${strQuery} AND ${entityRef}.${field} ${func} '${arg}'`;
-                                }
+                                expressions.push(`${entityRef}.${field} ${func} '${arg}'`);
                             }
                         }
                     }
-                    andList.push(strQuery);
+                    if (expressions.length > 0) {
+                        andList.push(expressions.join(" AND "));
+                    }
                 }
             }
 
@@ -290,12 +345,12 @@ class postgresEngine {
      */
     buildWhere(query, mainQuery) {
         const whereEntity = query.where;
-        let strQuery = "";
         const $that = this;
 
         if (whereEntity) {
             const entity = this.getEntity(query.parentName, query.entityMap);
             const item = whereEntity[query.parentName].query;
+            const conditions = [];
 
             for (let exp in item.expressions) {
                 let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
@@ -315,39 +370,27 @@ class postgresEngine {
                     if (func === "!=") func = "IS NOT";
                 }
 
-                if (strQuery === "") {
-                    if (arg === "null") {
-                        strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
-                    } else if (func === "IN") {
-                        strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
-                    } else {
-                        // Check if arg is a parameterized placeholder ($1, $2, etc.)
-                        const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
-                        if (isPlaceholder) {
-                            strQuery = `WHERE ${entityRef}.${field} ${func} ${arg}`;
-                        } else {
-                            strQuery = `WHERE ${entityRef}.${field} ${func} '${arg}'`;
-                        }
-                    }
+                if (arg === "null") {
+                    conditions.push(`${entityRef}.${field} ${func} ${arg}`);
+                } else if (func === "IN") {
+                    conditions.push(`${entityRef}.${field} ${func} ${arg}`);
                 } else {
-                    if (arg === "null") {
-                        strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
-                    } else if (func === "IN") {
-                        strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
+                    // Check if arg is a parameterized placeholder ($1, $2, etc.)
+                    const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+                    if (isPlaceholder) {
+                        conditions.push(`${entityRef}.${field} ${func} ${arg}`);
                     } else {
-                        // Check if arg is a parameterized placeholder
-                        const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
-                        if (isPlaceholder) {
-                            strQuery = `${strQuery} AND ${entityRef}.${field} ${func} ${arg}`;
-                        } else {
-                            strQuery = `${strQuery} AND ${entityRef}.${field} ${func} '${arg}'`;
-                        }
+                        conditions.push(`${entityRef}.${field} ${func} '${arg}'`);
                     }
                 }
             }
+
+            if (conditions.length > 0) {
+                return `WHERE ${conditions.join(" AND ")}`;
+            }
         }
 
-        return strQuery;
+        return "";
     }
 
     buildLimit(query) {
@@ -364,11 +407,19 @@ class postgresEngine {
         return "";
     }
 
-    buildOrderBy(query) {
+    buildOrderBy(query, entity) {
         if (query.orderBy) {
+            // Security: Validate field exists in entity
+            if (entity && !entity[query.orderBy]) {
+                throw new Error(`Invalid ORDER BY field: ${query.orderBy} not found in ${entity.__name || 'entity'}`);
+            }
             const entityStr = this.getEntity(query.parentName, query.entityMap);
             return `ORDER BY ${entityStr}.${query.orderBy} ASC`;
         } else if (query.orderByDescending) {
+            // Security: Validate field exists in entity
+            if (entity && !entity[query.orderByDescending]) {
+                throw new Error(`Invalid ORDER BY field: ${query.orderByDescending} not found in ${entity.__name || 'entity'}`);
+            }
             const entityStr = this.getEntity(query.parentName, query.entityMap);
             return `ORDER BY ${entityStr}.${query.orderByDescending} DESC`;
         }
@@ -632,7 +683,10 @@ class postgresEngine {
 
             case 'boolean':
             case 'bool':
-                return Boolean(value);
+                if (typeof value === 'boolean') return value;
+                if (value === 1 || value === '1' || value === 'true' || value === true) return true;
+                if (value === 0 || value === '0' || value === 'false' || value === false) return false;
+                throw new Error(`Invalid boolean value: ${value}`);
 
             case 'date':
             case 'datetime':
@@ -685,8 +739,10 @@ class postgresEngine {
      */
     async _runWithParams(query, params = []) {
         try {
-            console.log("SQL:", query);
-            console.log("Params:", params);
+            if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                console.debug("[SQL]", query);
+                console.debug("[Params]", params);
+            }
 
             const client = await this.pool.connect();
             try {

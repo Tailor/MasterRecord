@@ -9,18 +9,16 @@ class SQLLiteEngine {
     unsupportedWords = ["order"]
 
     update(query){
-        // Use parameterized query for security
-        // query.arg now contains {sql, params} from _buildSQLEqualToParameterized
-        if(query.arg && typeof query.arg === 'object' && query.arg.sql && query.arg.params){
-            var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg.sql} WHERE ${query.tableName}.${query.primaryKey} = ?`;
-            // Add primaryKeyValue to params array
-            var params = [...query.arg.params, query.primaryKeyValue];
-            return this._runWithParams(sqlQuery, params);
-        } else {
-            // Fallback to old method (for backwards compatibility during migration)
-            var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg} WHERE ${query.tableName}.${query.primaryKey} = ?`;
-            return this._runWithParams(sqlQuery, [query.primaryKeyValue]);
+        // Security: ONLY use parameterized queries - no fallback to string concatenation
+        // query.arg must contain {sql, params} from _buildSQLEqualToParameterized
+        if(!query.arg || typeof query.arg !== 'object' || !query.arg.sql || !query.arg.params){
+            throw new Error('UPDATE failed: Invalid parameterized query structure. Check entity definition.');
         }
+
+        var sqlQuery = ` UPDATE ${query.tableName} SET ${query.arg.sql} WHERE ${query.tableName}.${query.primaryKey} = ?`;
+        // Add primaryKeyValue to params array
+        var params = [...query.arg.params, query.primaryKeyValue];
+        return this._runWithParams(sqlQuery, params);
     }
 
     delete(queryObject){
@@ -45,6 +43,66 @@ class SQLLiteEngine {
         return open;
     }
 
+    /**
+     * Batch insert using MySQL's multi-value INSERT
+     * INSERT INTO table (col1, col2) VALUES (?, ?), (?, ?), (?, ?)
+     */
+    bulkInsert(entities) {
+        if (!entities || entities.length === 0) return [];
+
+        // Group by table name
+        const byTable = {};
+        for (const entity of entities) {
+            const tableName = entity.__entity.__name;
+            if (!byTable[tableName]) byTable[tableName] = [];
+            byTable[tableName].push(entity);
+        }
+
+        const results = [];
+        for (const tableName in byTable) {
+            const tableEntities = byTable[tableName];
+
+            // Build multi-value INSERT
+            const first = this._buildSQLInsertObjectParameterized(tableEntities[0], tableEntities[0].__entity);
+            const allParams = [...first.params];
+            const valueGroups = [`(${first.placeholders})`];
+
+            for (let i = 1; i < tableEntities.length; i++) {
+                const sqlObj = this._buildSQLInsertObjectParameterized(tableEntities[i], tableEntities[i].__entity);
+                valueGroups.push(`(${sqlObj.placeholders})`);
+                allParams.push(...sqlObj.params);
+            }
+
+            const query = `INSERT INTO \`${first.tableName}\` (${first.columns}) VALUES ${valueGroups.join(', ')}`;
+            const result = this._runWithParams(query, allParams);
+            results.push(result);
+        }
+
+        return results;
+    }
+
+    /**
+     * Batch update (execute in sequence for MySQL)
+     */
+    bulkUpdate(updateQueries) {
+        if (!updateQueries || updateQueries.length === 0) return;
+
+        for (const query of updateQueries) {
+            this.update(query);
+        }
+    }
+
+    /**
+     * Batch delete using WHERE IN
+     */
+    bulkDelete(tableName, ids) {
+        if (!ids || ids.length === 0) return;
+
+        const placeholders = ids.map(() => '?').join(', ');
+        const query = `DELETE FROM \`${tableName}\` WHERE id IN (${placeholders})`;
+        return this._runWithParams(query, ids);
+    }
+
     get(query, entity, context){
         var queryString = {};
         try {
@@ -57,11 +115,15 @@ class SQLLiteEngine {
             if(queryString.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                console.log("SQL:", queryString.query);
-                console.log("Params:", params);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", queryString.query);
+                    console.debug("[Params]", params);
+                }
                 this.db.connect(this.db);
                 const result = this.db.query(queryString.query, params);
-                console.log("results:", result);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("results:", result);
+                }
                 return result;
             }
             return null;
@@ -85,8 +147,10 @@ class SQLLiteEngine {
                 var queryCount = queryObject.count(queryString.query)
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                console.log("SQL:", queryCount);
-                console.log("Params:", params);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", queryCount);
+                    console.debug("[Params]", params);
+                }
                 this.db.connect(this.db);
                 var queryReturn = this.db.query(queryCount, params);
                 return queryReturn[0]; // MySQL returns array, get first row
@@ -110,11 +174,15 @@ class SQLLiteEngine {
             if(queryString.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                console.log("SQL:", queryString.query);
-                console.log("Params:", params);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("[SQL]", queryString.query);
+                    console.debug("[Params]", params);
+                }
                 this.db.connect(this.db);
                 const result = this.db.query(queryString.query, params);
-                console.log("results:", result);
+                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                    console.debug("results:", result);
+                }
                 return result;
             }
             return null;
@@ -248,7 +316,7 @@ class SQLLiteEngine {
 	}
 
     buildInclude( query, entity, context){
-        var includeQuery =  "";
+        const includeQueries = [];
         for (let part in query.include) {
             var includeEntity = query.include[part];
             var $that = this;
@@ -258,7 +326,7 @@ class SQLLiteEngine {
                 if(includeEntity.selectFields){
                     currentContext = context[tools.capitalizeFirstLetter(includeEntity.selectFields[0])];
                 }
-                
+
                 if(parentObj){
                     parentObj.entityMap = query.entityMap;
                     var foreignKey = $that.getForeignKey(entity.__name, currentContext.__entity);
@@ -281,12 +349,12 @@ class SQLLiteEngine {
 
                     var innerQuery = $that.buildQuery(parentObj, currentContext.__entity, context);
 
-                    includeQuery += `LEFT JOIN (${innerQuery.query}) AS ${innerQuery.entity} ON ${ mainEntity}.${mainPrimaryKey} = ${innerQuery.entity}.${foreignKey} `;
+                    includeQueries.push(`LEFT JOIN (${innerQuery.query}) AS ${innerQuery.entity} ON ${ mainEntity}.${mainPrimaryKey} = ${innerQuery.entity}.${foreignKey}`);
 
                 }
             }
         }
-        return includeQuery;
+        return includeQueries.join(' ');
     }
 
     buildFrom(query, entity){
@@ -300,22 +368,21 @@ class SQLLiteEngine {
     buildSelect(query, entity){
         // this means that there is a select statement
         var select = "SELECT";
-        var arr = "";
+        const arr = [];
         var $that = this;
         if(query.select){
             for (const item in query.select.selectFields) {
-                arr += `${$that.getEntity(entity.__name, query.entityMap)}.${query.select.selectFields[item]}, `;
+                arr.push(`${$that.getEntity(entity.__name, query.entityMap)}.${query.select.selectFields[item]}`);
             };
-          
+
         }
         else{
             var entityList = this.getEntityList(entity);
             for (const item in entityList) {
-                arr += `${$that.getEntity(entity.__name, query.entityMap)}.${entityList[item]}, `;
+                arr.push(`${$that.getEntity(entity.__name, query.entityMap)}.${entityList[item]}`);
             };
         }
-        arr = arr.replace(/,\s*$/, "");
-        return `${select} ${arr} `;
+        return `${select} ${arr.join(', ')} `;
     }
 
     getForeignKey(name, entity){
@@ -785,27 +852,11 @@ class SQLLiteEngine {
                 throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected string, got ${actualType} with value ${JSON.stringify(value)}`);
 
             case "boolean":
-                // Coerce to boolean
-                if(actualType === 'boolean'){
-                    return value;
-                }
-                if(actualType === 'number'){
-                    console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting number ${value} to boolean ${value !== 0}`);
-                    return value !== 0;
-                }
-                if(actualType === 'string'){
-                    const lower = value.toLowerCase().trim();
-                    if(['true', '1', 'yes'].includes(lower)){
-                        console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting string "${value}" to boolean true`);
-                        return true;
-                    }
-                    if(['false', '0', 'no', ''].includes(lower)){
-                        console.warn(`⚠️  Field ${entityName}.${fieldName}: Auto-converting string "${value}" to boolean false`);
-                        return false;
-                    }
-                    throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected boolean, got string "${value}" which cannot be converted`);
-                }
-                throw new Error(`Type mismatch for ${entityName}.${fieldName}: Expected boolean, got ${actualType} with value ${JSON.stringify(value)}`);
+            case "bool":
+                if (typeof value === 'boolean') return value;
+                if (value === 1 || value === '1' || value === 'true' || value === true) return true;
+                if (value === 0 || value === '0' || value === 'false' || value === false) return false;
+                throw new Error(`Invalid boolean value: ${value}`);
 
             case "time":
                 // Time fields should be strings or timestamps
@@ -906,7 +957,9 @@ class SQLLiteEngine {
     }
 
     _execute(query){
-        console.log("SQL:", query);
+        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+            console.debug("[SQL]", query);
+        }
         try{
             this.db.connect(this.db);
             const res = this.db.query(query);
@@ -937,12 +990,13 @@ class SQLLiteEngine {
     }
 
      _run(query){
-        try{        
-            
-            console.log("SQL:", query);
+        try{
+            if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                console.debug("[SQL]", query);
+            }
             this.db.connect(this.db);
             const result = this.db.query(query);
-    
+
             return result;}
         catch (error) {
             console.error(error);
@@ -956,8 +1010,10 @@ class SQLLiteEngine {
      * Prevents SQL injection by using parameterized queries
      */
     _executeWithParams(query, params = []){
-        console.log("SQL:", query);
-        console.log("Params:", params);
+        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+            console.debug("[SQL]", query);
+            console.debug("[Params]", params);
+        }
         try{
             this.db.connect(this.db);
             const res = this.db.query(query, params);
@@ -993,8 +1049,10 @@ class SQLLiteEngine {
      */
     _runWithParams(query, params = []){
         try{
-            console.log("SQL:", query);
-            console.log("Params:", params);
+            if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+                console.debug("[SQL]", query);
+                console.debug("[Params]", params);
+            }
             this.db.connect(this.db);
             const result = this.db.query(query, params);
             return result;
