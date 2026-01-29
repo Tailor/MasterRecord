@@ -14,6 +14,7 @@ var path = require('path');
 const appRoot = require('app-root-path');
 const MySQLClient = require('masterrecord/mySQLSyncConnect');
 const PostgresClient = require('masterrecord/postgresSyncConnect');
+const QueryCache = require('./Cache/QueryCache');
 
 class context {
     _isModelValid = {
@@ -37,6 +38,13 @@ class context {
         this.__name = this.constructor.name;
         this._SQLEngine = "";
         this.__trackedEntitiesMap = new Map();  // Initialize Map for O(1) lookups
+
+        // Initialize query cache
+        this._queryCache = new QueryCache({
+            ttl: process.env.QUERY_CACHE_TTL || 5 * 60 * 1000,  // 5 min default
+            maxSize: process.env.QUERY_CACHE_SIZE || 1000,
+            enabled: process.env.QUERY_CACHE_ENABLED !== 'false'
+        });
     }
 
         /* 
@@ -549,6 +557,15 @@ class context {
             const tracked = this.__trackedEntities;
 
             if(tracked.length > 0){
+                // Collect affected tables for cache invalidation
+                const affectedTables = new Set();
+                for (let i = 0; i < tracked.length; i++) {
+                    const entity = tracked[i];
+                    if (entity.__entity && entity.__entity.__name) {
+                        affectedTables.add(entity.__entity.__name);
+                    }
+                }
+
                 // Handle transactions based on database type
                 if(this.isSQLite){
                     this._SQLEngine.startTransaction();
@@ -567,6 +584,11 @@ class context {
                     // PostgreSQL: Async operations, no transaction control here
                     this._processTrackedEntities(tracked);
                     this.__clearErrorHandler();
+                }
+
+                // Invalidate query cache for affected tables
+                for (const tableName of affectedTables) {
+                    this._queryCache.invalidateTable(tableName);
                 }
             }
             else{
@@ -591,6 +613,27 @@ class context {
 
     _execute(query){
         this._SQLEngine._execute(query);
+    }
+
+    /**
+     * Get query cache statistics
+     */
+    getCacheStats() {
+        return this._queryCache.getStats();
+    }
+
+    /**
+     * Clear query cache manually
+     */
+    clearQueryCache() {
+        this._queryCache.clear();
+    }
+
+    /**
+     * Enable/disable query caching
+     */
+    setQueryCacheEnabled(enabled) {
+        this._queryCache.enabled = enabled;
     }
 
     // __track(model){

@@ -10,6 +10,7 @@ class queryMethods{
         this.__entity = entity;
         this.__context = context;
         this.__queryObject = new queryScript();
+        this.__useCache = true;  // Enable caching by default
     }
 
     // build a single entity
@@ -84,6 +85,15 @@ class queryMethods{
         var str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'orderByDescending');
         this.__queryObject.orderByDesc(str, this.__entity.__name);
+        return this;
+    }
+
+    /**
+     * Disable query caching for this query
+     * Use for queries that should always hit database
+     */
+    noCache() {
+        this.__useCache = false;
         return this;
     }
 
@@ -321,47 +331,84 @@ class queryMethods{
             this.__queryObject.script.take = 1;
         }
 
+        // Generate cache key
+        const tableName = this.__entity.__name;
+        const queryString = JSON.stringify(this.__queryObject.script);
+        const params = this.__queryObject.script.parameters ? this.__queryObject.script.parameters.getParams() : [];
+        const cacheKey = this.__context._queryCache.generateKey(queryString, params, tableName);
+
+        // Check cache first (if enabled for this query)
+        if (this.__useCache) {
+            const cached = this.__context._queryCache.get(cacheKey);
+            if (cached) {
+                this.__reset();
+                return cached;
+            }
+        }
+
+        // Cache miss - execute query
+        var result = null;
         if(this.__context.isSQLite){
             var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            var sing = this.__singleEntityBuilder(entityValue);
-            this.__reset();
-            return sing;
+            result = this.__singleEntityBuilder(entityValue);
         }
-        
+
         if(this.__context.isMySQL){
             var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            var sing = this.__singleEntityBuilder(entityValue[0]);
-            this.__reset();
-            return sing;
+            result = this.__singleEntityBuilder(entityValue[0]);
         }
+
+        // Store in cache
+        if (this.__useCache && result) {
+            this.__context._queryCache.set(cacheKey, result, tableName);
+        }
+
+        this.__reset();
+        return result;
     }
 
     toList(){
-        if(this.__context.isSQLite){
-            if(this.__queryObject.script.entityMap.length === 0){
-                this.__queryObject.skipClause( this.__entity.__name);
-                if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
-                    this.__queryObject.script.take = 1000;
-                }
+        if(this.__queryObject.script.entityMap.length === 0){
+            this.__queryObject.skipClause( this.__entity.__name);
+            if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
+                this.__queryObject.script.take = 1000;
             }
+        }
+
+        // Generate cache key
+        const tableName = this.__entity.__name;
+        const queryString = JSON.stringify(this.__queryObject.script);
+        const params = this.__queryObject.script.parameters ? this.__queryObject.script.parameters.getParams() : [];
+        const cacheKey = this.__context._queryCache.generateKey(queryString, params, tableName);
+
+        // Check cache first (if enabled for this query)
+        if (this.__useCache) {
+            const cached = this.__context._queryCache.get(cacheKey);
+            if (cached) {
+                this.__reset();
+                return cached;
+            }
+        }
+
+        // Cache miss - execute query
+        var result = [];
+        if(this.__context.isSQLite){
             var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
-            var toLi = this.__multipleEntityBuilder(entityValue);
-            this.__reset();
-            return toLi;
+            result = this.__multipleEntityBuilder(entityValue);
         }
 
         if(this.__context.isMySQL){
-            if(this.__queryObject.script.entityMap.length === 0){
-                this.__queryObject.skipClause( this.__entity.__name);
-                if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
-                    this.__queryObject.script.take = 1000;
-                }
-            }
             var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
-            var toLi = this.__multipleEntityBuilder(entityValue);
-            this.__reset();
-            return toLi;
+            result = this.__multipleEntityBuilder(entityValue);
         }
+
+        // Store in cache
+        if (this.__useCache && result) {
+            this.__context._queryCache.set(cacheKey, result, tableName);
+        }
+
+        this.__reset();
+        return result;
     }
 
       // ------------------------------- FUNCTIONS THAT UPDATE SQL START FROM HERE  -----------------------------------------------------

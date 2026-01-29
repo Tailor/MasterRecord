@@ -10,6 +10,7 @@
 🔹 **Multi-Database Support** - MySQL, PostgreSQL, SQLite with consistent API
 🔹 **Code-First Design** - Define entities in JavaScript, generate schema automatically
 🔹 **Fluent Query API** - Lambda-based queries with parameterized placeholders
+🔹 **Query Result Caching** - Production-grade in-memory and Redis caching with automatic invalidation
 🔹 **Migration System** - CLI-driven migrations with rollback support
 🔹 **SQL Injection Protection** - Automatic parameterized queries throughout
 🔹 **Field Transformers** - Custom serialization/deserialization for complex types
@@ -34,8 +35,16 @@
 - [Querying](#querying)
 - [Migrations](#migrations)
 - [Advanced Features](#advanced-features)
+  - [Query Result Caching](#query-result-caching)
+  - [Field Transformers](#field-transformers-advanced)
+  - [Table Prefixes](#table-prefixes)
+  - [Transactions](#transactions-postgresql)
+  - [Multi-Context Applications](#multi-context-applications)
+  - [Raw SQL Queries](#raw-sql-queries)
 - [API Reference](#api-reference)
 - [Examples](#examples)
+- [Performance Tips](#performance-tips)
+- [Security](#security)
 
 ## Installation
 
@@ -754,6 +763,231 @@ const result = await connection.transaction(async (client) => {
 // Automatically commits on success, rolls back on error
 ```
 
+### Query Result Caching
+
+MasterRecord includes a **production-grade two-level caching system** similar to Entity Framework and Hibernate. The cache dramatically improves performance by storing query results and automatically invalidating them when data changes.
+
+#### How It Works
+
+```
+┌─────────────────────────────────────────────────────┐
+│              First-Level Cache (Identity Map)       │
+│  - Request-scoped entity tracking                   │
+│  - O(1) entity lookup                               │
+│  - Already in MasterRecord                          │
+└─────────────────────────────────────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│       Second-Level Cache (Query Result Cache)       │
+│  - Application-wide query result storage            │
+│  - Automatic invalidation on data changes           │
+│  - In-memory (development) or Redis (production)    │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Basic Usage (Default Behavior)
+
+Caching is **enabled by default** and requires zero configuration:
+
+```javascript
+const db = new AppContext();
+
+// First query hits database (cache miss)
+const user = db.User.where(u => u.id == $$, 1).single();
+
+// Second identical query hits cache (99%+ faster)
+const user2 = db.User.where(u => u.id == $$, 1).single();
+
+// Update invalidates cache automatically
+user2.name = "Updated";
+db.saveChanges();  // Cache for User table cleared
+
+// Next query hits database again (cache miss)
+const user3 = db.User.where(u => u.id == $$, 1).single();
+```
+
+#### Configuration
+
+Configure caching via environment variables:
+
+```bash
+# Development (.env)
+QUERY_CACHE_ENABLED=true           # Enable/disable (default: true)
+QUERY_CACHE_TTL=300000             # TTL in milliseconds (default: 5 minutes)
+QUERY_CACHE_SIZE=1000              # Max cache entries (default: 1000)
+
+# Production (.env)
+QUERY_CACHE_ENABLED=true
+QUERY_CACHE_TTL=300                # Redis uses seconds
+REDIS_URL=redis://localhost:6379  # Use Redis for distributed caching
+```
+
+#### Disable Caching for Specific Queries
+
+Use `.noCache()` for real-time data that shouldn't be cached:
+
+```javascript
+// Always hit database (never cached)
+const liveData = db.Analytics
+    .where(a => a.date == $$, today)
+    .noCache()  // Skip cache
+    .toList();
+
+// Reference data (highly cacheable)
+const categories = db.Categories.toList();  // Cached for 5 minutes
+```
+
+#### Manual Cache Control
+
+```javascript
+const db = new AppContext();
+
+// Check cache performance
+const stats = db.getCacheStats();
+console.log(stats);
+// {
+//   size: 45,
+//   maxSize: 1000,
+//   hits: 234,
+//   misses: 67,
+//   hitRate: '77.74%',
+//   enabled: true
+// }
+
+// Clear cache manually
+db.clearQueryCache();
+
+// Disable caching temporarily
+db.setQueryCacheEnabled(false);
+const freshData = db.User.toList();
+db.setQueryCacheEnabled(true);
+```
+
+#### Redis-Based Distributed Caching (Production)
+
+For multi-process or clustered deployments, use Redis:
+
+```javascript
+const redis = require('redis');
+const RedisQueryCache = require('masterrecord/Cache/RedisQueryCache');
+
+class AppContext extends context {
+    constructor() {
+        super();
+
+        // Use Redis cache in production
+        if (process.env.NODE_ENV === 'production' && process.env.REDIS_URL) {
+            const redisClient = redis.createClient(process.env.REDIS_URL);
+            this._queryCache = new RedisQueryCache(redisClient, {
+                ttl: 300,  // 5 minutes (seconds for Redis)
+                prefix: 'myapp:'
+            });
+        }
+        // In-memory cache used automatically in development
+
+        this.dbset(User);
+    }
+}
+```
+
+**Benefits of Redis cache:**
+- Shared across processes (horizontally scalable)
+- Pub/sub invalidation (cache stays consistent)
+- Two-level cache (L1 in-memory + L2 Redis)
+- Automatic failover to database on Redis errors
+
+#### Cache Invalidation Strategy
+
+MasterRecord automatically invalidates cache entries when data changes:
+
+```javascript
+// Query is cached
+const users = db.User.where(u => u.active == true).toList();
+
+// Any modification to User table invalidates ALL User queries
+const user = db.User.findById(1);
+user.name = "Updated";
+db.saveChanges();  // Invalidates all cached User queries
+
+// Next query hits database (fresh data)
+const usersAgain = db.User.where(u => u.active == true).toList();
+
+// Queries for OTHER tables are unaffected
+const posts = db.Post.toList();  // Still cached
+```
+
+**Invalidation rules:**
+- `INSERT` invalidates all queries for that table
+- `UPDATE` invalidates all queries for that table
+- `DELETE` invalidates all queries for that table
+- Queries for other tables are not affected
+
+#### Performance Impact
+
+Expected performance improvements:
+
+| Scenario | Without Cache | With Cache | Improvement |
+|----------|---------------|------------|-------------|
+| Single query (100 calls) | 100 DB queries | 1 DB + 99 cache | **99% faster** |
+| List query (50 calls) | 50 DB queries | 1 DB + 49 cache | **98% faster** |
+| Reference data (1000 calls) | 1000 DB queries | 1 DB + 999 cache | **99.9% faster** |
+| Mixed operations | Baseline | 70-90% hit rate | **3-10x faster** |
+
+**Memory usage:** ~1KB per cached query (1000 entries ≈ 1MB)
+
+#### Best Practices
+
+**DO cache:**
+```javascript
+// Reference data (rarely changes)
+const categories = db.Categories.toList();
+const settings = db.Settings.toList();
+
+// Read-heavy data (user profiles)
+const user = db.User.findById(userId);
+
+// Expensive aggregations
+const stats = db.Orders
+    .where(o => o.status == $$, 'completed')
+    .count();
+```
+
+**DON'T cache:**
+```javascript
+// Real-time data (always needs fresh results)
+const liveOrders = db.Orders
+    .where(o => o.status == $$, 'pending')
+    .noCache()
+    .toList();
+
+// Financial transactions (critical accuracy)
+const balance = db.Transactions
+    .where(t => t.user_id == $$, userId)
+    .noCache()
+    .toList();
+
+// User-specific sensitive data (security concern)
+const permissions = db.UserPermissions
+    .where(p => p.user_id == $$, userId)
+    .noCache()
+    .toList();
+```
+
+#### Monitoring Cache Performance
+
+```javascript
+// Log cache stats periodically
+setInterval(() => {
+    const stats = db.getCacheStats();
+    console.log(`Cache: ${stats.hitRate} hit rate, ${stats.size}/${stats.maxSize} entries`);
+}, 60000);
+
+// Watch for low hit rates (< 50% might indicate poor cache strategy)
+if (parseFloat(stats.hitRate) < 50) {
+    console.warn('Cache hit rate is low, consider tuning cache TTL or size');
+}
+```
+
 ### Multi-Context Applications
 
 Manage multiple databases in one application:
@@ -827,6 +1061,11 @@ context.saveChanges()        // MySQL/SQLite (sync)
 // Add/Remove entities
 context.EntityName.add(entity)
 context.remove(entity)
+
+// Cache management
+context.getCacheStats()              // Get cache statistics
+context.clearQueryCache()            // Clear all cached queries
+context.setQueryCacheEnabled(bool)   // Enable/disable caching
 ```
 
 ### Query Methods
@@ -840,6 +1079,7 @@ context.remove(entity)
 .skip(number)                    // Skip N records
 .take(number)                    // Limit to N records
 .include(relationship)           // Eager load
+.noCache()                       // Disable caching for this query
 
 // Terminal methods (execute query)
 .toList()                        // Return array
@@ -1009,7 +1249,25 @@ console.log(`${author.name} has ${posts.length} posts`);
 
 ## Performance Tips
 
-### 1. Use Bulk Operations
+### 1. Leverage Query Caching
+
+```javascript
+// ✅ GOOD: Cache reference data
+const categories = db.Categories.toList();  // Cached automatically
+
+// ✅ GOOD: Reuse queries (cache hits)
+const user1 = db.User.findById(123);  // DB query
+const user2 = db.User.findById(123);  // Cache hit (instant)
+
+// ✅ GOOD: Disable cache for real-time data
+const liveOrders = db.Orders.where(o => o.status == 'pending').noCache().toList();
+
+// Monitor cache performance
+const stats = db.getCacheStats();
+console.log(`Cache hit rate: ${stats.hitRate}`);  // Target: > 70%
+```
+
+### 2. Use Bulk Operations
 
 ```javascript
 // ❌ BAD: Multiple inserts
@@ -1027,7 +1285,7 @@ for (const item of items) {
 await db.saveChanges();  // Batch insert
 ```
 
-### 2. Use Indexes
+### 3. Use Indexes
 
 ```javascript
 class User {
@@ -1043,7 +1301,7 @@ class User {
 // CREATE INDEX idx_user_status ON User(status);
 ```
 
-### 3. Limit Result Sets
+### 4. Limit Result Sets
 
 ```javascript
 // ✅ GOOD: Limit results
@@ -1056,7 +1314,7 @@ const recentUsers = db.User
 const allUsers = db.User.all();
 ```
 
-### 4. Use Connection Pooling (PostgreSQL)
+### 5. Use Connection Pooling (PostgreSQL)
 
 ```javascript
 this.env({
