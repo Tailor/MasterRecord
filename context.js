@@ -45,7 +45,7 @@ class context {
         // Initialize shared query cache (only once across all instances)
         if (!context._sharedQueryCache) {
             context._sharedQueryCache = new QueryCache({
-                ttl: process.env.QUERY_CACHE_TTL || 5 * 60 * 1000,  // 5 min default
+                ttl: process.env.QUERY_CACHE_TTL || 5000,  // 5 seconds default (request-scoped)
                 maxSize: process.env.QUERY_CACHE_SIZE || 1000,
                 enabled: process.env.QUERY_CACHE_ENABLED !== 'false'
             });
@@ -642,6 +642,24 @@ class context {
      */
     setQueryCacheEnabled(enabled) {
         this._queryCache.enabled = enabled;
+    }
+
+    /**
+     * End request and clear query cache
+     * Call this at the end of each request (like Active Record)
+     *
+     * @example
+     * // In Express middleware
+     * app.use((req, res, next) => {
+     *     req.db = new AppContext();
+     *     res.on('finish', () => {
+     *         req.db.endRequest();  // Clears cache
+     *     });
+     *     next();
+     * });
+     */
+    endRequest() {
+        this.clearQueryCache();
     }
 
     // __track(model){

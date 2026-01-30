@@ -785,29 +785,51 @@ MasterRecord includes a **production-grade two-level caching system** similar to
 └─────────────────────────────────────────────────────┘
 ```
 
-#### Basic Usage (Default Behavior)
+#### Basic Usage (Opt-In, Request-Scoped)
 
-Caching is **enabled by default** and requires zero configuration. The cache is **shared across all context instances** to ensure consistency:
+Caching is **opt-in** and **request-scoped** like Active Record. Use `.cache()` to enable caching, and call `endRequest()` to clear:
 
 ```javascript
 const db = new AppContext();
 
-// First query hits database (cache miss)
-const user = db.User.where(u => u.id == $$, 1).single();
+// DEFAULT: No caching (always hits database)
+const user = db.User.findById(1);  // DB query
+const user2 = db.User.findById(1);  // DB query again (no cache)
 
-// Second identical query hits cache (99%+ faster)
-const user2 = db.User.where(u => u.id == $$, 1).single();
+// OPT-IN: Enable caching with .cache()
+const categories = db.Categories.cache().toList();  // DB query, cached
+const categories2 = db.Categories.cache().toList();  // Cache hit! (instant)
 
 // Update invalidates cache automatically
-user2.name = "Updated";
-db.saveChanges();  // Cache for User table cleared
+const cat = db.Categories.findById(1);
+cat.name = "Updated";
+db.saveChanges();  // Cache for Categories table cleared
 
-// Next query hits database again (cache miss)
-const user3 = db.User.where(u => u.id == $$, 1).single();
+// End request (clears cache - like Active Record)
+db.endRequest();  // Cache cleared for next request
+```
 
-// Cache is shared across all context instances
-const db2 = new AppContext();
-const user4 = db2.User.findById(1);  // Also uses shared cache
+**Web Application Pattern (Recommended):**
+```javascript
+// Express middleware - automatic request-scoped caching
+app.use((req, res, next) => {
+    req.db = new AppContext();
+
+    // Clear cache when response finishes (like Active Record)
+    res.on('finish', () => {
+        req.db.endRequest();  // Clears query cache
+    });
+
+    next();
+});
+
+// In your routes
+app.get('/categories', (req, res) => {
+    // Cache is fresh for this request
+    const categories = req.db.Categories.cache().toList();
+    res.json(categories);
+    // Cache auto-cleared after response
+});
 ```
 
 #### Configuration
@@ -816,29 +838,43 @@ Configure caching via environment variables:
 
 ```bash
 # Development (.env)
-QUERY_CACHE_ENABLED=true           # Enable/disable (default: true)
-QUERY_CACHE_TTL=300000             # TTL in milliseconds (default: 5 minutes)
+QUERY_CACHE_TTL=5000               # TTL in milliseconds (default: 5 seconds - request-scoped)
 QUERY_CACHE_SIZE=1000              # Max cache entries (default: 1000)
+QUERY_CACHE_ENABLED=true           # Enable/disable globally (default: true)
 
 # Production (.env)
-QUERY_CACHE_ENABLED=true
-QUERY_CACHE_TTL=300                # Redis uses seconds
+QUERY_CACHE_TTL=5                  # Redis uses seconds (5 seconds default)
 REDIS_URL=redis://localhost:6379  # Use Redis for distributed caching
 ```
 
-#### Disable Caching for Specific Queries
+**Note:**
+- Cache is **opt-in per query** using `.cache()`
+- Default TTL is **5 seconds** (request-scoped like Active Record)
+- Call `db.endRequest()` to clear cache manually (recommended in middleware)
+- Environment variables control the cache system globally
 
-Use `.noCache()` for real-time data that shouldn't be cached:
+#### Enable Caching for Specific Queries
+
+Use `.cache()` for frequently accessed, rarely changed data:
 
 ```javascript
-// Always hit database (never cached)
+// DEFAULT: Always hits database (safe)
 const liveData = db.Analytics
     .where(a => a.date == $$, today)
-    .noCache()  // Skip cache
-    .toList();
+    .toList();  // No caching (default)
 
-// Reference data (highly cacheable)
-const categories = db.Categories.toList();  // Cached for 5 minutes
+// OPT-IN: Cache reference data
+const categories = db.Categories.cache().toList();  // Cached for 5 minutes
+const settings = db.Settings.cache().toList();  // Cached
+const countries = db.Countries.cache().toList();  // Cached
+
+// When to use .cache():
+// ✅ Reference data (categories, settings, countries)
+// ✅ Rarely changing data (roles, permissions)
+// ✅ Expensive aggregations with stable results
+// ❌ User-specific data
+// ❌ Real-time data
+// ❌ Financial/critical data
 ```
 
 #### Manual Cache Control
@@ -905,19 +941,22 @@ class AppContext extends context {
 MasterRecord automatically invalidates cache entries when data changes:
 
 ```javascript
-// Query is cached
-const users = db.User.where(u => u.active == true).toList();
+// Query with caching enabled
+const categories = db.Categories.cache().toList();  // DB query, cached
 
-// Any modification to User table invalidates ALL User queries
-const user = db.User.findById(1);
-user.name = "Updated";
-db.saveChanges();  // Invalidates all cached User queries
+// Any modification to Categories table invalidates ALL cached Category queries
+const cat = db.Categories.findById(1);
+cat.name = "Updated";
+db.saveChanges();  // Invalidates all cached Categories queries
 
-// Next query hits database (fresh data)
-const usersAgain = db.User.where(u => u.active == true).toList();
+// Next cached query hits database (fresh data)
+const categoriesAgain = db.Categories.cache().toList();  // DB query (cache cleared)
 
-// Queries for OTHER tables are unaffected
-const posts = db.Post.toList();  // Still cached
+// Non-cached queries are unaffected (always fresh)
+const users = db.User.toList();  // No .cache() = always DB query
+
+// Queries for OTHER tables' caches are unaffected
+const settings = db.Settings.cache().toList();  // Still cached (different table)
 ```
 
 **Invalidation rules:**
@@ -941,40 +980,39 @@ Expected performance improvements:
 
 #### Best Practices
 
-**DO cache:**
+**DO use .cache():**
 ```javascript
 // Reference data (rarely changes)
-const categories = db.Categories.toList();
-const settings = db.Settings.toList();
+const categories = db.Categories.cache().toList();
+const settings = db.Settings.cache().toList();
+const countries = db.Countries.cache().toList();
 
-// Read-heavy data (user profiles)
-const user = db.User.findById(userId);
-
-// Expensive aggregations
-const stats = db.Orders
-    .where(o => o.status == $$, 'completed')
+// Expensive aggregations (stable results)
+const totalRevenue = db.Orders
+    .where(o => o.year == $$, 2024)
+    .cache()
     .count();
 ```
 
-**DON'T cache:**
+**DON'T use .cache():**
 ```javascript
-// Real-time data (always needs fresh results)
+// User-specific data (default is safe - no caching)
+const user = db.User.findById(userId);  // Always fresh
+
+// Real-time data (default is safe)
 const liveOrders = db.Orders
     .where(o => o.status == $$, 'pending')
-    .noCache()
-    .toList();
+    .toList();  // Always fresh
 
-// Financial transactions (critical accuracy)
+// Financial transactions (default is safe)
 const balance = db.Transactions
     .where(t => t.user_id == $$, userId)
-    .noCache()
-    .toList();
+    .toList();  // Always fresh
 
-// User-specific sensitive data (security concern)
+// User-specific sensitive data (default is safe)
 const permissions = db.UserPermissions
     .where(p => p.user_id == $$, userId)
-    .noCache()
-    .toList();
+    .toList();  // Always fresh
 ```
 
 #### Monitoring Cache Performance
@@ -992,27 +1030,66 @@ if (parseFloat(stats.hitRate) < 50) {
 }
 ```
 
+#### Request-Scoped Caching (Like Active Record)
+
+MasterRecord's caching is designed to work like Active Record - **cache within a request, clear after**:
+
+```javascript
+// Express middleware pattern (recommended)
+app.use((req, res, next) => {
+    req.db = new AppContext();
+
+    // Automatically clear cache when request ends
+    res.on('finish', () => {
+        req.db.endRequest();  // Like Active Record's cache clearing
+    });
+
+    next();
+});
+
+// In routes - cache is fresh per request
+app.get('/api/categories', (req, res) => {
+    // First call in this request - DB query
+    const categories = req.db.Categories.cache().toList();
+
+    // Second call in same request - cache hit
+    const categoriesAgain = req.db.Categories.cache().toList();
+
+    res.json(categories);
+    // After response, cache is automatically cleared
+});
+
+// Next request starts with empty cache (fresh)
+```
+
+**Why request-scoped?**
+- ✅ Like Active Record - familiar pattern
+- ✅ No stale data across requests
+- ✅ Cache only lives during request processing
+- ✅ Automatic cleanup
+
 #### Important: Shared Cache Behavior
 
-**The cache is shared across all context instances of the same class.** This ensures consistency:
+**The cache is shared across all context instances of the same class.** This ensures consistency within a request:
 
 ```javascript
 const db1 = new AppContext();
 const db2 = new AppContext();
 
-// Context 1: Cache data
-const user1 = db1.User.findById(1);  // DB query, cached
+// Context 1: Cache data with .cache()
+const categories1 = db1.Categories.cache().toList();  // DB query, cached
 
 // Context 2: Sees cached data
-const user2 = db2.User.findById(1);  // Cache hit!
+const categories2 = db2.Categories.cache().toList();  // Cache hit!
 
 // Context 2: Updates invalidate cache for BOTH contexts
-user2.name = "Updated";
+const cat = db2.Categories.findById(1);
+cat.name = "Updated";
 db2.saveChanges();  // Invalidates shared cache
 
 // Context 1: Sees fresh data
-const user3 = db1.User.findById(1);  // Cache miss, fresh data
-console.log(user3.name);  // "Updated"
+const categories3 = db1.Categories.cache().toList();  // Cache miss, fresh data
+console.log(categories3[0].name);  // "Updated"
 ```
 
 **Why shared cache?**
@@ -1098,6 +1175,7 @@ context.remove(entity)
 // Cache management
 context.getCacheStats()              // Get cache statistics
 context.clearQueryCache()            // Clear all cached queries
+context.endRequest()                 // End request and clear cache (like Active Record)
 context.setQueryCacheEnabled(bool)   // Enable/disable caching
 ```
 
@@ -1112,7 +1190,7 @@ context.setQueryCacheEnabled(bool)   // Enable/disable caching
 .skip(number)                    // Skip N records
 .take(number)                    // Limit to N records
 .include(relationship)           // Eager load
-.noCache()                       // Disable caching for this query
+.cache()                         // Enable caching for this query (opt-in)
 
 // Terminal methods (execute query)
 .toList()                        // Return array
@@ -1282,18 +1360,22 @@ console.log(`${author.name} has ${posts.length} posts`);
 
 ## Performance Tips
 
-### 1. Leverage Query Caching
+### 1. Use Query Caching Selectively
 
 ```javascript
-// ✅ GOOD: Cache reference data
-const categories = db.Categories.toList();  // Cached automatically
+// ✅ GOOD: Cache reference data that rarely changes
+const categories = db.Categories.cache().toList();  // Opt-in caching
+const settings = db.Settings.cache().toList();
 
-// ✅ GOOD: Reuse queries (cache hits)
-const user1 = db.User.findById(123);  // DB query
-const user2 = db.User.findById(123);  // Cache hit (instant)
+// ✅ GOOD: Queries without .cache() are always fresh (safe default)
+const user1 = db.User.findById(123);  // Always DB query (no cache)
+const user2 = db.User.findById(123);  // Always DB query (no cache)
 
-// ✅ GOOD: Disable cache for real-time data
-const liveOrders = db.Orders.where(o => o.status == 'pending').noCache().toList();
+// ✅ GOOD: Cache expensive queries with stable results
+const revenue2024 = db.Orders
+    .where(o => o.year == $$, 2024)
+    .cache()  // Historical data doesn't change
+    .count();
 
 // Monitor cache performance
 const stats = db.getCacheStats();

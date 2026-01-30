@@ -10,7 +10,7 @@ class queryMethods{
         this.__entity = entity;
         this.__context = context;
         this.__queryObject = new queryScript();
-        this.__useCache = true;  // Enable caching by default
+        this.__useCache = false;  // Disable caching by default (opt-in with .cache())
     }
 
     // build a single entity
@@ -89,11 +89,19 @@ class queryMethods{
     }
 
     /**
-     * Disable query caching for this query
-     * Use for queries that should always hit database
+     * Enable query result caching for this query
+     * Use for frequently accessed, rarely changed data (categories, settings, etc.)
+     * Cache is shared across all context instances and invalidated on saveChanges()
+     *
+     * @example
+     * // Cache this query result
+     * const categories = db.Categories.cache().toList();
+     *
+     * // Without .cache(), always hits database (default)
+     * const user = db.User.findById(1);
      */
-    noCache() {
-        this.__useCache = false;
+    cache() {
+        this.__useCache = true;
         return this;
     }
 
