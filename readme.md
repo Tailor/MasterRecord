@@ -787,7 +787,7 @@ MasterRecord includes a **production-grade two-level caching system** similar to
 
 #### Basic Usage (Default Behavior)
 
-Caching is **enabled by default** and requires zero configuration:
+Caching is **enabled by default** and requires zero configuration. The cache is **shared across all context instances** to ensure consistency:
 
 ```javascript
 const db = new AppContext();
@@ -804,6 +804,10 @@ db.saveChanges();  // Cache for User table cleared
 
 // Next query hits database again (cache miss)
 const user3 = db.User.where(u => u.id == $$, 1).single();
+
+// Cache is shared across all context instances
+const db2 = new AppContext();
+const user4 = db2.User.findById(1);  // Also uses shared cache
 ```
 
 #### Configuration
@@ -987,6 +991,35 @@ if (parseFloat(stats.hitRate) < 50) {
     console.warn('Cache hit rate is low, consider tuning cache TTL or size');
 }
 ```
+
+#### Important: Shared Cache Behavior
+
+**The cache is shared across all context instances of the same class.** This ensures consistency:
+
+```javascript
+const db1 = new AppContext();
+const db2 = new AppContext();
+
+// Context 1: Cache data
+const user1 = db1.User.findById(1);  // DB query, cached
+
+// Context 2: Sees cached data
+const user2 = db2.User.findById(1);  // Cache hit!
+
+// Context 2: Updates invalidate cache for BOTH contexts
+user2.name = "Updated";
+db2.saveChanges();  // Invalidates shared cache
+
+// Context 1: Sees fresh data
+const user3 = db1.User.findById(1);  // Cache miss, fresh data
+console.log(user3.name);  // "Updated"
+```
+
+**Why shared cache?**
+- ✅ Prevents stale data across multiple context instances
+- ✅ Ensures all parts of your application see consistent data
+- ✅ Reduces memory usage (one cache instead of many)
+- ✅ Correct behavior for single-database applications (most use cases)
 
 ### Multi-Context Applications
 

@@ -33,18 +33,26 @@ class context {
     isMySQL = false;
     isPostgres = false;
 
+    // Static shared cache - all context instances share the same cache
+    static _sharedQueryCache = null;
+
     constructor(){
         this. __environment = process.env.master;
         this.__name = this.constructor.name;
         this._SQLEngine = "";
         this.__trackedEntitiesMap = new Map();  // Initialize Map for O(1) lookups
 
-        // Initialize query cache
-        this._queryCache = new QueryCache({
-            ttl: process.env.QUERY_CACHE_TTL || 5 * 60 * 1000,  // 5 min default
-            maxSize: process.env.QUERY_CACHE_SIZE || 1000,
-            enabled: process.env.QUERY_CACHE_ENABLED !== 'false'
-        });
+        // Initialize shared query cache (only once across all instances)
+        if (!context._sharedQueryCache) {
+            context._sharedQueryCache = new QueryCache({
+                ttl: process.env.QUERY_CACHE_TTL || 5 * 60 * 1000,  // 5 min default
+                maxSize: process.env.QUERY_CACHE_SIZE || 1000,
+                enabled: process.env.QUERY_CACHE_ENABLED !== 'false'
+            });
+        }
+
+        // Reference the shared cache
+        this._queryCache = context._sharedQueryCache;
     }
 
         /* 
