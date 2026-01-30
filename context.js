@@ -662,6 +662,117 @@ class context {
         this.clearQueryCache();
     }
 
+    /**
+     * Attach a detached entity and mark it as modified
+     * Use this when an entity was loaded in a different context or passed from another service
+     * Similar to Entity Framework's context.Update() or Hibernate's session.merge()
+     *
+     * @param {object} entity - The detached entity to attach
+     * @param {object} changes - Optional: specific fields that were modified
+     *
+     * @example
+     * // Attach entity loaded elsewhere
+     * const task = await taskService.getTask(taskId);
+     * task.status = 'completed';
+     * db.attach(task);  // Mark as modified
+     * await db.saveChanges();
+     *
+     * @example
+     * // Attach with specific changed fields
+     * db.attach(task, { status: 'completed', updated_at: new Date() });
+     * await db.saveChanges();
+     */
+    attach(entity, changes = null) {
+        if (!entity) {
+            throw new Error('Cannot attach null or undefined entity');
+        }
+
+        // Ensure entity has required metadata
+        if (!entity.__entity || !entity.__entity.__name) {
+            throw new Error('Entity must have __entity metadata. Make sure it was loaded through MasterRecord.');
+        }
+
+        // Mark entity as modified
+        entity.__state = 'modified';
+
+        // If specific changes provided, mark only those fields as dirty
+        if (changes) {
+            entity.__dirtyFields = entity.__dirtyFields || [];
+            for (const fieldName in changes) {
+                entity[fieldName] = changes[fieldName];
+                if (!entity.__dirtyFields.includes(fieldName)) {
+                    entity.__dirtyFields.push(fieldName);
+                }
+            }
+        } else {
+            // Mark all fields as potentially modified
+            entity.__dirtyFields = entity.__dirtyFields || [];
+
+            // If no dirty fields yet, mark all non-metadata fields as dirty
+            if (entity.__dirtyFields.length === 0) {
+                for (const fieldName in entity.__entity) {
+                    if (!fieldName.startsWith('__') &&
+                        entity.__entity[fieldName].type !== 'hasMany' &&
+                        entity.__entity[fieldName].type !== 'hasOne') {
+                        entity.__dirtyFields.push(fieldName);
+                    }
+                }
+            }
+        }
+
+        // Ensure context reference
+        entity.__context = this;
+
+        // Track the entity
+        this.__track(entity);
+
+        return entity;
+    }
+
+    /**
+     * Attach multiple detached entities at once
+     *
+     * @example
+     * const tasks = await taskService.getTasks();
+     * tasks.forEach(t => t.status = 'completed');
+     * db.attachAll(tasks);
+     * await db.saveChanges();
+     */
+    attachAll(entities) {
+        if (!Array.isArray(entities)) {
+            throw new Error('attachAll() requires an array of entities');
+        }
+
+        return entities.map(entity => this.attach(entity));
+    }
+
+    /**
+     * Update a detached entity by primary key
+     * Loads the entity, applies changes, and marks as modified
+     * Similar to Sequelize's Model.update()
+     *
+     * @example
+     * // Update without loading first
+     * await db.update('Task', { id: taskId }, { status: 'completed' });
+     * await db.saveChanges();
+     */
+    async update(entityName, primaryKey, changes) {
+        // Get entity class
+        const EntityClass = this[entityName];
+        if (!EntityClass) {
+            throw new Error(`Entity ${entityName} not found in context`);
+        }
+
+        // Load entity
+        const entity = EntityClass.findById(primaryKey);
+        if (!entity) {
+            throw new Error(`${entityName} with id ${primaryKey} not found`);
+        }
+
+        // Apply changes and attach
+        return this.attach(entity, changes);
+    }
+
     // __track(model){
     //     this.__trackedEntities.push(model);
     //     return model;

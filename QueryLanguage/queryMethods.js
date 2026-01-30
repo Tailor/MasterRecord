@@ -465,6 +465,21 @@ class queryMethods{
             }
         }
 
+        // Add Active Record-style .save() method
+        newEntity.save = async function() {
+            if (!this.__context) {
+                throw new Error('Cannot save: entity is not attached to a context');
+            }
+
+            // Ensure entity is tracked
+            if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
+                this.__context.__track(this);
+            }
+
+            // Save all tracked changes in the context
+            return await this.__context.saveChanges();
+        };
+
         // Track the entity
         this.__context.__track(newEntity);
         return newEntity;

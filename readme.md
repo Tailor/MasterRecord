@@ -68,6 +68,30 @@ MasterRecord includes the following database drivers by default:
 - `sync-mysql2@^1.0.8` - MySQL
 - `better-sqlite3@^12.6.0` - SQLite
 
+## Two Patterns: Entity Framework & Active Record
+
+MasterRecord supports **both** ORM patterns - choose what feels natural:
+
+### Active Record Style (Recommended for beginners)
+```javascript
+// Entity saves itself
+const user = db.User.findById(1);
+user.name = 'Updated';
+await user.save();  // ✅ Entity knows how to save
+```
+
+### Entity Framework Style (Efficient for batch operations)
+```javascript
+// Context saves all tracked entities
+const user = db.User.findById(1);
+user.name = 'Updated';
+await db.saveChanges();  // ✅ Batch save
+```
+
+**Read more:** [Active Record Pattern Guide](./ACTIVE_RECORD_PATTERN.md) | [Detached Entities Guide](./DETACHED_ENTITIES_GUIDE.md)
+
+---
+
 ## Quick Start
 
 ### 1. Create a Context
@@ -137,21 +161,21 @@ masterrecord migrate AppContext
 const AppContext = require('./app/models/context');
 const db = new AppContext();
 
-// Create
+// Create (Active Record style)
 const user = db.User.new();
 user.name = 'Alice';
 user.email = 'alice@example.com';
 user.age = 28;
-await db.saveChanges();
+await user.save();  // Entity saves itself!
 
 // Read with parameterized query
 const alice = db.User
     .where(u => u.email == $$, 'alice@example.com')
     .single();
 
-// Update
+// Update (Active Record style)
 alice.age = 29;
-await db.saveChanges();
+await alice.save();  // Entity saves itself!
 
 // Delete
 db.remove(alice);
@@ -1172,6 +1196,12 @@ context.saveChanges()        // MySQL/SQLite (sync)
 context.EntityName.add(entity)
 context.remove(entity)
 
+// Attach detached entities (like Entity Framework's Update())
+context.attach(entity)                        // Attach and mark as modified
+context.attach(entity, { field: value })      // Attach with specific changes
+context.attachAll([entity1, entity2])         // Attach multiple entities
+await context.update('Entity', id, changes)   // Update by primary key
+
 // Cache management
 context.getCacheStats()              // Get cache statistics
 context.clearQueryCache()            // Clear all cached queries
@@ -1203,6 +1233,9 @@ context.setQueryCacheEnabled(bool)   // Enable/disable caching
 // Convenience methods
 .findById(id)                    // Find by primary key
 .new()                           // Create new entity instance
+
+// Entity methods (Active Record style)
+await entity.save()              // Save this entity (and all tracked changes)
 ```
 
 ### Migration Methods
