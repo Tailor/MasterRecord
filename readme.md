@@ -64,9 +64,9 @@ npm install masterrecord better-sqlite3  # SQLite
 ### Dependencies
 
 MasterRecord includes the following database drivers by default:
-- `pg@^8.16.3` - PostgreSQL
+- `pg@^8.17.2` - PostgreSQL
 - `sync-mysql2@^1.0.8` - MySQL
-- `better-sqlite3@^12.6.0` - SQLite
+- `better-sqlite3@^12.6.2` - SQLite
 
 ## Two Patterns: Entity Framework & Active Record
 
@@ -152,7 +152,7 @@ masterrecord enable-migrations AppContext
 masterrecord add-migration InitialCreate AppContext
 
 # Apply migrations
-masterrecord migrate AppContext
+masterrecord update-database AppContext
 ```
 
 ### 4. Query Your Data
@@ -421,7 +421,7 @@ console.log(loaded.tags);  // ['admin', 'moderator'] - JavaScript array!
 
 ```javascript
 // Find all
-const users = db.User.all();
+const users = db.User.toList();
 
 // Find by primary key
 const user = db.User.findById(123);
@@ -578,7 +578,7 @@ masterrecord enable-migrations AppContext
 masterrecord add-migration MigrationName AppContext
 
 # Apply migrations
-masterrecord migrate AppContext
+masterrecord update-database AppContext
 
 # List migrations
 masterrecord get-migrations AppContext
@@ -586,7 +586,7 @@ masterrecord get-migrations AppContext
 # Multi-context commands
 masterrecord enable-migrations-all          # Enable for all contexts
 masterrecord add-migration-all Init         # Create migration for all
-masterrecord migrate-all                    # Apply all pending migrations
+masterrecord update-database-all            # Apply all pending migrations
 ```
 
 ### Migration File Structure
@@ -859,7 +859,7 @@ Configure caching via environment variables:
 
 ```bash
 # Development (.env)
-QUERY_CACHE_TTL=5000               # TTL in milliseconds (default: 5 seconds - request-scoped)
+QUERY_CACHE_TTL=5000               # TTL in milliseconds (5000ms = 5 seconds - request-scoped)
 QUERY_CACHE_SIZE=1000              # Max cache entries (default: 1000)
 QUERY_CACHE_ENABLED=true           # Enable/disable globally (default: true)
 
@@ -885,7 +885,7 @@ const liveData = db.Analytics
     .toList();  // No caching (default)
 
 // OPT-IN: Cache reference data
-const categories = db.Categories.cache().toList();  // Cached for 5 minutes
+const categories = db.Categories.cache().toList();  // Cached for 5 seconds (default TTL)
 const settings = db.Settings.cache().toList();  // Cached
 const countries = db.Countries.cache().toList();  // Cached
 
@@ -1155,7 +1155,7 @@ await analyticsDb.saveChanges();
 
 ```bash
 # Migrate all contexts at once
-masterrecord migrate-all
+masterrecord update-database-all
 ```
 
 ### Raw SQL Queries
@@ -1163,6 +1163,10 @@ masterrecord migrate-all
 When you need full control:
 
 ```javascript
+// ⚠️ Advanced: Direct SQL execution (using internal API)
+// For complex queries not supported by the query builder
+// Note: This is an internal API. Prefer using the query builder when possible.
+
 // PostgreSQL parameterized query
 const users = await db._SQLEngine.exec(
     'SELECT * FROM "User" WHERE age > $1 AND status = $2',
@@ -1220,12 +1224,11 @@ context.setQueryCacheEnabled(bool)   // Enable/disable caching
 .cache()                         // Enable caching for this query (opt-in)
 
 // Terminal methods (execute query)
-.toList()                        // Return array
+.toList()                        // Return array of all records
 .single()                        // Return one or null
 .first()                         // Return first or null
 .count()                         // Return count
 .any()                           // Return boolean
-.all()                           // Return all records
 
 // Convenience methods
 .findById(id)                    // Find by primary key
@@ -1456,7 +1459,7 @@ const recentUsers = db.User
     .toList();
 
 // ❌ BAD: Load everything
-const allUsers = db.User.all();
+const allUsers = db.User.toList();
 ```
 
 ### 5. Use Connection Pooling (PostgreSQL)
@@ -1513,7 +1516,7 @@ function getUser(userId) {
 
 ```bash
 # Error: Cannot find module 'pg'
-npm install pg@^8.16.3
+npm install pg@^8.17.2
 
 # Error: Connection refused
 # Check PostgreSQL is running: sudo service postgresql status
@@ -1543,7 +1546,7 @@ GRANT ALL PRIVILEGES ON myapp.* TO 'user'@'localhost';
 # Cannot find context file
 # Ensure you're running from project root
 cd /path/to/project
-masterrecord migrate AppContext
+masterrecord update-database AppContext
 
 # No migrations found
 # Check migrations directory exists
@@ -1577,14 +1580,14 @@ user.name = null;  // Error if name is { nullable: false }
 
 | Component     | Version       | Notes                                    |
 |---------------|---------------|------------------------------------------|
-| MasterRecord  | 0.3.0+        | Current version with PostgreSQL support  |
+| MasterRecord  | 0.3.13        | Current version with PostgreSQL support  |
 | Node.js       | 14+           | Async/await support required             |
 | PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
 | MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |
 | SQLite        | 3.x           | Any recent version                       |
-| pg            | 8.16.3+       | PostgreSQL driver                        |
+| pg            | 8.17.2+       | PostgreSQL driver                        |
 | sync-mysql2   | 1.0.8+        | MySQL driver                            |
-| better-sqlite3| 12.6.0+       | SQLite driver                           |
+| better-sqlite3| 12.6.2+       | SQLite driver                           |
 
 ## Documentation
 
@@ -1630,11 +1633,11 @@ Created by Alexander Rich
 
 ---
 
-## Recent Improvements (v1.0.1)
+## Recent Improvements (v0.3.13)
 
 MasterRecord has been upgraded to meet **FAANG engineering standards** (Google/Meta/Amazon) with critical bug fixes and performance improvements:
 
-### Migration System Fixes (v1.0.1)
+### Migration System Fixes (v0.3.13)
 
 **Critical Path Bug Fixed:**
 - ✅ **Duplicate db/migrations Path Fixed** - Resolved bug where snapshot files were created with duplicate nested paths
@@ -1657,7 +1660,7 @@ MasterRecord has been upgraded to meet **FAANG engineering standards** (Google/M
   2. **From migration directory** - cd into the specific migration area and run CLI there:
      ```bash
      cd components/qa/db/migrations
-     npx masterrecord update-database ../../app/models/qaContext
+     masterrecord enable-migrations qacontext
      ```
 - MasterRecord uses intelligent path resolution to locate migrations regardless of where you run the command
 
@@ -1708,7 +1711,7 @@ try {
 }
 ```
 
-### Insert Manager Improvements (v1.0.1)
+### Insert Manager Improvements (v0.3.13)
 
 **Security Fixes:**
 - ✅ **SQL Injection Prevention** - Added identifier validation for dynamic query construction
@@ -1776,7 +1779,7 @@ if(entityProperty.type === "hasMany"){
 }
 // ... 50 lines later, nearly identical code for hasManyThrough
 
-// AFTER (v1.0.0) - secure and DRY:
+// AFTER (v0.3.13) - secure and DRY:
 if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY) {
     this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
 }
@@ -1815,12 +1818,13 @@ $ grep -A1 "catch.*{$" insertManager.js | grep "^\s*}$"
 
 **PostgreSQL users must now await `env()`:**
 ```javascript
-// OLD:
-const db = new AppContext();
-
-// NEW:
+// PostgreSQL (async/await REQUIRED):
 const db = new AppContext();
 await db.env('./config/environments');  // Must await for PostgreSQL
+
+// MySQL/SQLite (synchronous - no await):
+const db = new AppContext();
+db.env('./config/environments');  // No await needed for MySQL/SQLite
 ```
 
 **For more details, see:** `CHANGES.md`

@@ -35,6 +35,19 @@ function __getMigrationTimestamp(file){
   }
 }
 
+// Helper to cleanup context and exit
+async function __cleanupAndExit(contextInstance, exitCode = 0) {
+  try {
+    if (contextInstance && typeof contextInstance.close === 'function') {
+      await contextInstance.close();
+    }
+  } catch(err) {
+    console.error('Warning: Error during cleanup:', err.message);
+  } finally {
+    process.exit(exitCode);
+  }
+}
+
 
 const [,, ...args] = process.argv
 
@@ -52,39 +65,44 @@ program.option('-V', 'output the version');
   .command('enable-migrations <contextFileName>')
   .alias('em')
   .description('Enables the migration in your project by creating a configuration class called ContextSnapShot.json')
-  .action(function(contextFileName){
+  .action(async function(contextFileName){
+        try {
+          var migration = new Migration();
+          // location of folder where command is being executed..
+          var executedLocation = process.cwd();
+          // find context file from main folder location
+          var contextFile = migration.findContextFile(executedLocation, contextFileName);
+          if(!contextFile){
+            console.error(`\n❌ Error - Cannot read or find Context file '${contextFileName}.js'`);
+            console.error(`\nSearched in: ${executedLocation}`);
+            console.error(`\nMake sure your Context file exists and is named correctly.`);
+            process.exit(1);
+          }
+          var snap = {
+            file : contextFile,
+            executedLocation : executedLocation,
+            contextEntities : [],
+            contextFileName: contextFileName.toLowerCase()
+          }
 
-        var migration = new Migration();
-        // location of folder where command is being executed..
-        var executedLocation = process.cwd();
-        // find context file from main folder location
-        var contextFile = migration.findContextFile(executedLocation, contextFileName);
-        if(!contextFile){
-          console.error(`\n❌ Error - Cannot read or find Context file '${contextFileName}.js'`);
-          console.error(`\nSearched in: ${executedLocation}`);
-          console.error(`\nMake sure your Context file exists and is named correctly.`);
-          return;
+          migration.createSnapShot(snap);
+          console.log("✓ Migration enabled successfully")
+          process.exit(0);
+        } catch(err) {
+          console.error('Error:', err);
+          process.exit(1);
         }
-        var snap = {
-          file : contextFile,
-          executedLocation : executedLocation,
-          contextEntities : [],
-          contextFileName: contextFileName.toLowerCase()
-        }
-
-        migration.createSnapShot(snap);
-        console.log("✓ Migration enabled successfully")
-
   });
 
   program
   .command('ensure-database <contextFileName>')
   .alias('ed')
   .description('Ensure the target database exists for the given context (MySQL)')
-  .action(function(contextFileName){
+  .action(async function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
+    var contextInstance = null;
     try{
       var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
@@ -107,7 +125,7 @@ program.option('-V', 'output the version');
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
       if(!(migrationFiles && migrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
-        return;
+        process.exit(1);
       }
       var mFiles = migrationFiles.slice().sort(function(a, b){
         return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
@@ -125,33 +143,41 @@ program.option('-V', 'output the version');
           console.error(`\nStack trace:`);
           console.error(err.stack);
         }
-        return;
+        process.exit(1);
       }
 
       // Use the migration class (extends schema) so createdatabase is available
       var MigrationCtor = require(mFile);
       var mig = new MigrationCtor(ContextCtor);
+      contextInstance = mig._context || mig.context || null;
+
       if(typeof mig.createdatabase === 'function'){
         try{
           mig.createdatabase();
           console.log('✓ Database ensured');
+          await __cleanupAndExit(contextInstance, 0);
         }catch(err){
           console.error(`\n❌ Error creating database:`);
           console.error(err.message);
+          await __cleanupAndExit(contextInstance, 1);
         }
       } else if(typeof mig.createDatabase === 'function'){
         try{
           mig.createDatabase();
           console.log('✓ Database ensured');
+          await __cleanupAndExit(contextInstance, 0);
         }catch(err){
           console.error(`\n❌ Error creating database:`);
           console.error(err.message);
+          await __cleanupAndExit(contextInstance, 1);
         }
       } else {
         console.error('❌ Error - Migration class missing createDatabase method');
+        await __cleanupAndExit(contextInstance, 1);
       }
     }catch(e){
       console.log('Error - Cannot read or find file ', e);
+      await __cleanupAndExit(contextInstance, 1);
     }
   });
 
@@ -193,7 +219,7 @@ program.option('-V', 'output the version');
   program
   .command('add-migration <name> <contextFileName>')
   .alias('am')
-  .action(function(name, contextFileName){
+  .action(async function(name, contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
@@ -263,12 +289,28 @@ program.option('-V', 'output the version');
         }
         var migrationDate = Date.now();
         var outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
-        fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
-          if (err) return console.log("--- Error running cammand, re-run command add-migration ---- ", err);
+        fs.writeFile(outputFile, newEntity, 'utf8', async function (err) {
+          if (err) {
+            console.log("--- Error running cammand, re-run command add-migration ---- ", err);
+            if (contextInstance && typeof contextInstance.close === 'function') {
+              await contextInstance.close();
+            }
+            process.exit(1);
+          }
+          console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
+
+          // Close database connections to prevent hanging
+          if (contextInstance && typeof contextInstance.close === 'function') {
+            await contextInstance.close();
+          }
+          process.exit(0);
         });
-        console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
        }catch (e){
          console.log("Error - Cannot read or find file ", e);
+         if (contextInstance && typeof contextInstance.close === 'function') {
+           await contextInstance.close();
+         }
+         process.exit(1);
       }
   });
 
@@ -276,10 +318,11 @@ program.option('-V', 'output the version');
   .command('update-database <contextFileName>')
   .alias('ud')
   .description('Apply pending migrations to database - up method call')
-  .action(function(contextFileName){
+  .action(async function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
+    var contextInstance = null;
       try{
          console.log(`\n🔍 Searching for context snapshot '${contextFileName}_contextSnapShot.json'...`);
          // find context snapshot (cwd-based glob)
@@ -291,7 +334,7 @@ program.option('-V', 'output the version');
            console.error(`\nSearched for: ${contextFileName}_contextSnapShot.json`);
            console.error(`Searched in: ${executedLocation}`);
            console.error(`\n💡 Solution: Run 'masterrecord enable-migrations ${contextFileName}' first`);
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          console.log(`✓ Found snapshot: ${file}`);
@@ -303,7 +346,7 @@ program.option('-V', 'output the version');
            console.error(`\n❌ Error - Cannot load context snapshot`);
            console.error(`\nFile: ${file}`);
            console.error(`Details: ${err.message}`);
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          const snapDir = path.dirname(file);
@@ -318,7 +361,7 @@ program.option('-V', 'output the version');
            console.error(`\n❌ Error - No migration files found`);
            console.error(`\nSearched in: ${migBase}`);
            console.error(`\n💡 Solution: Run 'masterrecord add-migration Init ${contextFileName}' to create your first migration`);
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          // sort by timestamp prefix or file mtime as fallback
@@ -343,13 +386,12 @@ program.option('-V', 'output the version');
              console.error(`\nStack trace:`);
              console.error(err.stack);
            }
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          console.log(`✓ Context file loaded successfully`);
          console.log(`\n🔍 Instantiating Context (this will create the database if it doesn't exist)...`);
 
-         var contextInstance;
          try{
            contextInstance = new ContextCtor();
          }catch(err){
@@ -367,7 +409,7 @@ program.option('-V', 'output the version');
            }
            console.error(`\n💡 Check your environment config file (e.g., config/environments/env.development.json)`);
            console.error(`💡 Make sure you're running: master=development masterrecord update-database ${contextFileName}`);
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          console.log(`✓ Context instantiated successfully`);
@@ -414,7 +456,7 @@ program.option('-V', 'output the version');
              console.error(`\nStack trace:`);
              console.error(err.stack);
            }
-           return;
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          console.log(`\n💾 Updating snapshot...`);
@@ -441,6 +483,7 @@ program.option('-V', 'output the version');
            }
          }
 
+         await __cleanupAndExit(contextInstance, 0);
         }catch (e){
           console.error(`\n❌ Unexpected error during update-database`);
           console.error(`\nDetails: ${e.message}`);
@@ -448,6 +491,7 @@ program.option('-V', 'output the version');
             console.error(`\nStack trace:`);
             console.error(e.stack);
           }
+          await __cleanupAndExit(contextInstance, 1);
         }
   });
 
@@ -456,10 +500,11 @@ program.option('-V', 'output the version');
   .command('update-database-down <contextFileName>')
   .alias('udd')
   .description('Run the latest migration down method for the given context')
-  .action(function(contextFileName){
+  .action(async function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
+    var contextInstance = null;
     try{
        var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
@@ -541,9 +586,11 @@ program.option('-V', 'output the version');
        }
        migration.createSnapShot(snap);
        console.log("✓ Database rolled back successfully");
+       await __cleanupAndExit(contextInstance, 0);
 
     }catch (e){
       console.log("Error - Cannot read or find file ", e);
+      await __cleanupAndExit(contextInstance, 1);
     }
   });
 
@@ -552,10 +599,11 @@ program.option('-V', 'output the version');
   .command('update-database-restart <contextFileName>')
   .alias('udr')
   .description('Apply pending migrations to database - up method call')
-  .action(function(contextFileName){
+  .action(async function(contextFileName){
     var executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
     var migration = new Migration();
+    var contextInstance = null;
       try{
          // find context snapshot (cwd-based glob)
          var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
@@ -629,13 +677,15 @@ program.option('-V', 'output the version');
                contextEntities : cleanEntities,
                contextFileName: contextFileName
              }
- 
+
          migration.createSnapShot(snap);
          console.log("✓ Database restarted and updated successfully");
- 
+         await __cleanupAndExit(contextInstance, 0);
+
         }
         catch (e){
           console.log("Error - Cannot read or find file ", e);
+          await __cleanupAndExit(contextInstance, 1);
         }
   });
 
@@ -677,10 +727,11 @@ program.option('-V', 'output the version');
   .command('update-database-target <migrationFileName>')
   .alias('udt')
   .description('Apply pending migrations to database - down method call')
-  .action(function(migrationFileName){
+  .action(async function(migrationFileName){
   // this will call all the down methods until it gets to the one your looking for. First it needs to validate that there is such a file.
     var executedLocation = process.cwd();
     var migration = new Migration();
+    var contextInstance = null;
     try{
       // Accept either a bare filename or a path; normalize to basename
       var targetName = path.basename(migrationFileName);
@@ -785,9 +836,11 @@ program.option('-V', 'output the version');
       }
       migration.createSnapShot(snap);
       console.log("✓ Database rolled back to target migration successfully");
+      await __cleanupAndExit(contextInstance, 0);
 
     }catch (e){
       console.log("Error - Cannot read or find file ", e);
+      await __cleanupAndExit(contextInstance, 1);
     }
   });
 
@@ -796,8 +849,9 @@ program.option('-V', 'output the version');
   .command('add-migration-all <name>')
   .alias('ama')
   .description('Create a migration with the given name for all detected contexts')
-  .action(function(name){
+  .action(async function(name){
     var executedLocation = process.cwd();
+    var contextInstances = [];
     try{
       var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
@@ -825,6 +879,7 @@ program.option('-V', 'output the version');
           let contextInstance;
           try{
             contextInstance = new ContextCtor();
+            contextInstances.push(contextInstance);
           }catch(err){
             console.error(`⚠️  Skipping ${path.basename(contextAbs)}: failed to construct Context`);
             console.error(`   Details: ${err.message}`);
@@ -854,8 +909,22 @@ program.option('-V', 'output the version');
       if(created === 0){
         console.log('No migrations created.');
       }
+      // Cleanup all contexts
+      for(const ctx of contextInstances) {
+        if (ctx && typeof ctx.close === 'function') {
+          await ctx.close();
+        }
+      }
+      process.exit(0);
     }catch(e){
       console.log('Error - Cannot create migrations for all contexts ', e);
+      // Cleanup all contexts
+      for(const ctx of contextInstances) {
+        if (ctx && typeof ctx.close === 'function') {
+          await ctx.close();
+        }
+      }
+      process.exit(1);
     }
   });
 
@@ -863,8 +932,9 @@ program.option('-V', 'output the version');
   .command('update-database-all')
   .alias('uda')
   .description('Scan the project for *Context.js files and run update-database on each')
-  .action(function(){
+  .action(async function(){
     var executedLocation = process.cwd();
+    var contextInstances = [];
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
       var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
@@ -924,6 +994,7 @@ program.option('-V', 'output the version');
           var contextInstance;
           try{
             contextInstance = new ContextCtor();
+            contextInstances.push(contextInstance);
           }catch(err){
             console.error(`⚠️  Skipping ${entry.ctxName}: failed to construct Context`);
             console.error(`   Details: ${err.message}`);
@@ -947,8 +1018,22 @@ program.option('-V', 'output the version');
           console.log('Error updating context: ', errCtx);
         }
       }
+      // Cleanup all contexts
+      for(const ctx of contextInstances) {
+        if (ctx && typeof ctx.close === 'function') {
+          await ctx.close();
+        }
+      }
+      process.exit(0);
     }catch(e){
       console.log('Error - Cannot read or find file ', e);
+      // Cleanup all contexts
+      for(const ctx of contextInstances) {
+        if (ctx && typeof ctx.close === 'function') {
+          await ctx.close();
+        }
+      }
+      process.exit(1);
     }
   });
 

@@ -1278,6 +1278,32 @@ class context {
     }
 
     /**
+     * Close database connections and cleanup resources
+     *
+     * Call this when shutting down your application or after CLI operations
+     * to properly close database connection pools and prevent hanging processes.
+     *
+     * @returns {Promise<void>|void} Promise for async databases (PostgreSQL), void for sync databases
+     *
+     * @example
+     * // PostgreSQL (async)
+     * const db = new AppContext();
+     * // ... do work ...
+     * await db.close();  // Close connection pool
+     *
+     * @example
+     * // MySQL/SQLite (sync)
+     * const db = new AppContext();
+     * // ... do work ...
+     * db.close();  // Close connections
+     */
+    async close() {
+        if (this._SQLEngine && typeof this._SQLEngine.close === 'function') {
+            return await this._SQLEngine.close();
+        }
+    }
+
+    /**
      * Attach a detached entity and mark it as modified
      *
      * Use this when an entity was loaded in a different context or passed from another service.
