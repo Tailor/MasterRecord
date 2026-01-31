@@ -58,15 +58,15 @@ program.option('-V', 'output the version');
         // location of folder where command is being executed..
         var executedLocation = process.cwd();
         // find context file from main folder location
-        var contextInstance = migration.findContext(executedLocation, contextFileName);
-        if(!contextInstance){
+        var contextFile = migration.findContextFile(executedLocation, contextFileName);
+        if(!contextFile){
           console.error(`\n❌ Error - Cannot read or find Context file '${contextFileName}.js'`);
           console.error(`\nSearched in: ${executedLocation}`);
           console.error(`\nMake sure your Context file exists and is named correctly.`);
           return;
         }
         var snap = {
-          file : contextInstance.fileLocation,
+          file : contextFile,
           executedLocation : executedLocation,
           contextEntities : [],
           contextFileName: contextFileName.toLowerCase()

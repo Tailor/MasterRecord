@@ -166,6 +166,16 @@ class Migrations{
 
 
 
+    findContextFile(executedLocation, contextFileName){
+        var files = globSearch.sync(`**/*${contextFileName}.js`, {
+            cwd: executedLocation,
+            dot: true,
+            windowsPathsNoEscape: true
+        });
+        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+        return file;
+    }
+
     findContext(executedLocation, contextFileName){
         var files = globSearch.sync(`**/*${contextFileName}.js`, {
             cwd: executedLocation,

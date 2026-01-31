@@ -1640,9 +1640,26 @@ MasterRecord has been upgraded to meet **FAANG engineering standards** (Google/M
 - ✅ **Duplicate db/migrations Path Fixed** - Resolved bug where snapshot files were created with duplicate nested paths
   - **Before**: `/components/qa/app/models/db/migrations/db/migrations/qacontext_contextSnapShot.json` ❌
   - **After**: `/components/qa/app/models/db/migrations/qacontext_contextSnapShot.json` ✅
+  - **Root Cause**: Incorrect glob API usage in `findContext` method (migrations.js:169-181)
+  - **Fix**: Changed to use relative pattern + options object + `path.resolve()` for guaranteed absolute paths
 - ✅ **Smart Path Resolution** - Added `pathUtils.js` with intelligent path detection
 - ✅ **Prevents update-database-restart Failures** - Snapshot files now always created in the correct location
 - ✅ **Cross-Platform Support** - Works correctly on Windows and Unix-based systems
+
+**Running Migrations - Important Notes:**
+- **Don't move migration files** - Leave them in their generated location (e.g., `/components/qa/db/migrations/`)
+- **Two ways to run migrations:**
+  1. **From anywhere** - Run MasterRecord CLI from your project root, it will find migrations automatically:
+     ```bash
+     npx masterrecord enable-migrations components/qa/app/models/qaContext
+     npx masterrecord update-database components/qa/app/models/qaContext
+     ```
+  2. **From migration directory** - cd into the specific migration area and run CLI there:
+     ```bash
+     cd components/qa/db/migrations
+     npx masterrecord update-database ../../app/models/qaContext
+     ```
+- MasterRecord uses intelligent path resolution to locate migrations regardless of where you run the command
 
 ### Core Improvements (context.js)
 
