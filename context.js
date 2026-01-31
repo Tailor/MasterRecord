@@ -988,6 +988,9 @@ class context {
                 case 'delete':
                     toDelete.push(currentModel);
                     break;
+                case 'track':
+                    // Entity is tracked but unmodified - skip during saveChanges
+                    break;
                 default:
                     console.warn(`[Context] Unknown entity state: ${currentModel.__state}`);
             }
