@@ -71,8 +71,8 @@ class InsertManager {
      * @param {object} currentModel - Tracked entity to insert
      * @throws {InsertManagerError} If validation fails
      */
-    init(currentModel) {
-        this.runQueries(currentModel);
+    async init(currentModel) {
+        await this.runQueries(currentModel);
     }
 
     /**
@@ -81,7 +81,7 @@ class InsertManager {
      * @param {object} currentModel - Tracked entity to insert
      * @throws {InsertManagerError} If validation fails or relationships are invalid
      */
-    runQueries(currentModel) {
+    async runQueries(currentModel) {
         // Reset validation state for this operation to avoid stale errors
         if (this._errorModel) {
             this._errorModel.isValid = true;
@@ -94,8 +94,8 @@ class InsertManager {
         if (this._errorModel.isValid) {
             const modelEntity = currentModel.__entity;
             // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
-            currentModel = this.belongsToInsert(currentModel, modelEntity);
-            const SQL = this._SQLEngine.insert(cleanCurrentModel);
+            currentModel = await this.belongsToInsert(currentModel, modelEntity);
+            const SQL = await this._SQLEngine.insert(cleanCurrentModel);
             const primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
 
             // use returned insert id directly; avoid redundant post-insert SELECT
@@ -302,7 +302,7 @@ class InsertManager {
      * @param {object} modelEntity - Entity definition
      * @returns {object} Updated model with foreign keys populated
      */
-    belongsToInsert(currentModel, modelEntity) {
+    async belongsToInsert(currentModel, modelEntity) {
         for (const entity of Object.keys(modelEntity)) {
             if (modelEntity[entity].relationshipType === RELATIONSHIP_TYPES.BELONGS_TO) {
                 const foreignKey = modelEntity[entity].foreignKey === undefined
@@ -315,7 +315,7 @@ class InsertManager {
                     newPropertyModel.__entity = tools.getEntity(entity, this._allEntities);
                     const propertyCleanCurrentModel = tools.clearAllProto(newPropertyModel);
                     this.validateEntity(propertyCleanCurrentModel, newPropertyModel, newPropertyModel.__entity);
-                    const propertySQL = this._SQLEngine.insert(newPropertyModel);
+                    const propertySQL = await this._SQLEngine.insert(newPropertyModel);
                     currentModel[foreignKey] = propertySQL.id;
                 }
             }

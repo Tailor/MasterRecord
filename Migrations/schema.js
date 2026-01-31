@@ -295,32 +295,33 @@ class schema{
     }
 
     // EnsureCreated equivalent for MySQL: create DB if missing
-    createDatabase(){
+    async createDatabase(){
         try{
             if(!(this.context && this.context.isMySQL)){ return; }
-            const MySQLClient = require('masterrecord/mySQLSyncConnect');
+            const MySQLAsyncClient = require('masterrecord/mySQLAsyncConnect');
             const client = this.context.db; // main client (may not be connected yet)
             if(!client || !client.config || !client.config.database){ return; }
             const dbName = client.config.database;
             // Build server-level connection (no database)
             const baseConfig = { ...client.config };
             delete baseConfig.database;
-            const admin = new MySQLClient(baseConfig);
-            admin.connect();
-            if(!admin.connection){ return; }
+            const admin = new MySQLAsyncClient(baseConfig);
+            await admin.connect();
+            const pool = admin.getPool();
+            if(!pool){ return; }
 
             // Use parameterized query for checking database existence
-            const check = admin.query(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?`, [dbName]);
-            const exists = Array.isArray(check) ? check.length > 0 : !!check?.length;
+            const [rows] = await pool.execute(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?`, [dbName]);
+            const exists = Array.isArray(rows) && rows.length > 0;
             if(!exists){
                 // Validate database name (alphanumeric, underscore, hyphen only)
                 if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
                     throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
                 }
                 // CREATE DATABASE doesn't support placeholders, but we've validated the name
-                admin.query(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+                await pool.execute(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
             }
-            admin.close();
+            await admin.close();
             this._dbEnsured = true;
         }catch(err){
             // Non-fatal: migrations may still proceed if DB already exists or permissions blocked

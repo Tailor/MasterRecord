@@ -26,14 +26,14 @@ class DeleteManager {
      * @param {Object|Array} currentModel - Entity or entities to delete
      * @throws {Error} If deletion fails
      */
-    init(currentModel) {
+    async init(currentModel) {
         // Input validation
         if (!currentModel) {
             throw new Error('DeleteManager.init() requires a valid model');
         }
 
         try {
-            this.cascadeDelete(currentModel);
+            await this.cascadeDelete(currentModel);
         } catch (error) {
             // Add context to error
             const entityName = currentModel.__entity?.__name || 'unknown';
@@ -46,15 +46,15 @@ class DeleteManager {
      * @param {Object|Array} currentModel - Entity or entities to delete
      * @throws {Error} If cascade deletion fails
      */
-    cascadeDelete(currentModel) {
+    async cascadeDelete(currentModel) {
         if (!currentModel) {
             return; // Nothing to delete
         }
 
         if (!Array.isArray(currentModel)) {
-            this._deleteSingleEntity(currentModel);
+            await this._deleteSingleEntity(currentModel);
         } else {
-            this._deleteMultipleEntities(currentModel);
+            await this._deleteMultipleEntities(currentModel);
         }
     }
 
@@ -63,7 +63,7 @@ class DeleteManager {
      * @private
      * @param {Object} entity - Entity to delete
      */
-    _deleteSingleEntity(entity) {
+    async _deleteSingleEntity(entity) {
         // Validate entity structure
         if (!entity.__entity) {
             throw new Error('Entity missing __entity metadata');
@@ -90,13 +90,13 @@ class DeleteManager {
                     }
                 } else {
                     // Recursively delete related entities
-                    this.cascadeDelete(relatedModel);
+                    await this.cascadeDelete(relatedModel);
                 }
             }
         }
 
         // Delete the entity itself after cascading
-        this._SQLEngine.delete(entity);
+        await this._SQLEngine.delete(entity);
     }
 
     /**
@@ -104,7 +104,7 @@ class DeleteManager {
      * @private
      * @param {Array} entities - Array of entities to delete
      */
-    _deleteMultipleEntities(entities) {
+    async _deleteMultipleEntities(entities) {
         if (entities.length === 0) {
             return; // Nothing to delete
         }
@@ -132,13 +132,13 @@ class DeleteManager {
                     const relatedModel = entity[property];
 
                     if (relatedModel !== null && relatedModel !== undefined) {
-                        this.cascadeDelete(relatedModel);
+                        await this.cascadeDelete(relatedModel);
                     }
                 }
             }
 
             // Delete the entity
-            this._SQLEngine.delete(entity);
+            await this._SQLEngine.delete(entity);
         }
     }
 

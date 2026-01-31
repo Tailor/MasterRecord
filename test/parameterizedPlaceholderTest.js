@@ -147,7 +147,7 @@ if(failed === 0){
     console.log("🎉 All placeholder tests passed!");
     console.log("\n✨ Bug Fix Verified!");
     console.log("\n📖 What was fixed:");
-    console.log("   - mySQLEngine.js: Added placeholder detection in buildWhere");
+    console.log("   - realMySQLEngine.js: Added placeholder detection in buildWhere");
     console.log("   - SQLLiteEngine.js: Added placeholder detection in buildWhere");
     console.log("   - postgresEngine.js: Added placeholder detection in buildWhere");
     console.log("\n   Placeholders (?, $1, $2, etc.) are no longer quoted as literal strings.");

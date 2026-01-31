@@ -20,7 +20,7 @@ const modelBuilder = require('./Entity/entityModelBuilder');
 const query = require('masterrecord/QueryLanguage/queryMethods');
 const tools = require('./Tools');
 const SQLLiteEngine = require('masterrecord/SQLLiteEngine');
-const MYSQLEngine = require('masterrecord/mySQLEngine');
+const MySQLEngine = require('masterrecord/realMySQLEngine');
 const PostgresEngine = require('masterrecord/postgresEngine');
 const insertManager = require('./insertManager');
 const deleteManager = require('./deleteManager');
@@ -28,7 +28,7 @@ const globSearch = require('glob');
 const fs = require('fs');
 const path = require('path');
 const appRoot = require('app-root-path');
-const MySQLClient = require('masterrecord/mySQLSyncConnect');
+const MySQLAsyncClient = require('masterrecord/mySQLAsyncConnect');
 const PostgresClient = require('masterrecord/postgresSyncConnect');
 const QueryCache = require('./Cache/QueryCache');
 
@@ -284,7 +284,7 @@ class context {
      * @returns {object} MySQL connection instance
      * @throws {DatabaseConnectionError} If connection fails
      */
-    __mysqlInit(env, sqlName) {
+    async __mysqlInit(env, sqlName) {
         try {
             // Validate required MySQL configuration
             if (!env.database || typeof env.database !== 'string') {
@@ -303,11 +303,18 @@ class context {
                 );
             }
 
-            const connection = new MySQLClient(env);
-            this._SQLEngine = new MYSQLEngine();
-            this._SQLEngine.__name = sqlName;
+            console.log('[MySQL] Initializing async connection pool...');
+            const client = new MySQLAsyncClient(env);
+            await client.connect();
 
-            return connection;
+            const pool = client.getPool();
+            this._SQLEngine = new MySQLEngine();
+            this._SQLEngine.setDB(pool);
+            this._SQLEngine.__name = sqlName;
+            this.isMySQL = true;
+
+            console.log('[MySQL] Connection pool ready');
+            return client;
         } catch (error) {
             // Preserve original error if it's already a ContextError
             if (error instanceof ContextError) {
@@ -624,15 +631,18 @@ class context {
                 return this;
             }
 
-            // MySQL initialization
+            // MySQL initialization (async)
             if (type === DB_TYPES.MYSQL) {
                 this.isMySQL = true;
                 this.isSQLite = false;
                 this.isPostgres = false;
 
-                this.db = this.__mysqlInit(options, 'mysql2');
-                this._SQLEngine.setDB(this.db, 'mysql');
-                return this;
+                // MySQL is async - caller must await env()
+                return (async () => {
+                    this.db = await this.__mysqlInit(options, 'mysql2');
+                    // Note: engine is already set in __mysqlInit
+                    return this;
+                })();
             }
 
             // PostgreSQL initialization (async)
@@ -833,7 +843,7 @@ class context {
      * @example
      * context.useMySql('./config/environments');
      */
-    useMySql(rootFolderLocation) {
+    async useMySql(rootFolderLocation) {
         try {
             this.isMySQL = true;
             this.isSQLite = false;
@@ -857,8 +867,8 @@ class context {
             }
 
             this.validateSQLiteOptions(options);
-            this.db = this.__mysqlInit(options, 'mysql2');
-            this._SQLEngine.setDB(this.db, 'mysql');
+            this.db = await this.__mysqlInit(options, 'mysql2');
+            // Note: engine is already set in __mysqlInit
             return this;
         } catch (error) {
             // Preserve original error if it's already a ContextError
@@ -966,7 +976,7 @@ class context {
      * @private
      * @param {Array<object>} tracked - Array of tracked entities
      */
-    _processTrackedEntities(tracked) {
+    async _processTrackedEntities(tracked) {
         // Group entities by state for batch operations (single pass)
         const toInsert = [];
         const toUpdate = [];
@@ -998,17 +1008,17 @@ class context {
 
         // Batch insert operations
         if (toInsert.length > 0) {
-            this._processBatchInserts(toInsert);
+            await this._processBatchInserts(toInsert);
         }
 
         // Batch update operations
         if (toUpdate.length > 0) {
-            this._processBatchUpdates(toUpdate);
+            await this._processBatchUpdates(toUpdate);
         }
 
         // Batch delete operations
         if (toDelete.length > 0) {
-            this._processBatchDeletes(toDelete);
+            await this._processBatchDeletes(toDelete);
         }
     }
 
@@ -1018,21 +1028,21 @@ class context {
      * @private
      * @param {Array<object>} entities - Entities to insert
      */
-    _processBatchInserts(entities) {
+    async _processBatchInserts(entities) {
         if (entities.length === 1) {
             // Single insert - use existing insertManager
             const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-            insert.init(entities[0]);
+            await insert.init(entities[0]);
         } else {
             // Batch insert - 100x faster for multiple records
             try {
-                this._SQLEngine.bulkInsert(entities);
+                await this._SQLEngine.bulkInsert(entities);
             } catch (error) {
                 console.error('[Context] Bulk insert failed, falling back to individual inserts:', error.message);
                 // Fallback to individual inserts
                 for (const entity of entities) {
                     const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                    insert.init(entity);
+                    await insert.init(entity);
                 }
             }
         }
@@ -1044,7 +1054,7 @@ class context {
      * @private
      * @param {Array<object>} entities - Entities to update
      */
-    _processBatchUpdates(entities) {
+    async _processBatchUpdates(entities) {
         if (entities.length === 1) {
             // Single update - use existing logic
             const currentModel = entities[0];
@@ -1059,7 +1069,7 @@ class context {
                     primaryKey: primaryKey,
                     primaryKeyValue: cleanCurrentModel[primaryKey]
                 };
-                this._SQLEngine.update(sqlUpdate);
+                await this._SQLEngine.update(sqlUpdate);
             } else {
                 console.warn('[Context] Entity marked for update but no changes detected');
             }
@@ -1084,12 +1094,12 @@ class context {
 
             if (updateQueries.length > 0) {
                 try {
-                    this._SQLEngine.bulkUpdate(updateQueries);
+                    await this._SQLEngine.bulkUpdate(updateQueries);
                 } catch (error) {
                     console.error('[Context] Bulk update failed, falling back to individual updates:', error.message);
                     // Fallback to individual updates
                     for (const query of updateQueries) {
-                        this._SQLEngine.update(query);
+                        await this._SQLEngine.update(query);
                     }
                 }
             }
@@ -1102,11 +1112,11 @@ class context {
      * @private
      * @param {Array<object>} entities - Entities to delete
      */
-    _processBatchDeletes(entities) {
+    async _processBatchDeletes(entities) {
         if (entities.length === 1) {
             // Single delete - use existing deleteManager
             const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
-            deleteObject.init(entities[0]);
+            await deleteObject.init(entities[0]);
         } else {
             // Batch delete - group by table for efficiency
             const deletesByTable = new Map();  // Use Map instead of object for better performance
@@ -1125,14 +1135,14 @@ class context {
             try {
                 // Performance: Use for...of with Map entries
                 for (const [tableName, ids] of deletesByTable.entries()) {
-                    this._SQLEngine.bulkDelete(tableName, ids);
+                    await this._SQLEngine.bulkDelete(tableName, ids);
                 }
             } catch (error) {
                 console.error('[Context] Bulk delete failed, falling back to individual deletes:', error.message);
                 // Fallback to individual deletes
                 for (const entity of entities) {
                     const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
-                    deleteObject.init(entity);
+                    await deleteObject.init(entity);
                 }
             }
         }
@@ -1152,7 +1162,7 @@ class context {
      * user.name = 'Alice';
      * db.saveChanges();
      */
-    saveChanges() {
+    async saveChanges() {
         try {
             const tracked = this.__trackedEntities;
 
@@ -1171,22 +1181,22 @@ class context {
 
             // Handle transactions based on database type
             if (this.isSQLite) {
-                this._SQLEngine.startTransaction();
+                await this._SQLEngine.startTransaction();
                 try {
-                    this._processTrackedEntities(tracked);
+                    await this._processTrackedEntities(tracked);
                     this.__clearErrorHandler();
-                    this._SQLEngine.endTransaction();
+                    await this._SQLEngine.endTransaction();
                 } catch (error) {
-                    this._SQLEngine.errorTransaction();
+                    await this._SQLEngine.errorTransaction();
                     throw error;
                 }
             } else if (this.isMySQL) {
-                // MySQL: Synchronous operations (transaction handling managed elsewhere)
-                this._processTrackedEntities(tracked);
+                // MySQL: Async operations
+                await this._processTrackedEntities(tracked);
                 this.__clearErrorHandler();
             } else if (this.isPostgres) {
-                // PostgreSQL: Async operations (transaction handling managed elsewhere)
-                this._processTrackedEntities(tracked);
+                // PostgreSQL: Async operations
+                await this._processTrackedEntities(tracked);
                 this.__clearErrorHandler();
             }
 

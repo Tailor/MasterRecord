@@ -6,7 +6,7 @@ class SQLLiteEngine {
 
     unsupportedWords = ["order"]
 
-    update(query){
+    async update(query){
         // Security: ONLY use parameterized queries - no fallback to string concatenation
         // query.arg must contain {sql, params} from _buildSQLEqualToParameterized
         if(!query.arg || typeof query.arg !== 'object' || !query.arg.sql || !query.arg.params){
@@ -18,17 +18,17 @@ class SQLLiteEngine {
         WHERE [${query.tableName}].[${query.primaryKey}] = ?`;
         // Add primaryKeyValue to params array
         var params = [...query.arg.params, query.primaryKeyValue];
-        return this._runWithParams(sqlQuery, params);
+        return Promise.resolve(this._runWithParams(sqlQuery, params));
     }
 
-    delete(queryObject){
+    async delete(queryObject){
        var sqlObject = this._buildDeleteObject(queryObject);
        // Use parameterized query to prevent SQL injection
        var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
-       return this._executeWithParams(sqlQuery, [sqlObject.value]);
+       return Promise.resolve(this._executeWithParams(sqlQuery, [sqlObject.value]));
     }
 
-    insert(queryObject){
+    async insert(queryObject){
         // Use NEW SECURE parameterized version
         var sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
         if(sqlObject === -1){
@@ -40,28 +40,35 @@ class SQLLiteEngine {
         var open = {
             "id": queryObj.lastInsertRowid
         };
-        return open;
+        return Promise.resolve(open);
     }
 
     /**
      * Batch insert multiple entities in a single transaction
      * Performance: 100x faster than N separate inserts
      */
-    bulkInsert(entities) {
-        if (!entities || entities.length === 0) return [];
+    async bulkInsert(entities) {
+        if (!entities || entities.length === 0) return Promise.resolve([]);
 
         const results = [];
-        // SQLite: Use transaction for batch inserts
-        this.startTransaction();
+        // SQLite: Use transaction for batch inserts (only if not already in one)
+        const needsTransaction = !this.db.inTransaction;
+        if (needsTransaction) {
+            await this.startTransaction();
+        }
         try {
             for (const entity of entities) {
-                const result = this.insert(entity);
+                const result = await this.insert(entity);
                 results.push(result);
             }
-            this.endTransaction();
-            return results;
+            if (needsTransaction) {
+                await this.endTransaction();
+            }
+            return Promise.resolve(results);
         } catch (error) {
-            this.errorTransaction();
+            if (needsTransaction) {
+                await this.errorTransaction();
+            }
             throw error;
         }
     }
@@ -69,17 +76,25 @@ class SQLLiteEngine {
     /**
      * Batch update multiple entities
      */
-    bulkUpdate(updateQueries) {
-        if (!updateQueries || updateQueries.length === 0) return;
+    async bulkUpdate(updateQueries) {
+        if (!updateQueries || updateQueries.length === 0) return Promise.resolve();
 
-        this.startTransaction();
+        // Only start transaction if not already in one
+        const needsTransaction = !this.db.inTransaction;
+        if (needsTransaction) {
+            await this.startTransaction();
+        }
         try {
             for (const query of updateQueries) {
-                this.update(query);
+                await this.update(query);
             }
-            this.endTransaction();
+            if (needsTransaction) {
+                await this.endTransaction();
+            }
         } catch (error) {
-            this.errorTransaction();
+            if (needsTransaction) {
+                await this.errorTransaction();
+            }
             throw error;
         }
     }
@@ -87,15 +102,15 @@ class SQLLiteEngine {
     /**
      * Batch delete multiple entities using WHERE IN
      */
-    bulkDelete(tableName, ids) {
-        if (!ids || ids.length === 0) return;
+    async bulkDelete(tableName, ids) {
+        if (!ids || ids.length === 0) return Promise.resolve();
 
         const placeholders = ids.map(() => '?').join(', ');
         const query = `DELETE FROM [${tableName}] WHERE id IN (${placeholders})`;
-        return this._runWithParams(query, ids);
+        return Promise.resolve(this._runWithParams(query, ids));
     }
 
-    get(query, entity, context){
+    async get(query, entity, context){
         var queryString = {};
         try {
             if(query.raw){
@@ -117,26 +132,26 @@ class SQLLiteEngine {
                     console.debug("[Params]", params);
                 }
                 var queryReturn = this.db.prepare(queryString.query).get(...params);
-                return queryReturn;
+                return Promise.resolve(queryReturn);
             }
-            return null;
+            return Promise.resolve(null);
         } catch (err) {
             console.error(err);
-            return null;
+            return Promise.resolve(null);
         }
     }
 
     // Introspection helpers
-    tableExists(tableName){
+    async tableExists(tableName){
         try{
             // Use parameterized query to prevent SQL injection
             const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
             const row = this.db.prepare(sql).get(tableName);
-            return !!row;
-        }catch(_){ return false; }
+            return Promise.resolve(!!row);
+        }catch(_){ return Promise.resolve(false); }
     }
 
-    getTableInfo(tableName){
+    async getTableInfo(tableName){
         try{
             // Security: Validate table name to prevent SQL injection
             // PRAGMA statements don't support parameterized queries
@@ -149,11 +164,11 @@ class SQLLiteEngine {
             }
             const sql = `PRAGMA table_info(${tableName})`;
             const rows = this.db.prepare(sql).all();
-            return rows || [];
-        }catch(_){ return []; }
+            return Promise.resolve(rows || []);
+        }catch(_){ return Promise.resolve([]); }
     }
 
-    getCount(queryObject, entity, context){
+    async getCount(queryObject, entity, context){
         var query = queryObject.script;
         var queryString = {};
         try {
@@ -176,23 +191,23 @@ class SQLLiteEngine {
                     console.debug("[Params]", params);
                 }
                 var queryReturn = this.db.prepare(queryCount).get(...params);
-                return queryReturn;
+                return Promise.resolve(queryReturn);
             }
-            return null;
+            return Promise.resolve(null);
         } catch (err) {
             console.error(err);
-            return null;
+            return Promise.resolve(null);
         }
     }
 
-    all(query, entity, context){
+    async all(query, entity, context){
         var selectQuery = {};
         try {
             if(query.raw){
                 selectQuery.query = query.raw;
             }
             else{
-              
+
                 selectQuery = this.buildQuery(query, entity, context);
             }
             if(selectQuery.query){
@@ -203,12 +218,12 @@ class SQLLiteEngine {
                     console.debug("[Params]", params);
                 }
                 var queryReturn = this.db.prepare(selectQuery.query).all(...params);
-                return queryReturn;
+                return Promise.resolve(queryReturn);
             }
-            return null;
+            return Promise.resolve(null);
         } catch (err) {
             console.error(err);
-            return null;
+            return Promise.resolve(null);
         }
     }
 
@@ -623,16 +638,25 @@ class SQLLiteEngine {
         return false;
     }
 
-    startTransaction(){
-        this.db.prepare('BEGIN').run();
+    async startTransaction(){
+        // Prevent nested transactions (SQLite limitation)
+        return Promise.resolve(
+            this.db.inTransaction ? null : this.db.prepare('BEGIN').run()
+        );
     }
 
-    endTransaction(){
-        this.db.prepare('COMMIT').run();
+    async endTransaction(){
+        // Only commit if transaction is active
+        return Promise.resolve(
+            this.db.inTransaction ? this.db.prepare('COMMIT').run() : null
+        );
     }
 
-    errorTransaction(){
-        this.db.prepare('ROLLBACK').run();
+    async errorTransaction(){
+        // Only rollback if transaction is active
+        return Promise.resolve(
+            this.db.inTransaction ? this.db.prepare('ROLLBACK').run() : null
+        );
     }
 
     _buildSQLEqualTo(model){
