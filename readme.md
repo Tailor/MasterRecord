@@ -23,8 +23,8 @@
 | Database   | Version      | Features                                          |
 |------------|--------------|---------------------------------------------------|
 | PostgreSQL | 9.6+ (12+)   | JSONB, UUID, async/await, connection pooling      |
-| MySQL      | 5.7+ (8.0+)  | JSON, transactions, AUTO_INCREMENT                |
-| SQLite     | 3.x          | Embedded, zero-config, file-based                 |
+| MySQL      | 5.7+ (8.0+)  | JSON, async/await, connection pooling, AUTO_INCREMENT |
+| SQLite     | 3.x          | Embedded, zero-config, file-based, async API wrapper |
 
 ## Table of Contents
 
@@ -64,9 +64,9 @@ npm install masterrecord better-sqlite3  # SQLite
 ### Dependencies
 
 MasterRecord includes the following database drivers by default:
-- `pg@^8.17.2` - PostgreSQL
-- `sync-mysql2@^1.0.8` - MySQL
-- `better-sqlite3@^12.6.2` - SQLite
+- `pg@^8.17.2` - PostgreSQL (async)
+- `mysql2@^3.11.5` - MySQL (async with connection pooling)
+- `better-sqlite3@^12.6.2` - SQLite (async API wrapper for consistency)
 
 ## Two Patterns: Entity Framework & Active Record
 
@@ -212,7 +212,7 @@ const db = new AppContext();
 await db.saveChanges();  // PostgreSQL is async
 ```
 
-### MySQL (Synchronous)
+### MySQL (Async with Connection Pooling)
 
 ```javascript
 class AppContext extends context {
@@ -225,19 +225,20 @@ class AppContext extends context {
             port: 3306,
             database: 'myapp',
             user: 'root',
-            password: 'password'
+            password: 'password',
+            connectionLimit: 10  // Connection pool size (optional)
         });
 
         this.dbset(User);
     }
 }
 
-// Usage is synchronous
+// Usage requires await (async like PostgreSQL)
 const db = new AppContext();
-db.saveChanges();  // No await needed
+await db.saveChanges();  // MySQL now uses async/await
 ```
 
-### SQLite (Synchronous)
+### SQLite (Async API)
 
 ```javascript
 class AppContext extends context {
@@ -252,6 +253,10 @@ class AppContext extends context {
         this.dbset(User);
     }
 }
+
+// Usage requires await for consistency across databases
+const db = new AppContext();
+await db.saveChanges();  // SQLite now has async API wrapper
 ```
 
 ### Environment Files
@@ -593,33 +598,48 @@ masterrecord update-database-all            # Apply all pending migrations
 
 ```javascript
 // db/migrations/20250111_143052_CreateUser.js
-module.exports = {
-    up: function(table, schema) {
-        // Create table
-        schema.createTable(table.User);
+const masterrecord = require('masterrecord');
+
+class CreateUser extends masterrecord.schema {
+    constructor(context) {
+        super(context);
+    }
+
+    // IMPORTANT: Migrations must be async
+    async up(table) {
+        this.init(table);
+
+        // Create table (requires await)
+        await this.createTable(table.User);
 
         // Seed initial data
-        schema.seed('User', {
+        this.seed('User', {
             name: 'Admin',
             email: 'admin@example.com',
             role: 'admin'
         });
-    },
-
-    down: function(table, schema) {
-        // Rollback
-        schema.dropTable(table.User);
     }
-};
+
+    async down(table) {
+        this.init(table);
+
+        // Rollback
+        this.dropTable(table.User);
+    }
+}
+
+module.exports = CreateUser;
 ```
 
 ### Migration Operations
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        // Create table
-        schema.createTable(table.User);
+class MyMigration extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+
+        // Create table (requires await)
+        await this.createTable(table.User);
 
         // Add column
         schema.addColumn({
@@ -1189,9 +1209,8 @@ const users = db._SQLEngine.exec(
 context.dbset(EntityClass)
 context.dbset(EntityClass, 'custom_table_name')
 
-// Save changes
-await context.saveChanges()  // PostgreSQL (async)
-context.saveChanges()        // MySQL/SQLite (sync)
+// Save changes (all databases now async)
+await context.saveChanges()  // PostgreSQL, MySQL, SQLite (all async)
 
 // Add/Remove entities
 context.EntityName.add(entity)
@@ -1585,9 +1604,9 @@ user.name = null;  // Error if name is { nullable: false }
 | PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
 | MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |
 | SQLite        | 3.x           | Any recent version                       |
-| pg            | 8.17.2+       | PostgreSQL driver                        |
-| sync-mysql2   | 1.0.8+        | MySQL driver                            |
-| better-sqlite3| 12.6.2+       | SQLite driver                           |
+| pg            | 8.17.2+       | PostgreSQL driver (async)                |
+| mysql2        | 3.11.5+       | MySQL driver (async with connection pooling) |
+| better-sqlite3| 12.6.2+       | SQLite driver (wrapped with async API)   |
 
 ## Documentation
 
@@ -1814,18 +1833,74 @@ $ grep -A1 "catch.*{$" insertManager.js | grep "^\s*}$"
 # ✅ No empty catch blocks - all log errors appropriately
 ```
 
-### Breaking Changes
+### Breaking Changes (v0.3.17+)
 
-**PostgreSQL users must now await `env()`:**
+**🔴 CRITICAL: All databases now require async/await for consistency**
+
+MasterRecord now provides a **unified async API** across all database engines (SQLite, MySQL, PostgreSQL). This follows industry best practices from Sequelize, TypeORM, and Prisma.
+
+**1. Database Operations (All Engines)**
 ```javascript
-// PostgreSQL (async/await REQUIRED):
+// ✅ NEW (v0.3.17+): All databases use async/await
 const db = new AppContext();
-await db.env('./config/environments');  // Must await for PostgreSQL
+await db.saveChanges();  // Required for SQLite, MySQL, PostgreSQL
 
-// MySQL/SQLite (synchronous - no await):
-const db = new AppContext();
-db.env('./config/environments');  // No await needed for MySQL/SQLite
+// ❌ OLD (v0.3.16 and earlier): Mixed sync/async
+db.saveChanges();  // SQLite/MySQL were sync (no longer works)
+await db.saveChanges();  // Only PostgreSQL was async
 ```
+
+**2. Migration Files (Critical)**
+```javascript
+// ✅ NEW (v0.3.17+): Migrations must be async
+class CreateUser extends masterrecord.schema {
+    async up(table) {  // Must be async
+        this.init(table);
+        await this.createTable(table.User);  // Must await
+    }
+
+    async down(table) {  // Must be async
+        this.init(table);
+        this.dropTable(table.User);
+    }
+}
+
+// ❌ OLD (v0.3.16 and earlier): Migrations were sync
+up(table) {
+    this.createTable(table.User);  // No await (no longer works)
+}
+```
+
+**3. MySQL Connection**
+```javascript
+// ✅ NEW (v0.3.17+): MySQL uses mysql2/promise with async connection pooling
+this.env({
+    type: 'mysql',
+    host: 'localhost',
+    port: 3306,
+    database: 'myapp',
+    user: 'root',
+    password: 'password',
+    connectionLimit: 10  // Connection pool size
+});
+
+// ❌ OLD (v0.3.16 and earlier): MySQL used sync-mysql2 (synchronous driver)
+```
+
+**Why This Change?**
+- ✅ **Consistent API**: Same code works for SQLite, MySQL, and PostgreSQL
+- ✅ **Industry Standard**: Matches Sequelize, TypeORM, Prisma patterns
+- ✅ **Better Performance**: MySQL now uses connection pooling
+- ✅ **Real MySQL**: No longer using SQLite disguised as MySQL
+- ✅ **Portable Code**: Switch databases without code changes
+
+**Migration Path:**
+1. Update all `db.saveChanges()` calls to use `await`
+2. Make all migration `up()` and `down()` methods async
+3. Add `await` before `createTable()` calls in migrations
+4. Update `package.json`: Remove `sync-mysql2`, ensure `mysql2@^3.11.5`
+
+**For more details, see:** `CHANGES.md`
 
 **For more details, see:** `CHANGES.md`
 
