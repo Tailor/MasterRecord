@@ -14,21 +14,21 @@ class MigrationTemplate {
     #down = ''
 
     get(){
-        return ` 
-         
+        return `
+
 var masterrecord = require('masterrecord');
 
-class ${this.name} extends masterrecord.schema { 
+class ${this.name} extends masterrecord.schema {
     constructor(context){
         super(context);
     }
 
-    up(table){
+    async up(table){
         this.init(table);
         ${this.#up}
     }
 
-    down(table){
+    async down(table){
         this.init(table);
         ${this.#down}
     }
@@ -47,10 +47,10 @@ module.exports = ${this.name};
     }
     createTable(type, name){
         if(type === "up"){
-            this.#up += os.EOL + `     this.createTable(table.${name});` 
+            this.#up += os.EOL + `     await this.createTable(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.createTable(table.${name});` 
+            this.#down += os.EOL + `     await this.createTable(table.${name});`
         }
     }
 
@@ -66,10 +66,10 @@ module.exports = ${this.name};
    
     dropTable(type, name){
         if(type === "up"){
-            this.#down += os.EOL + `    this.droptable(table.${name});`
+            this.#down += os.EOL + `    this.dropTable(table.${name});`
         }
         else{
-            this.#down += os.EOL + `    this.droptable(table.${name});`
+            this.#down += os.EOL + `    this.dropTable(table.${name});`
         }
     }
 
