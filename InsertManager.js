@@ -1,250 +1,408 @@
+'use strict';
 
-// version  0.0.15
-var tools =  require('./Tools');
-var queryScript = require('masterrecord/QueryLanguage/queryScript');
+// version 1.0.0 - FAANG-level refactor
+const tools = require('./Tools');
+const queryScript = require('masterrecord/QueryLanguage/queryScript');
 
+// Constants
+const TIMESTAMP_FIELDS = {
+    CREATED_AT: 'created_at',
+    UPDATED_AT: 'updated_at'
+};
+
+const RELATIONSHIP_TYPES = {
+    HAS_MANY: 'hasMany',
+    HAS_MANY_THROUGH: 'hasManyThrough',
+    BELONGS_TO: 'belongsTo',
+    HAS_ONE: 'hasOne'
+};
+
+const MIN_OBJECT_KEYS = 0;
+
+// Custom Error Classes
+class InsertManagerError extends Error {
+    constructor(message, context = {}) {
+        super(message);
+        this.name = 'InsertManagerError';
+        this.context = context;
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class RelationshipError extends InsertManagerError {
+    constructor(message, relationshipName, context = {}) {
+        super(message, { ...context, relationshipName });
+        this.name = 'RelationshipError';
+    }
+}
+
+/**
+ * Insert Manager - Handles entity insertion with relationship processing
+ *
+ * Manages INSERT operations for tracked entities including:
+ * - Relationship hydration (hasMany, hasManyThrough, belongsTo, hasOne)
+ * - Validation of required fields
+ * - Error aggregation and reporting
+ * - Automatic timestamp management
+ *
+ * @class InsertManager
+ * @example
+ * const manager = new InsertManager(sqlEngine, errorModel, allEntities);
+ * manager.init(trackedEntity);
+ */
 class InsertManager {
-
-    constructor(sqlEngine, errorModel, allEntities ){
+    /**
+     * Creates an insert manager instance
+     *
+     * @param {object} sqlEngine - Database engine instance (SQLite/MySQL/Postgres)
+     * @param {object} errorModel - Validation error collector
+     * @param {Array<object>} allEntities - All registered entity definitions
+     */
+    constructor(sqlEngine, errorModel, allEntities) {
         this._SQLEngine = sqlEngine;
         this._errorModel = errorModel;
         this._allEntities = allEntities;
         this.__queryObject = new queryScript();
     }
 
-    init(currentModel){
+    /**
+     * Initialize insert operation for a tracked entity
+     *
+     * @param {object} currentModel - Tracked entity to insert
+     * @throws {InsertManagerError} If validation fails
+     */
+    init(currentModel) {
         this.runQueries(currentModel);
     }
 
-    runQueries(currentModel){
-        var $that = this;
+    /**
+     * Execute insert queries with relationship processing
+     *
+     * @param {object} currentModel - Tracked entity to insert
+     * @throws {InsertManagerError} If validation fails or relationships are invalid
+     */
+    runQueries(currentModel) {
         // Reset validation state for this operation to avoid stale errors
-        if(this._errorModel){
+        if (this._errorModel) {
             this._errorModel.isValid = true;
             this._errorModel.errors = [];
         }
-        var cleanCurrentModel = tools.clearAllProto(currentModel);
+
+        const cleanCurrentModel = tools.clearAllProto(currentModel);
         this.validateEntity(cleanCurrentModel, currentModel, currentModel.__entity);
-        if(this._errorModel.isValid){
-            
-                var modelEntity = currentModel.__entity;
-                // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
-                currentModel = this.belongsToInsert(currentModel, modelEntity);
-                var SQL = this._SQLEngine.insert(cleanCurrentModel);
-                var primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
-                // use returned insert id directly; avoid redundant post-insert SELECT
-                if(currentModel.__entity[primaryKey].auto === true){
-                    currentModel[primaryKey] = SQL.id;
+
+        if (this._errorModel.isValid) {
+            const modelEntity = currentModel.__entity;
+            // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
+            currentModel = this.belongsToInsert(currentModel, modelEntity);
+            const SQL = this._SQLEngine.insert(cleanCurrentModel);
+            const primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
+
+            // use returned insert id directly; avoid redundant post-insert SELECT
+            if (currentModel.__entity[primaryKey].auto === true) {
+                currentModel[primaryKey] = SQL.id;
+            }
+
+            const proto = Object.getPrototypeOf(currentModel);
+            const props = Object.getOwnPropertyNames(proto);
+            const cleanPropList = tools.returnEntityList(props, modelEntity);
+            const modelKeys = Object.keys(currentModel);
+            const mergedArray = [...new Set(modelKeys.concat(cleanPropList))];
+
+            // loop through model properties
+            for (const property of mergedArray) {
+                const propertyModel = currentModel[property];
+                const entityProperty = modelEntity[property] ? modelEntity[property] : {};
+
+                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_ONE) {
+                    this._processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL);
                 }
 
-                const proto = Object.getPrototypeOf(currentModel);
-                const props = Object.getOwnPropertyNames(proto);
-                const cleanPropList = tools.returnEntityList(props, modelEntity);
-                const modelKeys = Object.keys(currentModel);
-                const mergedArray =  [...new Set(modelKeys.concat(cleanPropList))];
-                // loop through model properties
-                for (const property of mergedArray) {
-                    var propertyModel = currentModel[property];
-                    var entityProperty = modelEntity[property] ? modelEntity[property] : {};
-                    if(entityProperty.type === "hasOne"){
-                        // only insert child if user provided a concrete object with data
-                        if(propertyModel && typeof(propertyModel) === "object" ){
-                            // check if model has its own entity
-                            if(modelEntity){
-                                // check if property has a value because we dont want this to run on every insert if nothing was added
-                                // ensure it has some own props; otherwise skip
-                                const hasOwn = Object.keys(propertyModel).length > 0;
-                                if(hasOwn){
-                                    propertyModel.__entity = tools.getEntity(property, $that._allEntities);
-                                    propertyModel[currentModel.__entity.__name] = SQL.id;
-                                    $that.runQueries(propertyModel);
-                                    // Hydrate child back as a tracked instance so subsequent property sets are tracked
-                                    try{
-                                        var childPk = tools.getPrimaryKeyObject(propertyModel.__entity);
-                                        var childId = propertyModel[childPk];
-                                        if(childId !== undefined){
-                                            var ctxSetName = tools.capitalizeFirstLetter(property);
-                                            if(currentModel.__context && currentModel.__context[ctxSetName]){
-                                                var trackedChild = currentModel.__context[ctxSetName].where(`r => r.${childPk} == $$`, childId).single();
-                                                if(trackedChild){
-                                                    currentModel[property] = trackedChild;
-                                                }
-                                            }
-                                        }
-                                    }catch(_){ /* ignore tracking hydration errors */ }
-                                }
-                            }
-                            else{
-                                throw `Relationship "${entityProperty.name}" could not be found please check if object has correct spelling or if it has been added to the context class`
-                            }
-                        }
-                    }
-                    
-                    if(entityProperty.type === "hasMany"){
-                        // skip when not provided; only enforce array type if user supplied a value
-                        if(propertyModel === undefined || propertyModel === null){
-                            continue;
-                        }
-                        if(tools.checkIfArrayLike(propertyModel)){
-                            const propertyKeys = Object.keys(propertyModel);
-                            for (const propertykey of propertyKeys) {
-                                if(propertyModel[propertykey]){
-                                    let targetName = entityProperty.foreignTable || property;
-                                    let resolved = tools.getEntity(targetName, $that._allEntities) 
-                                                    || tools.getEntity(tools.capitalize(targetName), $that._allEntities)
-                                                    || tools.getEntity(property, $that._allEntities);
-                                    if(!resolved){
-                                        throw `Relationship entity for '${property}' could not be resolved. Expected '${targetName}'.`;
-                                    }
-                                    // Coerce primitive into object with primary key if user passed an id
-                                    if(typeof propertyModel[propertykey] !== "object" || propertyModel[propertykey] === null){
-                                        const childPrimaryKey = tools.getPrimaryKeyObject(resolved);
-                                        const primitiveValue = propertyModel[propertykey];
-                                        propertyModel[propertykey] = {};
-                                        propertyModel[propertykey][childPrimaryKey] = primitiveValue;
-                                    }
-                                    propertyModel[propertykey].__entity = resolved;
-                                    propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
-                                    $that.runQueries(propertyModel[propertykey]);
-                                }
-                            }
-                        }
-                        else{
-                            throw `Relationship "${entityProperty.name}" must be an array`;
-                        }
-                    }
-
-                    if(entityProperty.type === "hasManyThrough"){
-                        if(tools.checkIfArrayLike(propertyModel)){
-                            const propertyKeys = Object.keys(propertyModel);
-                            for (const propertykey of propertyKeys) {
-                                if(propertyModel[propertykey]){
-                                    let targetName = entityProperty.foreignTable || property;
-                                    let resolved = tools.getEntity(targetName, $that._allEntities) 
-                                                    || tools.getEntity(tools.capitalize(targetName), $that._allEntities)
-                                                    || tools.getEntity(property, $that._allEntities);
-                                    if(!resolved){
-                                        throw `Relationship entity for '${property}' could not be resolved. Expected '${targetName}'.`;
-                                    }
-                                    if(typeof propertyModel[propertykey] !== "object" || propertyModel[propertykey] === null){
-                                        const childPrimaryKey = tools.getPrimaryKeyObject(resolved);
-                                        const primitiveValue = propertyModel[propertykey];
-                                        propertyModel[propertykey] = {};
-                                        propertyModel[propertykey][childPrimaryKey] = primitiveValue;
-                                    }
-                                    propertyModel[propertykey].__entity = resolved;
-                                    propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
-                                    $that.runQueries(propertyModel[propertykey]);
-                                }
-                            }
-                        }
-                        else{
-                            throw `Relationship "${entityProperty.name}" must be an array`;
-                        }
-                    }
-
+                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY) {
+                    this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
                 }
-        }
-        else{
-            var messages = this._errorModel.errors;
+
+                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY_THROUGH) {
+                    this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY_THROUGH);
+                }
+            }
+        } else {
+            const messages = this._errorModel.errors;
             const combinedError = messages.join('; and ');
-            throw combinedError;
-
+            throw new InsertManagerError(combinedError, {
+                errors: messages,
+                entity: currentModel.__entity ? currentModel.__entity.__name : 'unknown'
+            });
         }
     }
 
-    
+    /**
+     * Process hasOne relationship
+     *
+     * @private
+     * @param {*} propertyModel - Property value
+     * @param {object} entityProperty - Entity property definition
+     * @param {string} property - Property name
+     * @param {object} currentModel - Current model being inserted
+     * @param {object} SQL - SQL result from parent insert
+     * @throws {RelationshipError} If relationship entity is not found
+     */
+    _processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL) {
+        // only insert child if user provided a concrete object with data
+        if (propertyModel && typeof propertyModel === 'object') {
+            // check if model has its own entity
+            const modelEntity = currentModel.__entity;
+            if (!modelEntity) {
+                throw new RelationshipError(
+                    `Relationship "${entityProperty.name}" could not be found. Please check if object has correct spelling or if it has been added to the context class`,
+                    entityProperty.name,
+                    { property }
+                );
+            }
 
-    // will insert belongs to row first and return the id so that next call can be make correctly
-    belongsToInsert(currentModel, modelEntity){
-        var $that = this;
-        for(var entity in modelEntity) {
-            if(modelEntity[entity].relationshipType === "belongsTo"){
-                var foreignKey = modelEntity[entity].foreignKey === undefined ? modelEntity[entity].name : modelEntity[entity].foreignKey;
-                var newPropertyModel = currentModel[foreignKey];
-                // check if model is a an object. If so insert the child first then the parent. 
-                if(typeof newPropertyModel === 'object'){
-                    newPropertyModel.__entity = tools.getEntity(entity, $that._allEntities);
-                    var propertyCleanCurrentModel = tools.clearAllProto(newPropertyModel);
+            // check if property has a value because we dont want this to run on every insert if nothing was added
+            // ensure it has some own props; otherwise skip
+            const hasOwn = Object.keys(propertyModel).length > MIN_OBJECT_KEYS;
+            if (!hasOwn) {
+                return;
+            }
+
+            propertyModel.__entity = tools.getEntity(property, this._allEntities);
+            propertyModel[currentModel.__entity.__name] = SQL.id;
+            this.runQueries(propertyModel);
+
+            // Hydrate child back as a tracked instance so subsequent property sets are tracked
+            try {
+                const childPk = tools.getPrimaryKeyObject(propertyModel.__entity);
+                const childId = propertyModel[childPk];
+
+                if (childId !== undefined) {
+                    // Validate identifier is safe for SQL queries
+                    if (!this._isValidIdentifier(childPk)) {
+                        throw new InsertManagerError(
+                            `Invalid primary key identifier: ${childPk}`,
+                            { childPk, property }
+                        );
+                    }
+
+                    const ctxSetName = tools.capitalizeFirstLetter(property);
+                    if (currentModel.__context && currentModel.__context[ctxSetName]) {
+                        const trackedChild = currentModel.__context[ctxSetName]
+                            .where(`r => r.${childPk} == $$`, childId)
+                            .single();
+                        if (trackedChild) {
+                            currentModel[property] = trackedChild;
+                        }
+                    }
+                }
+            } catch (error) {
+                // Log but don't throw - hydration is optional
+                console.warn('[InsertManager] Entity hydration failed:', {
+                    property,
+                    error: error.message,
+                    childId: propertyModel[tools.getPrimaryKeyObject(propertyModel.__entity)]
+                });
+            }
+        }
+    }
+
+    /**
+     * Process array-type relationships (hasMany, hasManyThrough)
+     *
+     * @private
+     * @param {*} propertyModel - Property value (should be array-like)
+     * @param {object} entityProperty - Entity property definition
+     * @param {string} property - Property name
+     * @param {object} currentModel - Current model being inserted
+     * @param {object} SQL - SQL result from parent insert
+     * @param {string} relationshipType - 'hasMany' or 'hasManyThrough'
+     * @throws {RelationshipError} If validation fails or entity not resolved
+     */
+    _processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, relationshipType) {
+        // skip when not provided; only enforce array type if user supplied a value
+        if (propertyModel === undefined || propertyModel === null) {
+            return;
+        }
+
+        if (!tools.checkIfArrayLike(propertyModel)) {
+            throw new RelationshipError(
+                `Relationship "${entityProperty.name}" must be an array`,
+                entityProperty.name,
+                { property, relationshipType, receivedType: typeof propertyModel }
+            );
+        }
+
+        const propertyKeys = Object.keys(propertyModel);
+        for (const propertykey of propertyKeys) {
+            if (!propertyModel[propertykey]) {
+                continue;
+            }
+
+            const targetName = entityProperty.foreignTable || property;
+            const resolved = this._resolveEntityWithFallback(property, targetName);
+
+            if (!resolved) {
+                throw new RelationshipError(
+                    `Relationship entity for '${property}' could not be resolved. Expected '${targetName}'.`,
+                    property,
+                    {
+                        targetName,
+                        relationshipType,
+                        availableEntities: this._allEntities.map(e => e.__name)
+                    }
+                );
+            }
+
+            // Coerce primitive into object with primary key if user passed an id
+            if (typeof propertyModel[propertykey] !== 'object' || propertyModel[propertykey] === null) {
+                const childPrimaryKey = tools.getPrimaryKeyObject(resolved);
+                const primitiveValue = propertyModel[propertykey];
+                propertyModel[propertykey] = {};
+                propertyModel[propertykey][childPrimaryKey] = primitiveValue;
+            }
+
+            propertyModel[propertykey].__entity = resolved;
+            propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
+            this.runQueries(propertyModel[propertykey]);
+        }
+    }
+
+    /**
+     * Resolve entity with multiple fallback strategies
+     *
+     * @private
+     * @param {string} property - Property name
+     * @param {string} targetName - Target entity name
+     * @returns {object|null} Resolved entity or null
+     */
+    _resolveEntityWithFallback(property, targetName) {
+        // Try: exact match → capitalized → property name
+        return tools.getEntity(targetName, this._allEntities)
+            || tools.getEntity(tools.capitalize(targetName), this._allEntities)
+            || tools.getEntity(property, this._allEntities);
+    }
+
+    /**
+     * Validate identifier is safe for SQL queries
+     *
+     * @private
+     * @param {string} identifier - Identifier to validate
+     * @returns {boolean} True if safe
+     */
+    _isValidIdentifier(identifier) {
+        // Allow only alphanumeric and underscore, must start with letter/underscore
+        return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier);
+    }
+
+    /**
+     * Insert belongsTo relationships first and return updated model
+     * Will insert belongs to row first and return the id so that next call can be made correctly
+     *
+     * @param {object} currentModel - Current model being inserted
+     * @param {object} modelEntity - Entity definition
+     * @returns {object} Updated model with foreign keys populated
+     */
+    belongsToInsert(currentModel, modelEntity) {
+        for (const entity of Object.keys(modelEntity)) {
+            if (modelEntity[entity].relationshipType === RELATIONSHIP_TYPES.BELONGS_TO) {
+                const foreignKey = modelEntity[entity].foreignKey === undefined
+                    ? modelEntity[entity].name
+                    : modelEntity[entity].foreignKey;
+                const newPropertyModel = currentModel[foreignKey];
+
+                // check if model is an object. If so insert the child first then the parent.
+                if (typeof newPropertyModel === 'object' && newPropertyModel !== null) {
+                    newPropertyModel.__entity = tools.getEntity(entity, this._allEntities);
+                    const propertyCleanCurrentModel = tools.clearAllProto(newPropertyModel);
                     this.validateEntity(propertyCleanCurrentModel, newPropertyModel, newPropertyModel.__entity);
-                    var propertySQL = this._SQLEngine.insert(newPropertyModel);
-                    currentModel[foreignKey] = propertySQL.id; 
+                    const propertySQL = this._SQLEngine.insert(newPropertyModel);
+                    currentModel[foreignKey] = propertySQL.id;
                 }
             }
         }
         // todo:
-            // loop through all modelEntity and find all the belongs to
-            // if belongs to is true then make sql call to insert
-            // update the currentModel.
+        // loop through all modelEntity and find all the belongs to
+        // if belongs to is true then make sql call to insert
+        // update the currentModel.
         return currentModel;
     }
 
-    // validate entity for nullable fields and if the entity has any values at all
-    validateEntity(currentModel, currentRealModel, entityModel){
-        for(var entity in entityModel) {
-            var currentEntity = entityModel[entity];
-            if (entityModel.hasOwnProperty(entity)) {
-                // check if there is a default value
-                if(currentEntity.default){
-                    if(currentRealModel[entity] === undefined || currentRealModel[entity] === null){
-                        // if its empty add the default value
-                        currentRealModel[entity] = currentEntity.default;
-                    }
-                }
-            
-                // SKIP belongs too -----   // call sets for correct data for DB
-                if(currentEntity.type !== "belongsTo" && currentEntity.type !== "hasMany"){
-                    if(currentEntity.relationshipType !== "belongsTo"){
-                        // Auto-populate common timestamp fields if required and missing
-                        if((entity === 'created_at' || entity === 'updated_at') && (currentRealModel[entity] === undefined || currentRealModel[entity] === null)){
-                            var nowVal = Date.now().toString();
-                            currentRealModel[entity] = nowVal;
-                            currentModel[entity] = nowVal;
-                        }
-                        // primary is always null in an insert so validation insert must be null
-                        if(currentEntity.nullable === false && !currentEntity.primary){
-                            // if it doesnt have a get method then call error
-                            if(currentEntity.set === undefined){
-                                const realVal = currentRealModel[entity];
-                                const cleanVal = currentModel[entity];
-                                let hasValue = (realVal !== undefined && realVal !== null) || (cleanVal !== undefined && cleanVal !== null);
-                                // For strings, empty string should be considered invalid for notNullable
-                                const candidate = (realVal !== undefined && realVal !== null) ? realVal : cleanVal;
-                                if(typeof candidate === 'string' && candidate.trim() === ''){
-                                    hasValue = false;
-                                }
-                                // Fallback: check backing field on tracked model if both reads were undefined/null
-                                if(!hasValue && currentRealModel && currentRealModel.__proto__){
-                                    const backing = currentRealModel.__proto__["_" + entity];
-                                    hasValue = (backing !== undefined && backing !== null);
-                                    if(hasValue){
-                                        // normalize into both models so downstream sees it
-                                        currentRealModel[entity] = backing;
-                                        currentModel[entity] = backing;
-                                    }
-                                }
-                                if(!hasValue){
-                                    this._errorModel.isValid = false;
-                                    var errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
-                                    this._errorModel.errors.push(errorMessage);
-                                    //throw errorMessage;
-                                }
-                            }
-                            else{
-                                var realData = currentEntity.set(currentModel[entity]);
-                                currentRealModel[entity] = realData;
-                                currentModel[entity] = realData;
-                            }
-                        }
-                    }
-                   
+    /**
+     * Validate entity for nullable fields and if the entity has any values at all
+     *
+     * @param {object} currentModel - Clean model (no prototypes)
+     * @param {object} currentRealModel - Real tracked model
+     * @param {object} entityModel - Entity definition
+     */
+    validateEntity(currentModel, currentRealModel, entityModel) {
+        for (const entity of Object.keys(entityModel)) {
+            const currentEntity = entityModel[entity];
+
+            if (!entityModel.hasOwnProperty(entity)) {
+                continue;
+            }
+
+            // check if there is a default value
+            if (currentEntity.default) {
+                if (currentRealModel[entity] === undefined || currentRealModel[entity] === null) {
+                    // if its empty add the default value
+                    currentRealModel[entity] = currentEntity.default;
                 }
             }
 
+            // SKIP belongs too ----- // call sets for correct data for DB
+            if (currentEntity.type !== RELATIONSHIP_TYPES.BELONGS_TO && currentEntity.type !== RELATIONSHIP_TYPES.HAS_MANY) {
+                if (currentEntity.relationshipType !== RELATIONSHIP_TYPES.BELONGS_TO) {
+                    // Auto-populate common timestamp fields if required and missing
+                    if ((entity === TIMESTAMP_FIELDS.CREATED_AT || entity === TIMESTAMP_FIELDS.UPDATED_AT) &&
+                        (currentRealModel[entity] === undefined || currentRealModel[entity] === null)) {
+                        const nowVal = Date.now().toString();
+                        currentRealModel[entity] = nowVal;
+                        currentModel[entity] = nowVal;
+                    }
+
+                    // primary is always null in an insert so validation insert must be null
+                    if (currentEntity.nullable === false && !currentEntity.primary) {
+                        // if it doesnt have a get method then call error
+                        if (currentEntity.set === undefined) {
+                            const realVal = currentRealModel[entity];
+                            const cleanVal = currentModel[entity];
+                            let hasValue = (realVal !== undefined && realVal !== null) ||
+                                (cleanVal !== undefined && cleanVal !== null);
+
+                            // For strings, empty string should be considered invalid for notNullable
+                            const candidate = (realVal !== undefined && realVal !== null) ? realVal : cleanVal;
+                            if (typeof candidate === 'string' && candidate.trim() === '') {
+                                hasValue = false;
+                            }
+
+                            // Fallback: check backing field on tracked model if both reads were undefined/null
+                            if (!hasValue && currentRealModel && currentRealModel.__proto__) {
+                                const backing = currentRealModel.__proto__['_' + entity];
+                                hasValue = (backing !== undefined && backing !== null);
+                                if (hasValue) {
+                                    // normalize into both models so downstream sees it
+                                    currentRealModel[entity] = backing;
+                                    currentModel[entity] = backing;
+                                }
+                            }
+
+                            if (!hasValue) {
+                                this._errorModel.isValid = false;
+                                const errorMessage = `Entity ${currentModel.__entity.__name} column ${entity} is a required Field`;
+                                this._errorModel.errors.push(errorMessage);
+                                //throw errorMessage;
+                            }
+                        } else {
+                            const realData = currentEntity.set(currentModel[entity]);
+                            currentRealModel[entity] = realData;
+                            currentModel[entity] = realData;
+                        }
+                    }
+                }
+            }
         }
     }
-    
 }
-
 
 module.exports = InsertManager;

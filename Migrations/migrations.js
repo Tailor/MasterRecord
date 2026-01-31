@@ -1,4 +1,4 @@
-// version 0.0.9
+// version 0.0.10
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
 var fs = require('fs');
@@ -6,6 +6,7 @@ var diff = require("deep-object-diff");
 var MigrationTemplate = require("./migrationTemplate");
 var globSearch = require("glob");
 var path = require('path');
+var { resolveMigrationsDirectory } = require('./pathUtils');
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
@@ -206,34 +207,36 @@ class Migrations{
     createSnapShot(snap){
         // Place migrations alongside the Context file by default:
         // <ContextDir>/db/migrations/<context>_contextSnapShot.json
-        const contextDir = path.dirname(snap.file);
-        const dbFolder = path.join(contextDir, 'db');
-        if (!fs.existsSync(dbFolder)){
-            fs.mkdirSync(dbFolder, { recursive: true });
-        }
+        // BUT: if the context file is already inside db/migrations, use that directly
+        // Uses shared utility to prevent duplicate db/migrations in path
+        const migrationsDirectory = resolveMigrationsDirectory(snap.file);
 
-        const migrationsDirectory = path.join(dbFolder, 'migrations');
+        // Ensure migrations directory exists
         if (!fs.existsSync(migrationsDirectory)){
             fs.mkdirSync(migrationsDirectory, { recursive: true });
         }
-    
+
         const snapshotPath = path.join(migrationsDirectory, `${snap.contextFileName}_contextSnapShot.json`);
+
         // Store relative paths (portable): values are relative to the snapshot file directory (migrationsDirectory)
         const relContextLocation = path.relative(migrationsDirectory, snap.file);
         const relMigrationFolder = '.'; // the snapshot sits inside migrationsDirectory
         const relSnapshotLocation = path.basename(snapshotPath);
-        var content = {
+
+        const content = {
             contextLocation: relContextLocation,
             migrationFolder: relMigrationFolder,
             snapShotLocation: relSnapshotLocation,
             schema : snap.contextEntities
         };
-    
+
         const jsonContent = JSON.stringify(content, null, 2);
         try{
             fs.writeFileSync(snapshotPath, jsonContent);
+            console.log(`✓ Snapshot created at: ${snapshotPath}`);
         }catch (e){
             console.log("Cannot write file ", e);
+            throw e;
         }
     }
 

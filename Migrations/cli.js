@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// version 0.0.7
+// version 0.0.8
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
@@ -8,6 +8,7 @@ const { program } = require('commander');
 let fs = require('fs');
 let path = require('path');
 const Module = require('module');
+const { resolveMigrationsDirectory } = require('./pathUtils');
 // Alias require('masterrecord') to this global package so project files don't need a local install
 const __MASTERRECORD_ROOT__ = path.join(__dirname, '..');
 const __ORIGINAL_REQUIRE__ = Module.prototype.require;
@@ -885,7 +886,8 @@ program.option('-V', 'output the version');
         // Find migrations in snapshot's migrationFolder; fallback to <ContextDir>/db/migrations
         let migRel = globSearch.sync('**/*_migration.js', { cwd: migBase, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
         if(!(migRel && migRel.length)){
-          const defaultFolder = path.join(path.dirname(contextAbs || snapFile), 'db', 'migrations');
+          // Fallback: find migrations directory using shared utility (prevents duplicate paths)
+          const defaultFolder = resolveMigrationsDirectory(contextAbs || snapFile);
           migRel = globSearch.sync('**/*_migration.js', { cwd: defaultFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
           if(migRel && migRel.length){ migBase = defaultFolder; }
         }
