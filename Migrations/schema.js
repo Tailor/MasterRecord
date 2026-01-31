@@ -82,13 +82,13 @@ class schema{
         }
     }
     
-    createTable(table){
+    async createTable(table){
 
         if(table){
             // If table exists, run sync instead of blind create
             const tableName = table.__name;
-            if(this.context._SQLEngine.tableExists && this.context._SQLEngine.tableExists(tableName)){
-                this.syncTable(table);
+            if(this.context._SQLEngine.tableExists && await this.context._SQLEngine.tableExists(tableName)){
+                await this.syncTable(table);
             } else {
                 if(this.context.isSQLite){
                     var sqliteQuery = require("./migrationSQLiteQuery");
@@ -117,10 +117,10 @@ class schema{
     }
 
     // Compute diffs and apply minimal changes
-    syncTable(table){
+    async syncTable(table){
         const engine = this.context._SQLEngine;
         const tableName = table.__name;
-        const existing = engine.getTableInfo ? engine.getTableInfo(tableName) : [];
+        const existing = engine.getTableInfo ? await engine.getTableInfo(tableName) : [];
         // Build a set of existing columns (sqlite: name, mysql: name)
         const existingNames = new Set((existing || []).map(c => (c.name || c.COLUMN_NAME))); // both engines map to name
         // Add missing columns only (safe path)
@@ -254,7 +254,7 @@ class schema{
             const create = queryBuilder.createTable(table);
             this.context._execute(create);
             // compute common columns
-            const oldInfo = engine.getTableInfo(tableName.replace(/.*/, '_temp_alter_column_update')) || engine.getTableInfo("_temp_alter_column_update");
+            const oldInfo = await engine.getTableInfo(tableName.replace(/.*/, '_temp_alter_column_update')) || await engine.getTableInfo("_temp_alter_column_update");
             const oldNames = new Set((oldInfo || existing).map(r => r.name));
             const newNames = desiredCols.map(d => d.name);
             const common = newNames.filter(n => oldNames.has(n));

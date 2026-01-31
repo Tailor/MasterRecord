@@ -153,7 +153,7 @@ program.option('-V', 'output the version');
 
       if(typeof mig.createdatabase === 'function'){
         try{
-          mig.createdatabase();
+          await mig.createdatabase();
           console.log('✓ Database ensured');
           await __cleanupAndExit(contextInstance, 0);
         }catch(err){
@@ -163,7 +163,7 @@ program.option('-V', 'output the version');
         }
       } else if(typeof mig.createDatabase === 'function'){
         try{
-          mig.createDatabase();
+          await mig.createDatabase();
           console.log('✓ Database ensured');
           await __cleanupAndExit(contextInstance, 0);
         }catch(err){
@@ -447,7 +447,7 @@ program.option('-V', 'output the version');
          try{
            var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
            var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-           newMigrationProjectInstance.up(tableObj);
+           await newMigrationProjectInstance.up(tableObj);
          }catch(err){
            console.error(`\n❌ Error - Migration failed during execution`);
            console.error(`\nMigration file: ${mFile}`);
@@ -571,7 +571,7 @@ program.option('-V', 'output the version');
        var MigCtor = require(latestFile);
        var migInstance = new MigCtor(ContextCtor);
        if(typeof migInstance.down === 'function'){
-         migInstance.down(tableObj);
+         await migInstance.down(tableObj);
        }else{
          console.log(`Warning - Migration '${path.basename(latestFile)}' has no down method; skipping.`);
        }
@@ -668,7 +668,7 @@ program.option('-V', 'output the version');
             var migrationProjectFile = require(migFile);
             var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
             var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-            newMigrationProjectInstance.up(tableObj);
+            await newMigrationProjectInstance.up(tableObj);
          }
          const snap = {
                file : contextAbs,
@@ -820,7 +820,7 @@ program.option('-V', 'output the version');
         var MigCtor = require(migFile);
         var migInstance = new MigCtor(ContextCtor);
         if(typeof migInstance.down === 'function'){
-          migInstance.down(tableObj);
+          await migInstance.down(tableObj);
         } else {
           console.log(`Warning - Migration '${path.basename(migFile)}' has no down method; skipping.`);
         }
@@ -1004,7 +1004,7 @@ program.option('-V', 'output the version');
           var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
           var cleanEntities = migration.cleanEntities(contextInstance.__entities);
           var tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
-          newMigrationProjectInstance.up(tableObj);
+          await newMigrationProjectInstance.up(tableObj);
           var snap = {
             file : entry.contextAbs,
             executedLocation : executedLocation,
