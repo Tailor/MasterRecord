@@ -452,7 +452,35 @@ class context {
                 const rel = files[0];
                 // Ensure absolute path for require()
                 const abs = path.isAbsolute(rel) ? rel : path.resolve(currentRoot, rel);
-                return { file: abs, rootFolder: currentRoot };
+
+                // Find actual project root by looking for package.json or .git
+                // This prevents duplicate paths like "app/models/components/workforce/db/"
+                let projectRoot = path.dirname(abs);
+                let searchDir = projectRoot;
+                let foundProjectRoot = false;
+
+                // Walk up the directory tree to find package.json or .git
+                for (let j = 0; j < MAX_CONFIG_SEARCH_HOPS; j++) {
+                    const hasPackageJson = fs.existsSync(path.join(searchDir, 'package.json'));
+                    const hasGit = fs.existsSync(path.join(searchDir, '.git'));
+
+                    if (hasPackageJson || hasGit) {
+                        projectRoot = searchDir;
+                        foundProjectRoot = true;
+                        break;
+                    }
+
+                    const parent = path.dirname(searchDir);
+                    if (parent === searchDir) break;  // Reached filesystem root
+                    searchDir = parent;
+                }
+
+                // Fallback to currentRoot if no project markers found
+                if (!foundProjectRoot) {
+                    projectRoot = currentRoot;
+                }
+
+                return { file: abs, rootFolder: projectRoot };
             }
 
             // Move to parent directory
