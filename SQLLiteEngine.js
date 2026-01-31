@@ -1222,6 +1222,17 @@ class SQLLiteEngine {
        this.db = db;
        this.dbType = type; // this will let us know which type of sqlengine to use.
    }
+
+    /**
+     * Close database connection
+     * Required for proper cleanup of better-sqlite3 native bindings
+     */
+    close() {
+        if (this.db) {
+            this.db.close();
+            console.log('SQLite database closed');
+        }
+    }
 }
 
 module.exports = SQLLiteEngine;
