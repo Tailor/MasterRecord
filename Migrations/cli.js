@@ -622,8 +622,8 @@ program.option('-V', 'output the version');
             var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
             newMigrationProjectInstance.up(tableObj);
          }
-         var snap = {
-               file : contextSnapshot.contextLocation,
+         const snap = {
+               file : contextAbs,
                executedLocation : executedLocation,
                context : contextInstance,
                contextEntities : cleanEntities,
