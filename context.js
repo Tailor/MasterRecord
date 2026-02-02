@@ -20,7 +20,7 @@ const modelBuilder = require('./Entity/entityModelBuilder');
 const query = require('masterrecord/QueryLanguage/queryMethods');
 const tools = require('./Tools');
 const SQLLiteEngine = require('masterrecord/SQLLiteEngine');
-const MySQLEngine = require('masterrecord/realMySQLEngine');
+const MySQLEngine = require('masterrecord/mySQLEngine');
 const PostgresEngine = require('masterrecord/postgresEngine');
 const insertManager = require('./insertManager');
 const deleteManager = require('./deleteManager');
@@ -28,7 +28,7 @@ const globSearch = require('glob');
 const fs = require('fs');
 const path = require('path');
 const appRoot = require('app-root-path');
-const MySQLAsyncClient = require('masterrecord/mySQLAsyncConnect');
+const MySQLAsyncClient = require('masterrecord/mySQLConnect');
 const PostgresClient = require('masterrecord/postgresSyncConnect');
 const QueryCache = require('./Cache/QueryCache');
 

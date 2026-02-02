@@ -1251,11 +1251,10 @@ class SQLLiteEngine {
      * Close database connection
      * Required for proper cleanup of better-sqlite3 native bindings
      */
-    close() {
-        if (this.db) {
-            this.db.close();
-            console.log('SQLite database closed');
-        }
+    async close() {
+        return Promise.resolve(
+            this.db ? (this.db.close(), console.log('SQLite database closed')) : null
+        );
     }
 }
 
