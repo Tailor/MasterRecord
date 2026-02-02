@@ -115,15 +115,15 @@ class InsertManager {
                 const entityProperty = modelEntity[property] ? modelEntity[property] : {};
 
                 if (entityProperty.type === RELATIONSHIP_TYPES.HAS_ONE) {
-                    this._processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL);
+                    await this._processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL);
                 }
 
                 if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY) {
-                    this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
+                    await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
                 }
 
                 if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY_THROUGH) {
-                    this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY_THROUGH);
+                    await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY_THROUGH);
                 }
             }
         } else {
@@ -147,7 +147,7 @@ class InsertManager {
      * @param {object} SQL - SQL result from parent insert
      * @throws {RelationshipError} If relationship entity is not found
      */
-    _processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL) {
+    async _processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL) {
         // only insert child if user provided a concrete object with data
         if (propertyModel && typeof propertyModel === 'object') {
             // check if model has its own entity
@@ -169,7 +169,7 @@ class InsertManager {
 
             propertyModel.__entity = tools.getEntity(property, this._allEntities);
             propertyModel[currentModel.__entity.__name] = SQL.id;
-            this.runQueries(propertyModel);
+            await this.runQueries(propertyModel);
 
             // Hydrate child back as a tracked instance so subsequent property sets are tracked
             try {
@@ -187,7 +187,7 @@ class InsertManager {
 
                     const ctxSetName = tools.capitalizeFirstLetter(property);
                     if (currentModel.__context && currentModel.__context[ctxSetName]) {
-                        const trackedChild = currentModel.__context[ctxSetName]
+                        const trackedChild = await currentModel.__context[ctxSetName]
                             .where(`r => r.${childPk} == $$`, childId)
                             .single();
                         if (trackedChild) {
@@ -218,7 +218,7 @@ class InsertManager {
      * @param {string} relationshipType - 'hasMany' or 'hasManyThrough'
      * @throws {RelationshipError} If validation fails or entity not resolved
      */
-    _processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, relationshipType) {
+    async _processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, relationshipType) {
         // skip when not provided; only enforce array type if user supplied a value
         if (propertyModel === undefined || propertyModel === null) {
             return;
@@ -263,7 +263,7 @@ class InsertManager {
 
             propertyModel[propertykey].__entity = resolved;
             propertyModel[propertykey][currentModel.__entity.__name] = SQL.id;
-            this.runQueries(propertyModel[propertykey]);
+            await this.runQueries(propertyModel[propertykey]);
         }
     }
 

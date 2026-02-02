@@ -1478,7 +1478,7 @@ class context {
         }
 
         // Load entity
-        const entity = EntityClass.findById(primaryKey);
+        const entity = await EntityClass.findById(primaryKey);
         if (!entity) {
             throw new EntityValidationError(
                 `${entityName} with id ${primaryKey} not found`,

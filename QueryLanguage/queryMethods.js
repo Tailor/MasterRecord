@@ -164,7 +164,7 @@ class queryMethods{
     // ------------------------------- FUNCTIONS THAT MAKE THE SQL CALL START FROM HERE ON -----------------------------------------------------
     // ---------------------------------------------------------------------------------------------------------------------------------------
 
-    count(query,  ...args){
+    async count(query,  ...args){
         if(query){
             var str = query.toString();
             str = this.__validateAndCollectParameters(str, args, 'count');
@@ -173,7 +173,7 @@ class queryMethods{
 
         if(this.__context.isSQLite){
             // trying to match string select and relace with select Count(*);
-            var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
@@ -181,7 +181,7 @@ class queryMethods{
 
         if(this.__context.isMySQL){
             // trying to match string select and relace with select Count(*);
-            var entityValue = this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
@@ -309,7 +309,7 @@ class queryMethods{
     }
 
     // Convenience method: Find record by primary key ID
-    findById(id){
+    async findById(id){
         // Find the primary key field in the entity
         let primaryKeyField = null;
         for (const fieldName in this.__entity) {
@@ -329,10 +329,10 @@ class queryMethods{
         const whereClause = `${entityParam} => ${entityParam}.${primaryKeyField} == $$`;
 
         // Chain where() and single()
-        return this.where(whereClause, id).single();
+        return await this.where(whereClause, id).single();
     }
 
-    single(){
+    async single(){
         // If no clauses were used before single(), seed defaults so SQL is valid
         if(this.__queryObject.script.entityMap.length === 0){
             this.__queryObject.skipClause(this.__entity.__name);
@@ -357,12 +357,12 @@ class queryMethods{
         // Cache miss - execute query
         var result = null;
         if(this.__context.isSQLite){
-            var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue);
         }
 
         if(this.__context.isMySQL){
-            var entityValue = this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue[0]);
         }
 
@@ -375,7 +375,7 @@ class queryMethods{
         return result;
     }
 
-    toList(){
+    async toList(){
         if(this.__queryObject.script.entityMap.length === 0){
             this.__queryObject.skipClause( this.__entity.__name);
             if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
@@ -401,12 +401,12 @@ class queryMethods{
         // Cache miss - execute query
         var result = [];
         if(this.__context.isSQLite){
-            var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
         }
 
         if(this.__context.isMySQL){
-            var entityValue = this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
         }
 
