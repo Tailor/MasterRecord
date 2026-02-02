@@ -186,6 +186,14 @@ class queryMethods{
             this.__reset();
             return val;
         }
+
+        if(this.__context.isPostgres){
+            // trying to match string select and relace with select Count(*);
+            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var val = entityValue[Object.keys(entityValue)[0]];
+            this.__reset();
+            return val;
+        }
     }
 
     /**
@@ -366,6 +374,11 @@ class queryMethods{
             result = this.__singleEntityBuilder(entityValue[0]);
         }
 
+        if(this.__context.isPostgres){
+            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            result = this.__singleEntityBuilder(entityValue[0]);
+        }
+
         // Store in cache
         if (this.__useCache && result) {
             this.__context._queryCache.set(cacheKey, result, tableName);
@@ -406,6 +419,11 @@ class queryMethods{
         }
 
         if(this.__context.isMySQL){
+            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            result = this.__multipleEntityBuilder(entityValue);
+        }
+
+        if(this.__context.isPostgres){
             var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
         }
