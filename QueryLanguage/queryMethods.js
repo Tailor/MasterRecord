@@ -282,9 +282,10 @@ class queryMethods{
 
                     // Add array parameters and get comma-separated placeholders
                     const placeholders = this.__queryObject.parameters.addParams(itemArray, dbType);
-                    // Replace $$ first (preferred), then $ (backwards compatibility)
+                    // Replace ONLY FIRST $$ occurrence (not all with /g flag)
+                    // This ensures each parameter gets replaced in order
                     if(str.includes('$$')){
-                        str = str.replace(/\$\$/g, placeholders);
+                        str = str.replace(/\$\$/, placeholders);  // ✅ No 'g' flag - replace first only
                     } else {
                         // Replace single $ but not $N (postgres placeholders)
                         str = str.replace(/\$(?!\d)/, placeholders);
@@ -303,9 +304,10 @@ class queryMethods{
 
                     // Add parameter and replace placeholder
                     const placeholder = this.__queryObject.parameters.addParam(item, dbType);
-                    // Replace $$ first (preferred), then $ (backwards compatibility)
+                    // Replace ONLY FIRST $$ occurrence (not all with /g flag)
+                    // This ensures each parameter gets replaced in order
                     if(str.includes('$$')){
-                        str = str.replace(/\$\$/g, placeholder);
+                        str = str.replace(/\$\$/, placeholder);  // ✅ No 'g' flag - replace first only
                     } else {
                         // Replace single $ but not $N (postgres placeholders)
                         str = str.replace(/\$(?!\d)/, placeholder);

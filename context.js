@@ -983,7 +983,15 @@ class context {
         this.__entities.push(validModel);  // Store model object
         const buildMod = tools.createNewInstance(validModel, query, this);
         this.__builderEntities.push(buildMod);  // Store query builder entity
-        this[validModel.__name] = buildMod;  // Attach to context for easy access
+
+        // Use getter to return fresh query instance each time (prevents parameter accumulation)
+        Object.defineProperty(this, validModel.__name, {
+            get: function() {
+                return tools.createNewInstance(validModel, query, this);
+            },
+            configurable: true,
+            enumerable: true
+        });
     }
 
     /**

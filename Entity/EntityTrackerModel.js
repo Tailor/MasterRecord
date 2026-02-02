@@ -14,11 +14,12 @@ class EntityTrackerModel {
         var modelClass = this.buildObject(); // build entity with models
         modelClass.__proto__ = {};
         const modelFields = Object.entries(dataModel); /// return array of objects
+
         modelClass.__entity = currentEntity;
         modelClass.__name = currentEntity.__name;
         modelClass.__context = context;
         this.buildRelationshipModels(modelClass, currentEntity, dataModel);
-        
+
         // loop through data model fields
         for (const [modelField, modelFieldValue] of modelFields) {
 
