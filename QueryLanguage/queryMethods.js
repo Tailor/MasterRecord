@@ -284,7 +284,7 @@ class queryMethods{
                     const placeholders = this.__queryObject.parameters.addParams(itemArray, dbType);
                     // Replace $$ first (preferred), then $ (backwards compatibility)
                     if(str.includes('$$')){
-                        str = str.replace("$$", placeholders);
+                        str = str.replace(/\$\$/g, placeholders);
                     } else {
                         // Replace single $ but not $N (postgres placeholders)
                         str = str.replace(/\$(?!\d)/, placeholders);
@@ -305,7 +305,7 @@ class queryMethods{
                     const placeholder = this.__queryObject.parameters.addParam(item, dbType);
                     // Replace $$ first (preferred), then $ (backwards compatibility)
                     if(str.includes('$$')){
-                        str = str.replace("$$", placeholder);
+                        str = str.replace(/\$\$/g, placeholder);
                     } else {
                         // Replace single $ but not $N (postgres placeholders)
                         str = str.replace(/\$(?!\d)/, placeholder);
