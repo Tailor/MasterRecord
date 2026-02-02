@@ -416,7 +416,7 @@ const user = db.User.new();
 user.tags = ['admin', 'moderator'];  // Assign array
 await db.saveChanges();  // Stored as '["admin","moderator"]'
 
-const loaded = db.User.findById(user.id);
+const loaded = await db.User.findById(user.id);
 console.log(loaded.tags);  // ['admin', 'moderator'] - JavaScript array!
 ```
 
@@ -425,19 +425,19 @@ console.log(loaded.tags);  // ['admin', 'moderator'] - JavaScript array!
 ### Basic Queries
 
 ```javascript
-// Find all
-const users = db.User.toList();
+// Find all (requires await)
+const users = await db.User.toList();
 
-// Find by primary key
-const user = db.User.findById(123);
+// Find by primary key (requires await)
+const user = await db.User.findById(123);
 
-// Find single with where clause
-const alice = db.User
+// Find single with where clause (requires await)
+const alice = await db.User
     .where(u => u.email == $$, 'alice@example.com')
     .single();
 
-// Find multiple with conditions
-const adults = db.User
+// Find multiple with conditions (requires await)
+const adults = await db.User
     .where(u => u.age >= $$, 18)
     .toList();
 ```
@@ -447,16 +447,16 @@ const adults = db.User
 **Always use `$$` placeholders** for SQL injection protection:
 
 ```javascript
-// Single parameter
-const user = db.User.where(u => u.id == $$, 123).single();
+// Single parameter (requires await)
+const user = await db.User.where(u => u.id == $$, 123).single();
 
-// Multiple parameters
-const results = db.User
+// Multiple parameters (requires await)
+const results = await db.User
     .where(u => u.age > $$ && u.status == $$, 25, 'active')
     .toList();
 
-// Single $ for OR conditions
-const results = db.User
+// Single $ for OR conditions (requires await)
+const results = await db.User
     .where(u => u.status == $ || u.status == null, 'active')
     .toList();
 ```
@@ -464,22 +464,22 @@ const results = db.User
 ### IN Clauses
 
 ```javascript
-// Array parameter with .includes()
+// Array parameter with .includes() (requires await)
 const ids = [1, 2, 3, 4, 5];
-const users = db.User
+const users = await db.User
     .where(u => $$.includes(u.id), ids)
     .toList();
 
 // Generated SQL: WHERE id IN ($1, $2, $3, $4, $5)
 // PostgreSQL parameters: [1, 2, 3, 4, 5]
 
-// Alternative .any() syntax
-const users = db.User
+// Alternative .any() syntax (requires await)
+const users = await db.User
     .where(u => u.id.any($$), [1, 2, 3])
     .toList();
 
-// Comma-separated strings (auto-splits)
-const users = db.User
+// Comma-separated strings (auto-splits) (requires await)
+const users = await db.User
     .where(u => u.id.any($$), "1,2,3,4,5")
     .toList();
 ```
@@ -498,8 +498,8 @@ if (minAge) {
     query = query.where(u => u.age >= $$, minAge);
 }
 
-// Add sorting and pagination
-const users = query
+// Add sorting and pagination (requires await)
+const users = await query
     .orderBy(u => u.created_at)
     .skip(offset)
     .take(limit)
@@ -509,13 +509,13 @@ const users = query
 ### Ordering
 
 ```javascript
-// Ascending
-const users = db.User
+// Ascending (requires await)
+const users = await db.User
     .orderBy(u => u.name)
     .toList();
 
-// Descending
-const users = db.User
+// Descending (requires await)
+const users = await db.User
     .orderByDescending(u => u.created_at)
     .toList();
 ```
@@ -523,17 +523,17 @@ const users = db.User
 ### Pagination
 
 ```javascript
-// Skip 20, take 10
-const users = db.User
+// Skip 20, take 10 (requires await)
+const users = await db.User
     .orderBy(u => u.id)
     .skip(20)
     .take(10)
     .toList();
 
-// Page-based pagination
+// Page-based pagination (requires await)
 const page = 2;
 const pageSize = 10;
-const users = db.User
+const users = await db.User
     .skip(page * pageSize)
     .take(pageSize)
     .toList();
@@ -542,11 +542,11 @@ const users = db.User
 ### Counting
 
 ```javascript
-// Count all
-const total = db.User.count();
+// Count all (requires await)
+const total = await db.User.count();
 
-// Count with conditions
-const activeCount = db.User
+// Count with conditions (requires await)
+const activeCount = await db.User
     .where(u => u.status == $$, 'active')
     .count();
 ```
@@ -554,19 +554,19 @@ const activeCount = db.User
 ### Complex Queries
 
 ```javascript
-// Multiple conditions with OR
-const results = db.User
+// Multiple conditions with OR (requires await)
+const results = await db.User
     .where(u => (u.status == 'active' || u.status == 'pending') && u.age >= $$, 18)
     .orderBy(u => u.name)
     .toList();
 
-// Nullable checks
-const usersWithoutEmail = db.User
+// Nullable checks (requires await)
+const usersWithoutEmail = await db.User
     .where(u => u.email == null)
     .toList();
 
-// LIKE queries
-const matching = db.User
+// LIKE queries (requires await)
+const matching = await db.User
     .where(u => u.name.like($$), '%john%')
     .toList();
 ```
@@ -838,13 +838,13 @@ const user = db.User.findById(1);  // DB query
 const user2 = db.User.findById(1);  // DB query again (no cache)
 
 // OPT-IN: Enable caching with .cache()
-const categories = db.Categories.cache().toList();  // DB query, cached
-const categories2 = db.Categories.cache().toList();  // Cache hit! (instant)
+const categories = await db.Categories.cache().toList();  // DB query, cached
+const categories2 = await db.Categories.cache().toList();  // Cache hit! (instant)
 
 // Update invalidates cache automatically
-const cat = db.Categories.findById(1);
+const cat = await db.Categories.findById(1);
 cat.name = "Updated";
-db.saveChanges();  // Cache for Categories table cleared
+await db.saveChanges();  // Cache for Categories table cleared
 
 // End request (clears cache - like Active Record)
 db.endRequest();  // Cache cleared for next request
@@ -865,9 +865,9 @@ app.use((req, res, next) => {
 });
 
 // In your routes
-app.get('/categories', (req, res) => {
+app.get('/categories', async (req, res) => {
     // Cache is fresh for this request
-    const categories = req.db.Categories.cache().toList();
+    const categories = await req.db.Categories.cache().toList();
     res.json(categories);
     // Cache auto-cleared after response
 });
@@ -900,14 +900,14 @@ Use `.cache()` for frequently accessed, rarely changed data:
 
 ```javascript
 // DEFAULT: Always hits database (safe)
-const liveData = db.Analytics
+const liveData = await db.Analytics
     .where(a => a.date == $$, today)
     .toList();  // No caching (default)
 
 // OPT-IN: Cache reference data
-const categories = db.Categories.cache().toList();  // Cached for 5 seconds (default TTL)
-const settings = db.Settings.cache().toList();  // Cached
-const countries = db.Countries.cache().toList();  // Cached
+const categories = await db.Categories.cache().toList();  // Cached for 5 seconds (default TTL)
+const settings = await db.Settings.cache().toList();  // Cached
+const countries = await db.Countries.cache().toList();  // Cached
 
 // When to use .cache():
 // ✅ Reference data (categories, settings, countries)
@@ -940,7 +940,7 @@ db.clearQueryCache();
 
 // Disable caching temporarily
 db.setQueryCacheEnabled(false);
-const freshData = db.User.toList();
+const freshData = await db.User.toList();
 db.setQueryCacheEnabled(true);
 ```
 
@@ -983,21 +983,21 @@ MasterRecord automatically invalidates cache entries when data changes:
 
 ```javascript
 // Query with caching enabled
-const categories = db.Categories.cache().toList();  // DB query, cached
+const categories = await db.Categories.cache().toList();  // DB query, cached
 
 // Any modification to Categories table invalidates ALL cached Category queries
-const cat = db.Categories.findById(1);
+const cat = await db.Categories.findById(1);
 cat.name = "Updated";
-db.saveChanges();  // Invalidates all cached Categories queries
+await db.saveChanges();  // Invalidates all cached Categories queries
 
 // Next cached query hits database (fresh data)
-const categoriesAgain = db.Categories.cache().toList();  // DB query (cache cleared)
+const categoriesAgain = await db.Categories.cache().toList();  // DB query (cache cleared)
 
 // Non-cached queries are unaffected (always fresh)
-const users = db.User.toList();  // No .cache() = always DB query
+const users = await db.User.toList();  // No .cache() = always DB query
 
 // Queries for OTHER tables' caches are unaffected
-const settings = db.Settings.cache().toList();  // Still cached (different table)
+const settings = await db.Settings.cache().toList();  // Still cached (different table)
 ```
 
 **Invalidation rules:**
@@ -1024,12 +1024,12 @@ Expected performance improvements:
 **DO use .cache():**
 ```javascript
 // Reference data (rarely changes)
-const categories = db.Categories.cache().toList();
-const settings = db.Settings.cache().toList();
-const countries = db.Countries.cache().toList();
+const categories = await db.Categories.cache().toList();
+const settings = await db.Settings.cache().toList();
+const countries = await db.Countries.cache().toList();
 
 // Expensive aggregations (stable results)
-const totalRevenue = db.Orders
+const totalRevenue = await db.Orders
     .where(o => o.year == $$, 2024)
     .cache()
     .count();
@@ -1038,20 +1038,20 @@ const totalRevenue = db.Orders
 **DON'T use .cache():**
 ```javascript
 // User-specific data (default is safe - no caching)
-const user = db.User.findById(userId);  // Always fresh
+const user = await db.User.findById(userId);  // Always fresh
 
 // Real-time data (default is safe)
-const liveOrders = db.Orders
+const liveOrders = await db.Orders
     .where(o => o.status == $$, 'pending')
     .toList();  // Always fresh
 
 // Financial transactions (default is safe)
-const balance = db.Transactions
+const balance = await db.Transactions
     .where(t => t.user_id == $$, userId)
     .toList();  // Always fresh
 
 // User-specific sensitive data (default is safe)
-const permissions = db.UserPermissions
+const permissions = await db.UserPermissions
     .where(p => p.user_id == $$, userId)
     .toList();  // Always fresh
 ```
@@ -1089,12 +1089,12 @@ app.use((req, res, next) => {
 });
 
 // In routes - cache is fresh per request
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
     // First call in this request - DB query
-    const categories = req.db.Categories.cache().toList();
+    const categories = await req.db.Categories.cache().toList();
 
     // Second call in same request - cache hit
-    const categoriesAgain = req.db.Categories.cache().toList();
+    const categoriesAgain = await req.db.Categories.cache().toList();
 
     res.json(categories);
     // After response, cache is automatically cleared
@@ -1118,18 +1118,18 @@ const db1 = new AppContext();
 const db2 = new AppContext();
 
 // Context 1: Cache data with .cache()
-const categories1 = db1.Categories.cache().toList();  // DB query, cached
+const categories1 = await db1.Categories.cache().toList();  // DB query, cached
 
 // Context 2: Sees cached data
-const categories2 = db2.Categories.cache().toList();  // Cache hit!
+const categories2 = await db2.Categories.cache().toList();  // Cache hit!
 
 // Context 2: Updates invalidate cache for BOTH contexts
-const cat = db2.Categories.findById(1);
+const cat = await db2.Categories.findById(1);
 cat.name = "Updated";
-db2.saveChanges();  // Invalidates shared cache
+await db2.saveChanges();  // Invalidates shared cache
 
 // Context 1: Sees fresh data
-const categories3 = db1.Categories.cache().toList();  // Cache miss, fresh data
+const categories3 = await db1.Categories.cache().toList();  // Cache miss, fresh data
 console.log(categories3[0].name);  // "Updated"
 ```
 
@@ -1168,8 +1168,9 @@ class AnalyticsContext extends context {
 const userDb = new UserContext();
 const analyticsDb = new AnalyticsContext();
 
-const user = userDb.User.findById(123);
-analyticsDb.Event.new().log('user_login', user.id);
+const user = await userDb.User.findById(123);
+const event = analyticsDb.Event.new();
+event.log('user_login', user.id);
 await analyticsDb.saveChanges();
 ```
 
@@ -1232,7 +1233,7 @@ context.setQueryCacheEnabled(bool)   // Enable/disable caching
 ### Query Methods
 
 ```javascript
-// Chainable query builders
+// Chainable query builders (do not execute query)
 .where(query, ...params)         // Add WHERE condition
 .and(query, ...params)           // Add AND condition
 .orderBy(field)                  // Sort ascending
@@ -1242,18 +1243,18 @@ context.setQueryCacheEnabled(bool)   // Enable/disable caching
 .include(relationship)           // Eager load
 .cache()                         // Enable caching for this query (opt-in)
 
-// Terminal methods (execute query)
-.toList()                        // Return array of all records
-.single()                        // Return one or null
-.first()                         // Return first or null
-.count()                         // Return count
-.any()                           // Return boolean
+// Terminal methods (execute query - ALL REQUIRE AWAIT)
+await .toList()                  // Return array of all records
+await .single()                  // Return one or null
+await .first()                   // Return first or null
+await .count()                   // Return count
+await .any()                     // Return boolean
 
-// Convenience methods
-.findById(id)                    // Find by primary key
-.new()                           // Create new entity instance
+// Convenience methods (REQUIRE AWAIT)
+await .findById(id)              // Find by primary key
+.new()                           // Create new entity instance (synchronous)
 
-// Entity methods (Active Record style)
+// Entity methods (Active Record style - REQUIRE AWAIT)
 await entity.save()              // Save this entity (and all tracked changes)
 ```
 
@@ -1315,14 +1316,14 @@ demo();
 async function getUsers(page = 0, pageSize = 10) {
     const db = new AppContext();
 
-    const users = db.User
+    const users = await db.User
         .where(u => u.status == $$, 'active')
         .orderBy(u => u.created_at)
         .skip(page * pageSize)
         .take(pageSize)
         .toList();
 
-    const total = db.User
+    const total = await db.User
         .where(u => u.status == $$, 'active')
         .count();
 
@@ -1373,7 +1374,7 @@ async function searchUsers(filters) {
             .take(filters.pageSize);
     }
 
-    return query.toList();
+    return await query.toList();
 }
 ```
 
@@ -1403,7 +1404,7 @@ post.author_id = author.id;
 await db.saveChanges();
 
 // Query with relationships
-const posts = db.Post
+const posts = await db.Post
     .where(p => p.author_id == $$, author.id)
     .toList();
 
@@ -1416,15 +1417,15 @@ console.log(`${author.name} has ${posts.length} posts`);
 
 ```javascript
 // ✅ GOOD: Cache reference data that rarely changes
-const categories = db.Categories.cache().toList();  // Opt-in caching
-const settings = db.Settings.cache().toList();
+const categories = await db.Categories.cache().toList();  // Opt-in caching
+const settings = await db.Settings.cache().toList();
 
 // ✅ GOOD: Queries without .cache() are always fresh (safe default)
-const user1 = db.User.findById(123);  // Always DB query (no cache)
-const user2 = db.User.findById(123);  // Always DB query (no cache)
+const user1 = await db.User.findById(123);  // Always DB query (no cache)
+const user2 = await db.User.findById(123);  // Always DB query (no cache)
 
 // ✅ GOOD: Cache expensive queries with stable results
-const revenue2024 = db.Orders
+const revenue2024 = await db.Orders
     .where(o => o.year == $$, 2024)
     .cache()  // Historical data doesn't change
     .count();
@@ -1472,13 +1473,13 @@ class User {
 
 ```javascript
 // ✅ GOOD: Limit results
-const recentUsers = db.User
+const recentUsers = await db.User
     .orderByDescending(u => u.created_at)
     .take(100)
     .toList();
 
 // ❌ BAD: Load everything
-const allUsers = db.User.toList();
+const allUsers = await db.User.toList();
 ```
 
 ### 5. Use Connection Pooling (PostgreSQL)
@@ -1500,7 +1501,7 @@ MasterRecord uses **parameterized queries throughout** to prevent SQL injection:
 
 ```javascript
 // ✅ SAFE: Parameterized
-const user = db.User.where(u => u.name == $$, userInput).single();
+const user = await db.User.where(u => u.name == $$, userInput).single();
 
 // ❌ UNSAFE: Never do this
 // const query = `SELECT * FROM User WHERE name = '${userInput}'`;
@@ -1520,12 +1521,12 @@ While SQL injection is prevented, always validate business logic:
 
 ```javascript
 // Validate input before querying
-function getUser(userId) {
+async function getUser(userId) {
     if (!Number.isInteger(userId) || userId <= 0) {
         throw new Error('Invalid user ID');
     }
 
-    return db.User.findById(userId);
+    return await db.User.findById(userId);
 }
 ```
 
