@@ -66,6 +66,9 @@ class EntityTrackerModel {
                                 }else{
                                     return this["__proto__"]["_" + modelField];
                                 }
+                            }else{
+                                // If skipGetFunction is true, return the raw value
+                                return this["__proto__"]["_" + modelField];
                             }
                         }else{
                             return this["__proto__"]["_" + modelField];
