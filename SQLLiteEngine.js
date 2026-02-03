@@ -583,6 +583,10 @@ class SQLLiteEngine {
     var $that = this;
     for (var ent in entity) {
             if(!ent.startsWith("_")){
+                // Skip lifecycle hooks - they are not database columns
+                if(entity[ent].lifecycle === true){
+                    continue;
+                }
                 if(!entity[ent].foreignKey){
                     if(entity[ent].relationshipTable){
                         if($that.chechUnsupportedWords(entity[ent].relationshipTable)){

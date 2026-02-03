@@ -17,16 +17,34 @@ class EntityModelBuilder {
         if (constructorIndex > -1) {
             methodNamesArray.splice(constructorIndex, 1);
         }
+
+        // Define lifecycle hook method names that should not be treated as field definitions
+        const lifecycleHooks = ['beforeSave', 'afterSave', 'beforeDelete', 'afterDelete'];
+
         // loop through all method names in the entity model
         for (var i = 0; i < methodNamesArray.length; i++) {
+            const methodName = methodNamesArray[i];
+
+            // Skip lifecycle hooks - they should not be called during entity construction
+            if (lifecycleHooks.includes(methodName)) {
+                // Store lifecycle hooks with the actual method function so they can be copied to entity instances
+                obj[methodName] = {
+                    virtual: true,
+                    lifecycle: true,
+                    name: methodName,
+                    method: mod[methodName] // Store the method (not bound yet - will be bound to entity instance)
+                };
+                continue;
+            }
+
             let MDB = new modelDB(model.name); // create a new instance of entity Model class
-            mod[methodNamesArray[i]](MDB);
+            mod[methodName](MDB);
             this.cleanNull(MDB.obj); // remove objects that are null or undefined
             if(Object.keys(MDB.obj).length === 0){
                 MDB.obj.virtual = true;
             }
-            MDB.obj.name = methodNamesArray[i];
-            obj[methodNamesArray[i]] = MDB.obj;
+            MDB.obj.name = methodName;
+            obj[methodName] = MDB.obj;
         }
         return obj;
     }

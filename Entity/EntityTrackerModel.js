@@ -45,6 +45,67 @@ class EntityTrackerModel {
 
                 Object.defineProperty(modelClass,modelField, {
                     set: function(value) {
+                        // Run validators before setting value
+                        const fieldDef = currentEntity[modelField];
+                        if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
+                            for (const validator of fieldDef.validators) {
+                                let isValid = true;
+                                let errorMsg = validator.message;
+
+                                switch (validator.type) {
+                                    case 'required':
+                                        isValid = value !== null && value !== undefined && value !== '';
+                                        break;
+
+                                    case 'email':
+                                        if (value) {
+                                            isValid = validator.pattern.test(value);
+                                        }
+                                        break;
+
+                                    case 'minLength':
+                                        if (value && typeof value === 'string') {
+                                            isValid = value.length >= validator.length;
+                                        }
+                                        break;
+
+                                    case 'maxLength':
+                                        if (value && typeof value === 'string') {
+                                            isValid = value.length <= validator.length;
+                                        }
+                                        break;
+
+                                    case 'pattern':
+                                        if (value) {
+                                            isValid = validator.pattern.test(value);
+                                        }
+                                        break;
+
+                                    case 'min':
+                                        if (value !== null && value !== undefined) {
+                                            isValid = Number(value) >= validator.min;
+                                        }
+                                        break;
+
+                                    case 'max':
+                                        if (value !== null && value !== undefined) {
+                                            isValid = Number(value) <= validator.max;
+                                        }
+                                        break;
+
+                                    case 'custom':
+                                        if (typeof validator.validator === 'function') {
+                                            isValid = validator.validator(value);
+                                        }
+                                        break;
+                                }
+
+                                if (!isValid) {
+                                    throw new Error(`Validation failed: ${errorMsg}`);
+                                }
+                            }
+                        }
+
                         modelClass.__state = "modified";
                         modelClass.__dirtyFields.push(modelField);
                         // ensure this entity is tracked on any modification
@@ -93,6 +154,194 @@ class EntityTrackerModel {
             // Save all tracked changes in the context
             return await this.__context.saveChanges();
         };
+
+        // Convert entity to plain JavaScript object
+        modelClass.toObject = function(options = {}) {
+            const includeRelationships = options.includeRelationships !== false;
+            const depth = options.depth || 1;
+            const visited = options._visited || new WeakSet();
+
+            // Prevent circular reference infinite loops
+            if (visited.has(this)) {
+                return { __circular: true, __entityName: this.__name, id: this[this.__primaryKey] };
+            }
+            visited.add(this);
+
+            const plain = {};
+
+            // Method 1: Access internal _values property (v0.3.28+ architecture)
+            // This is the FASTEST method - direct access to plain data storage
+            if (this._values && typeof this._values === 'object') {
+                for (const key in this._values) {
+                    if (this._values.hasOwnProperty(key)) {
+                        plain[key] = this._values[key];
+                    }
+                }
+            } else {
+                // Method 2: Fallback - iterate through entity definition (for older versions)
+                for (const fieldName in this.__entity) {
+                    if (fieldName.startsWith('__')) continue;
+
+                    const fieldDef = this.__entity[fieldName];
+                    const isRelationship = fieldDef?.type === 'hasMany' ||
+                                           fieldDef?.type === 'hasOne' ||
+                                           fieldDef?.relationshipType === 'belongsTo';
+
+                    // Skip relationships in this pass
+                    if (!isRelationship) {
+                        try {
+                            plain[fieldName] = this[fieldName];
+                        } catch (e) {
+                            // Skip fields that throw errors when accessed
+                        }
+                    }
+                }
+            }
+
+            // Handle relationships recursively with depth limit and cycle detection
+            if (includeRelationships && depth > 0) {
+                for (const fieldName in this.__entity) {
+                    const fieldDef = this.__entity[fieldName];
+                    const isRelationship = fieldDef?.type === 'hasMany' ||
+                                           fieldDef?.type === 'hasOne' ||
+                                           fieldDef?.relationshipType === 'belongsTo';
+
+                    if (isRelationship) {
+                        try {
+                            const value = this[fieldName];
+
+                            if (Array.isArray(value)) {
+                                plain[fieldName] = value.map(item => {
+                                    if (item?.toObject && typeof item.toObject === 'function') {
+                                        return item.toObject({
+                                            depth: depth - 1,
+                                            _visited: visited
+                                        });
+                                    }
+                                    return item;
+                                });
+                            } else if (value?.toObject && typeof value.toObject === 'function') {
+                                plain[fieldName] = value.toObject({
+                                    depth: depth - 1,
+                                    _visited: visited
+                                });
+                            }
+                        } catch (e) {
+                            // Skip relationships that throw errors when accessed
+                        }
+                    }
+                }
+            }
+
+            return plain;
+        };
+
+        // JSON.stringify compatibility - prevents circular reference errors
+        modelClass.toJSON = function() {
+            return this.toObject({ includeRelationships: false });
+        };
+
+        // Delete entity from database
+        modelClass.delete = async function() {
+            if (!this.__context) {
+                throw new Error('Cannot delete: entity is not attached to a context');
+            }
+
+            // Mark entity for deletion
+            this.__state = 'delete';
+
+            // Ensure entity is tracked
+            if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
+                this.__context.__track(this);
+            }
+
+            // Execute delete via saveChanges (handles cascade deletion)
+            return await this.__context.saveChanges();
+        };
+
+        // Reload entity from database
+        modelClass.reload = async function() {
+            if (!this.__context) {
+                throw new Error('Cannot reload: entity is not attached to a context');
+            }
+
+            // Get primary key
+            const primaryKey = tools.getPrimaryKeyObject(this.__entity);
+            const primaryKeyValue = this[primaryKey];
+
+            if (!primaryKeyValue) {
+                throw new Error('Cannot reload: entity has no primary key value');
+            }
+
+            // Fetch fresh from database
+            const EntityClass = this.__context[this.__name];
+            const fresh = await EntityClass.findById(primaryKeyValue);
+            if (!fresh) {
+                throw new Error(
+                    `Cannot reload: ${this.__name} with ${primaryKey}=${primaryKeyValue} not found`
+                );
+            }
+
+            // Copy all field values from fresh entity to this entity
+            for (const fieldName in this.__entity) {
+                if (fieldName.startsWith('__')) continue;
+
+                const fieldDef = this.__entity[fieldName];
+                const isRelationship = fieldDef?.type === 'hasMany' ||
+                                       fieldDef?.type === 'hasOne' ||
+                                       fieldDef?.relationshipType === 'belongsTo';
+
+                // Only reload scalar fields
+                if (!isRelationship) {
+                    this.__proto__["_" + fieldName] = fresh.__proto__["_" + fieldName];
+                }
+            }
+
+            // Reset dirty fields and state
+            this.__dirtyFields = [];
+            this.__state = 'track';
+
+            return this;
+        };
+
+        // Clone entity for duplication
+        modelClass.clone = function() {
+            if (!this.__context) {
+                throw new Error('Cannot clone: entity is not attached to a context');
+            }
+
+            const EntityClass = this.__context[this.__name];
+            const cloned = EntityClass.new();
+
+            // Get primary key (to skip it)
+            const primaryKey = tools.getPrimaryKeyObject(this.__entity);
+
+            // Copy all non-primary key fields
+            for (const fieldName in this.__entity) {
+                if (fieldName.startsWith('__')) continue;
+                if (fieldName === primaryKey) continue;
+
+                const fieldDef = this.__entity[fieldName];
+                const isRelationship = fieldDef?.type === 'hasMany' ||
+                                       fieldDef?.type === 'hasOne' ||
+                                       fieldDef?.relationshipType === 'belongsTo';
+
+                if (!isRelationship) {
+                    cloned[fieldName] = this[fieldName];
+                }
+            }
+
+            return cloned;
+        };
+
+        // Copy lifecycle hooks from entity definition to entity instance
+        for (const fieldName in currentEntity) {
+            const fieldDef = currentEntity[fieldName];
+            if (fieldDef && fieldDef.lifecycle === true && fieldDef.method) {
+                // Bind the lifecycle hook method directly to this entity instance
+                modelClass[fieldName] = fieldDef.method.bind(modelClass);
+            }
+        }
 
         return modelClass;
     }

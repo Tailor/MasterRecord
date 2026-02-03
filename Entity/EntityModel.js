@@ -217,5 +217,141 @@ class EntityModel {
         this.obj.nullable = false;
         return this
     }
+
+    // ===== Validation Methods =====
+
+    /**
+     * Validate that field value is required (not null, undefined, or empty string)
+     * @param {string} message - Custom error message
+     */
+    required(message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'required',
+            message: message || `${this.obj.name} is required`
+        });
+        this.obj.nullable = false;
+        return this;
+    }
+
+    /**
+     * Validate email format
+     * @param {string} message - Custom error message
+     */
+    email(message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'email',
+            pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+            message: message || `${this.obj.name} must be a valid email address`
+        });
+        return this;
+    }
+
+    /**
+     * Validate minimum string length
+     * @param {number} length - Minimum length
+     * @param {string} message - Custom error message
+     */
+    minLength(length, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'minLength',
+            length: length,
+            message: message || `${this.obj.name} must be at least ${length} characters`
+        });
+        return this;
+    }
+
+    /**
+     * Validate maximum string length
+     * @param {number} length - Maximum length
+     * @param {string} message - Custom error message
+     */
+    maxLength(length, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'maxLength',
+            length: length,
+            message: message || `${this.obj.name} must be at most ${length} characters`
+        });
+        return this;
+    }
+
+    /**
+     * Validate against regex pattern
+     * @param {RegExp} pattern - Regular expression to match
+     * @param {string} message - Custom error message
+     */
+    pattern(regex, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'pattern',
+            pattern: regex,
+            message: message || `${this.obj.name} format is invalid`
+        });
+        return this;
+    }
+
+    /**
+     * Validate minimum numeric value
+     * @param {number} min - Minimum value
+     * @param {string} message - Custom error message
+     */
+    min(minValue, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'min',
+            min: minValue,
+            message: message || `${this.obj.name} must be at least ${minValue}`
+        });
+        return this;
+    }
+
+    /**
+     * Validate maximum numeric value
+     * @param {number} max - Maximum value
+     * @param {string} message - Custom error message
+     */
+    max(maxValue, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'max',
+            max: maxValue,
+            message: message || `${this.obj.name} must be at most ${maxValue}`
+        });
+        return this;
+    }
+
+    /**
+     * Custom validation function
+     * @param {Function} validatorFn - Function that returns true if valid, false if invalid
+     * @param {string} message - Custom error message
+     */
+    custom(validatorFn, message) {
+        if (!this.obj.validators) {
+            this.obj.validators = [];
+        }
+        this.obj.validators.push({
+            type: 'custom',
+            validator: validatorFn,
+            message: message || `${this.obj.name} is invalid`
+        });
+        return this;
+    }
 }
 module.exports = EntityModel;

@@ -197,6 +197,76 @@ class queryMethods{
     }
 
     /**
+     * Get first record ordered by primary key
+     */
+    async first() {
+        // Find primary key
+        let primaryKey = null;
+        for (const fieldName in this.__entity) {
+            if (this.__entity[fieldName]?.primary === true) {
+                primaryKey = fieldName;
+                break;
+            }
+        }
+
+        if (primaryKey && !this.__queryObject.script.orderBy) {
+            // Use proper orderBy syntax with lambda expression
+            const orderByExpr = `e => e.${primaryKey}`;
+            this.orderBy(orderByExpr);
+        }
+
+        this.__queryObject.script.take = 1;
+        return await this.single();
+    }
+
+    /**
+     * Get last record ordered by primary key descending
+     */
+    async last() {
+        let primaryKey = null;
+        for (const fieldName in this.__entity) {
+            if (this.__entity[fieldName]?.primary === true) {
+                primaryKey = fieldName;
+                break;
+            }
+        }
+
+        if (primaryKey && !this.__queryObject.script.orderBy) {
+            // Use proper orderByDescending syntax with lambda expression
+            const orderByExpr = `e => e.${primaryKey}`;
+            this.orderByDescending(orderByExpr);
+        }
+
+        this.__queryObject.script.take = 1;
+        return await this.single();
+    }
+
+    /**
+     * Check if any records match the query
+     */
+    async exists() {
+        this.__queryObject.script.take = 1;
+        const result = await this.single();
+        return result !== null;
+    }
+
+    /**
+     * Extract single column values as array
+     */
+    async pluck(fieldName) {
+        if (!fieldName || typeof fieldName !== 'string') {
+            throw new Error('pluck() requires a field name string');
+        }
+
+        if (!this.__entity[fieldName]) {
+            throw new Error(`Field '${fieldName}' does not exist on ${this.__entity.__name}`);
+        }
+
+        const entities = await this.toList();
+        return entities.map(entity => entity[fieldName]);
+    }
+
+    /**
      * Transform .includes() syntax to .any() syntax
      * Converts: $$.includes(entity.field) => entity.field.any($$)
      * This allows natural JavaScript array syntax while using existing .any() infrastructure
@@ -360,6 +430,7 @@ class queryMethods{
             const cached = this.__context._queryCache.get(cacheKey);
             if (cached) {
                 this.__reset();
+                // Cached entities already have methods - return directly
                 return cached;
             }
         }
@@ -409,6 +480,7 @@ class queryMethods{
             const cached = this.__context._queryCache.get(cacheKey);
             if (cached) {
                 this.__reset();
+                // Cached entities already have methods - return array directly
                 return cached;
             }
         }
@@ -467,6 +539,66 @@ class queryMethods{
                             enumerable: true,
                             configurable: true,
                             set: function(value) {
+                                // Run validators before setting value
+                                if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
+                                    for (const validator of fieldDef.validators) {
+                                        let isValid = true;
+                                        let errorMsg = validator.message;
+
+                                        switch (validator.type) {
+                                            case 'required':
+                                                isValid = value !== null && value !== undefined && value !== '';
+                                                break;
+
+                                            case 'email':
+                                                if (value) {
+                                                    isValid = validator.pattern.test(value);
+                                                }
+                                                break;
+
+                                            case 'minLength':
+                                                if (value && typeof value === 'string') {
+                                                    isValid = value.length >= validator.length;
+                                                }
+                                                break;
+
+                                            case 'maxLength':
+                                                if (value && typeof value === 'string') {
+                                                    isValid = value.length <= validator.length;
+                                                }
+                                                break;
+
+                                            case 'pattern':
+                                                if (value) {
+                                                    isValid = validator.pattern.test(value);
+                                                }
+                                                break;
+
+                                            case 'min':
+                                                if (value !== null && value !== undefined) {
+                                                    isValid = Number(value) >= validator.min;
+                                                }
+                                                break;
+
+                                            case 'max':
+                                                if (value !== null && value !== undefined) {
+                                                    isValid = Number(value) <= validator.max;
+                                                }
+                                                break;
+
+                                            case 'custom':
+                                                if (typeof validator.validator === 'function') {
+                                                    isValid = validator.validator(value);
+                                                }
+                                                break;
+                                        }
+
+                                        if (!isValid) {
+                                            throw new Error(`Validation failed: ${errorMsg}`);
+                                        }
+                                    }
+                                }
+
                                 this.__proto__["_" + fname] = value;
                                 if(!this.__dirtyFields.includes(fname)){
                                     this.__dirtyFields.push(fname);
@@ -500,8 +632,200 @@ class queryMethods{
             return await this.__context.saveChanges();
         };
 
+        // Convert entity to plain JavaScript object
+        newEntity.toObject = function(options = {}) {
+            const includeRelationships = options.includeRelationships !== false;
+            const depth = options.depth || 1;
+            const visited = options._visited || new WeakSet();
+
+            // Prevent circular reference infinite loops
+            if (visited.has(this)) {
+                return { __circular: true, __entityName: this.__name, id: this[this.__primaryKey] };
+            }
+            visited.add(this);
+
+            const plain = {};
+
+            // Iterate through entity definition
+            for (const fieldName in this.__entity) {
+                if (fieldName.startsWith('__')) continue;
+
+                const fieldDef = this.__entity[fieldName];
+                const isRelationship = fieldDef?.type === 'hasMany' ||
+                                       fieldDef?.type === 'hasOne' ||
+                                       fieldDef?.relationshipType === 'belongsTo';
+
+                // Skip relationships in this pass
+                if (!isRelationship) {
+                    try {
+                        plain[fieldName] = this[fieldName];
+                    } catch (e) {
+                        // Skip fields that throw errors when accessed
+                    }
+                }
+            }
+
+            // Handle relationships recursively with depth limit and cycle detection
+            if (includeRelationships && depth > 0) {
+                for (const fieldName in this.__entity) {
+                    const fieldDef = this.__entity[fieldName];
+                    const isRelationship = fieldDef?.type === 'hasMany' ||
+                                           fieldDef?.type === 'hasOne' ||
+                                           fieldDef?.relationshipType === 'belongsTo';
+
+                    if (isRelationship) {
+                        try {
+                            const value = this[fieldName];
+
+                            if (Array.isArray(value)) {
+                                plain[fieldName] = value.map(item => {
+                                    if (item?.toObject && typeof item.toObject === 'function') {
+                                        return item.toObject({
+                                            depth: depth - 1,
+                                            _visited: visited
+                                        });
+                                    }
+                                    return item;
+                                });
+                            } else if (value?.toObject && typeof value.toObject === 'function') {
+                                plain[fieldName] = value.toObject({
+                                    depth: depth - 1,
+                                    _visited: visited
+                                });
+                            }
+                        } catch (e) {
+                            // Skip relationships that throw errors when accessed
+                        }
+                    }
+                }
+            }
+
+            return plain;
+        };
+
+        // JSON.stringify compatibility
+        newEntity.toJSON = function() {
+            return this.toObject({ includeRelationships: false });
+        };
+
+        // Delete entity from database
+        newEntity.delete = async function() {
+            if (!this.__context) {
+                throw new Error('Cannot delete: entity is not attached to a context');
+            }
+
+            // Mark entity for deletion
+            this.__state = 'delete';
+
+            // Ensure entity is tracked
+            if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
+                this.__context.__track(this);
+            }
+
+            // Execute delete via saveChanges
+            return await this.__context.saveChanges();
+        };
+
+        // Reload entity from database
+        newEntity.reload = async function() {
+            if (!this.__context) {
+                throw new Error('Cannot reload: entity is not attached to a context');
+            }
+
+            // Get primary key
+            let primaryKey = null;
+            for (const fieldName in this.__entity) {
+                if (this.__entity[fieldName]?.primary === true) {
+                    primaryKey = fieldName;
+                    break;
+                }
+            }
+
+            const primaryKeyValue = this[primaryKey];
+
+            if (!primaryKeyValue) {
+                throw new Error('Cannot reload: entity has no primary key value');
+            }
+
+            // Fetch fresh from database
+            const EntityClass = this.__context[this.__name];
+            const fresh = await EntityClass.findById(primaryKeyValue);
+            if (!fresh) {
+                throw new Error(
+                    `Cannot reload: ${this.__name} with ${primaryKey}=${primaryKeyValue} not found`
+                );
+            }
+
+            // Copy all field values from fresh entity to this entity
+            for (const fieldName in this.__entity) {
+                if (fieldName.startsWith('__')) continue;
+
+                const fieldDef = this.__entity[fieldName];
+                const isRelationship = fieldDef?.type === 'hasMany' ||
+                                       fieldDef?.type === 'hasOne' ||
+                                       fieldDef?.relationshipType === 'belongsTo';
+
+                // Only reload scalar fields
+                if (!isRelationship) {
+                    this.__proto__["_" + fieldName] = fresh.__proto__["_" + fieldName];
+                }
+            }
+
+            // Reset dirty fields and state
+            this.__dirtyFields = [];
+            this.__state = 'track';
+
+            return this;
+        };
+
+        // Clone entity for duplication
+        newEntity.clone = function() {
+            if (!this.__context) {
+                throw new Error('Cannot clone: entity is not attached to a context');
+            }
+
+            const EntityClass = this.__context[this.__name];
+            const cloned = EntityClass.new();
+
+            // Get primary key (to skip it)
+            let primaryKey = null;
+            for (const fieldName in this.__entity) {
+                if (this.__entity[fieldName]?.primary === true) {
+                    primaryKey = fieldName;
+                    break;
+                }
+            }
+
+            // Copy all non-primary key fields
+            for (const fieldName in this.__entity) {
+                if (fieldName.startsWith('__')) continue;
+                if (fieldName === primaryKey) continue;
+
+                const fieldDef = this.__entity[fieldName];
+                const isRelationship = fieldDef?.type === 'hasMany' ||
+                                       fieldDef?.type === 'hasOne' ||
+                                       fieldDef?.relationshipType === 'belongsTo';
+
+                if (!isRelationship) {
+                    cloned[fieldName] = this[fieldName];
+                }
+            }
+
+            return cloned;
+        };
+
         // Track the entity
         this.__context.__track(newEntity);
+
+        // Copy lifecycle hooks from entity definition to entity instance
+        for (const fieldName in this.__entity) {
+            const fieldDef = this.__entity[fieldName];
+            if (fieldDef && fieldDef.lifecycle === true && fieldDef.method) {
+                // Bind the lifecycle hook method directly to this entity instance
+                newEntity[fieldName] = fieldDef.method.bind(newEntity);
+            }
+        }
+
         return newEntity;
     }
 

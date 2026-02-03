@@ -1065,14 +1065,34 @@ class context {
      * @param {Array<object>} entities - Entities to insert
      */
     async _processBatchInserts(entities) {
+        // Execute beforeSave hooks
+        for (const entity of entities) {
+            if (typeof entity.beforeSave === 'function') {
+                await entity.beforeSave.call(entity);
+            }
+        }
+
         if (entities.length === 1) {
-            // Single insert - use existing insertManager
+            // Single insert - use existing insertManager (already sets ID)
             const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
             await insert.init(entities[0]);
         } else {
             // Batch insert - 100x faster for multiple records
             try {
-                await this._SQLEngine.bulkInsert(entities);
+                const results = await this._SQLEngine.bulkInsert(entities);
+
+                // Set auto-increment IDs back on entities
+                for (let i = 0; i < entities.length; i++) {
+                    const entity = entities[i];
+                    const result = results[i];
+
+                    if (result && result.id) {
+                        const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
+                        if (entity.__entity[primaryKey]?.auto === true) {
+                            entity[primaryKey] = result.id;
+                        }
+                    }
+                }
             } catch (error) {
                 console.error('[Context] Bulk insert failed, falling back to individual inserts:', error.message);
                 // Fallback to individual inserts
@@ -1080,6 +1100,13 @@ class context {
                     const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
                     await insert.init(entity);
                 }
+            }
+        }
+
+        // Execute afterSave hooks
+        for (const entity of entities) {
+            if (typeof entity.afterSave === 'function') {
+                await entity.afterSave.call(entity);
             }
         }
     }
@@ -1091,6 +1118,13 @@ class context {
      * @param {Array<object>} entities - Entities to update
      */
     async _processBatchUpdates(entities) {
+        // Execute beforeSave hooks
+        for (const entity of entities) {
+            if (typeof entity.beforeSave === 'function') {
+                await entity.beforeSave.call(entity);
+            }
+        }
+
         if (entities.length === 1) {
             // Single update - use existing logic
             const currentModel = entities[0];
@@ -1140,6 +1174,13 @@ class context {
                 }
             }
         }
+
+        // Execute afterSave hooks
+        for (const entity of entities) {
+            if (typeof entity.afterSave === 'function') {
+                await entity.afterSave.call(entity);
+            }
+        }
     }
 
     /**
@@ -1149,6 +1190,13 @@ class context {
      * @param {Array<object>} entities - Entities to delete
      */
     async _processBatchDeletes(entities) {
+        // Execute beforeDelete hooks
+        for (const entity of entities) {
+            if (typeof entity.beforeDelete === 'function') {
+                await entity.beforeDelete.call(entity);
+            }
+        }
+
         if (entities.length === 1) {
             // Single delete - use existing deleteManager
             const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
@@ -1182,6 +1230,13 @@ class context {
                 }
             }
         }
+
+        // Execute afterDelete hooks
+        for (const entity of entities) {
+            if (typeof entity.afterDelete === 'function') {
+                await entity.afterDelete.call(entity);
+            }
+        }
     }
 
     /**
@@ -1210,8 +1265,8 @@ class context {
             // Performance: Collect affected tables for cache invalidation (single pass)
             const affectedTables = new Set();
             for (const entity of tracked) {
-                if (entity.__entity && entity.__entity.__name) {
-                    affectedTables.add(entity.__entity.__name);
+                if (entity.__name) {
+                    affectedTables.add(entity.__name);
                 }
             }
 
@@ -1292,6 +1347,136 @@ class context {
      */
     clearQueryCache() {
         this._queryCache.clear();
+    }
+
+    /**
+     * Bulk create multiple entities at once
+     *
+     * Creates multiple entity instances and saves them in a single batch operation.
+     * Much faster than creating entities individually.
+     *
+     * @param {string} entityName - Name of the entity class (e.g., 'User')
+     * @param {Array<Object>} data - Array of objects with entity properties
+     * @returns {Promise<Array<Object>>} Array of created entities with IDs set
+     *
+     * @example
+     * const users = await db.bulkCreate('User', [
+     *   { name: 'Alice', email: 'alice@example.com' },
+     *   { name: 'Bob', email: 'bob@example.com' },
+     *   { name: 'Charlie', email: 'charlie@example.com' }
+     * ]);
+     * console.log(users[0].id); // IDs are automatically set
+     */
+    async bulkCreate(entityName, data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            throw new Error('bulkCreate requires a non-empty array of data');
+        }
+
+        const EntityClass = this[entityName];
+        if (!EntityClass) {
+            throw new Error(`Entity ${entityName} not found in context`);
+        }
+
+        const entities = [];
+        for (const item of data) {
+            const entity = EntityClass.new();
+            // Copy properties from data object to entity
+            for (const key in item) {
+                if (item.hasOwnProperty(key)) {
+                    entity[key] = item[key];
+                }
+            }
+            entities.push(entity);
+        }
+
+        await this.saveChanges();
+        return entities;
+    }
+
+    /**
+     * Bulk update multiple entities at once
+     *
+     * Updates multiple existing entities in a single batch operation.
+     * Entities must already be tracked in the context.
+     *
+     * @param {string} entityName - Name of the entity class (e.g., 'User')
+     * @param {Array<Object>} updates - Array of objects with id and properties to update
+     * @returns {Promise<boolean>} True if updates were successful
+     *
+     * @example
+     * await db.bulkUpdate('User', [
+     *   { id: 1, status: 'active' },
+     *   { id: 2, status: 'active' },
+     *   { id: 3, status: 'inactive' }
+     * ]);
+     */
+    async bulkUpdate(entityName, updates) {
+        if (!Array.isArray(updates) || updates.length === 0) {
+            throw new Error('bulkUpdate requires a non-empty array of updates');
+        }
+
+        const EntityClass = this[entityName];
+        if (!EntityClass) {
+            throw new Error(`Entity ${entityName} not found in context`);
+        }
+
+        // Fetch all entities by ID
+        const ids = updates.map(u => u.id).filter(id => id !== undefined);
+        if (ids.length !== updates.length) {
+            throw new Error('All update objects must have an id property');
+        }
+
+        // Load entities and apply updates
+        for (const update of updates) {
+            const entity = await EntityClass.findById(update.id);
+            if (!entity) {
+                throw new Error(`${entityName} with id ${update.id} not found`);
+            }
+
+            // Apply updates to entity
+            for (const key in update) {
+                if (update.hasOwnProperty(key) && key !== 'id') {
+                    entity[key] = update[key];
+                }
+            }
+        }
+
+        await this.saveChanges();
+        return true;
+    }
+
+    /**
+     * Bulk delete multiple entities at once
+     *
+     * Deletes multiple entities by their IDs in a single batch operation.
+     * Much faster than deleting entities individually.
+     *
+     * @param {string} entityName - Name of the entity class (e.g., 'User')
+     * @param {Array<number|string>} ids - Array of entity IDs to delete
+     * @returns {Promise<boolean>} True if deletions were successful
+     *
+     * @example
+     * await db.bulkDelete('User', [1, 2, 3, 4, 5]);
+     */
+    async bulkDelete(entityName, ids) {
+        if (!Array.isArray(ids) || ids.length === 0) {
+            throw new Error('bulkDelete requires a non-empty array of IDs');
+        }
+
+        const EntityClass = this[entityName];
+        if (!EntityClass) {
+            throw new Error(`Entity ${entityName} not found in context`);
+        }
+
+        // Load entities and mark for deletion
+        for (const id of ids) {
+            const entity = await EntityClass.findById(id);
+            if (entity) {
+                await entity.delete();
+            }
+        }
+
+        return true;
     }
 
     /**

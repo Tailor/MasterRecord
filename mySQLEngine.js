@@ -93,7 +93,13 @@ class MySQLEngine {
 
             const query = `INSERT INTO \`${first.tableName}\` (${first.columns}) VALUES ${valueGroups.join(', ')}`;
             const result = await this._runWithParams(query, allParams);
-            results.push(result);
+
+            // MySQL returns insertId (first ID) and affectedRows (count)
+            // Generate individual result objects for each entity
+            const firstId = result.insertId;
+            for (let i = 0; i < tableEntities.length; i++) {
+                results.push({ id: firstId + i });
+            }
         }
 
         return results;
@@ -447,6 +453,10 @@ class MySQLEngine {
 
         for (const ent in entity) {
             if (!ent.startsWith("_")) {
+                // Skip lifecycle hooks - they are not database columns
+                if (entity[ent].lifecycle === true) {
+                    continue;
+                }
                 if (!entity[ent].foreignKey) {
                     if (entity[ent].relationshipTable) {
                         if ($that.chechUnsupportedWords(entity[ent].relationshipTable)) {

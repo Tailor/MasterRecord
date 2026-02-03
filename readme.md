@@ -10,6 +10,11 @@
 🔹 **Multi-Database Support** - MySQL, PostgreSQL, SQLite with consistent API
 🔹 **Code-First Design** - Define entities in JavaScript, generate schema automatically
 🔹 **Fluent Query API** - Lambda-based queries with parameterized placeholders
+🔹 **Active Record Pattern** - Entities with `.save()`, `.delete()`, `.reload()` methods
+🔹 **Entity Serialization** - `.toObject()` and `.toJSON()` with circular reference protection
+🔹 **Lifecycle Hooks** - `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete` hooks
+🔹 **Business Validation** - Built-in validators (required, email, length, pattern, custom)
+🔹 **Bulk Operations** - Efficient `bulkCreate`, `bulkUpdate`, `bulkDelete` APIs
 🔹 **Query Result Caching** - Production-grade in-memory and Redis caching with automatic invalidation
 🔹 **Migration System** - CLI-driven migrations with rollback support
 🔹 **SQL Injection Protection** - Automatic parameterized queries throughout
@@ -33,6 +38,24 @@
 - [Database Configuration](#database-configuration)
 - [Entity Definitions](#entity-definitions)
 - [Querying](#querying)
+- [Entity Serialization](#entity-serialization)
+  - [.toObject()](#toobjectoptions)
+  - [.toJSON()](#tojson)
+- [Entity Instance Methods](#entity-instance-methods)
+  - [.delete()](#delete)
+  - [.reload()](#reload)
+  - [.clone()](#clone)
+- [Query Helper Methods](#query-helper-methods)
+  - [.first()](#first)
+  - [.last()](#last)
+  - [.exists()](#exists)
+  - [.pluck()](#pluckfieldname)
+- [Lifecycle Hooks](#lifecycle-hooks)
+- [Business Logic Validation](#business-logic-validation)
+- [Bulk Operations API](#bulk-operations-api)
+  - [bulkCreate()](#bulkcreateentityname-data)
+  - [bulkUpdate()](#bulkupdateentityname-updates)
+  - [bulkDelete()](#bulkdeleteentityname-ids)
 - [Migrations](#migrations)
 - [Advanced Features](#advanced-features)
   - [Query Result Caching](#query-result-caching)
@@ -45,6 +68,113 @@
 - [Examples](#examples)
 - [Performance Tips](#performance-tips)
 - [Security](#security)
+- [Best Practices](#best-practices-critical)
+
+---
+
+## ⚠️ Best Practices (CRITICAL)
+
+### 1. Creating Entity Instances
+
+**ALWAYS** use `context.Entity.new()` to create new entity instances:
+
+```javascript
+// ✅ CORRECT - Creates proper data instance with getters/setters
+const task = this._qaContext.QaTask.new();
+const annotation = this._qaContext.QaAnnotation.new();
+const project = this._qaContext.QaProject.new();
+
+task.name = "My Task";
+task.status = "active";
+await db.saveChanges();  // ✅ Saves correctly
+
+// ❌ WRONG - Creates schema definition object with function properties
+const task = new QaTask();  // task.name is a FUNCTION, not a property!
+
+task.name = "My Task";  // ❌ Doesn't work - name is a function
+await db.saveChanges();  // ❌ Error: "Type mismatch: Expected string, got function"
+```
+
+**Why?**
+- `new Entity()` creates a **schema definition object** where properties are methods that define the schema
+- `context.Entity.new()` creates a **data instance** with proper getters/setters for storing values
+- Using `new Entity()` causes runtime errors: `"Type mismatch for Entity.field: Expected integer, got function with value undefined"`
+
+**Error Example:**
+```
+Error: INSERT failed: Type mismatch for QaTask.name: Expected string, got function with value undefined
+    at SQLLiteEngine._buildSQLInsertObjectParameterized
+```
+
+**This error means:** You used `new Entity()` instead of `context.Entity.new()`
+
+### 2. Saving Changes - ALWAYS use `await`
+
+**ALWAYS** use `await` when calling `saveChanges()`:
+
+```javascript
+// ✅ CORRECT - Waits for database write to complete
+await this._qaContext.saveChanges();
+
+// ❌ WRONG - Returns immediately without waiting for database write
+this._qaContext.saveChanges();  // Promise never completes!
+```
+
+**Why?**
+- `saveChanges()` is **async** and returns a Promise
+- Without `await`, code continues before database write completes
+- Causes **data loss** - appears successful but nothing saves to database
+- Results in "phantom saves" - data in memory but not persisted
+
+**Symptoms of missing `await`:**
+- API returns success but data not in database
+- Queries after save return old/missing data
+- Intermittent save failures
+- Race conditions
+
+**Repository Pattern - Make Methods Async:**
+```javascript
+// ✅ CORRECT - Async method with await
+async create(entity) {
+    this._qaContext.Entity.add(entity);
+    await this._qaContext.saveChanges();
+    return entity;
+}
+
+// ❌ WRONG - Synchronous method calling async saveChanges
+create(entity) {
+    this._qaContext.Entity.add(entity);
+    this._qaContext.saveChanges();  // No await - returns before save completes!
+    return entity;  // Returns entity with undefined ID
+}
+```
+
+### 3. Quick Reference Card
+
+```javascript
+// Entity Creation
+✅ const user = db.User.new();           // CORRECT
+❌ const user = new User();              // WRONG - creates schema object
+
+// Saving Data
+✅ await db.saveChanges();               // CORRECT - waits for completion
+❌ db.saveChanges();                     // WRONG - fire and forget
+
+// Repository Methods
+✅ async create(entity) {                // CORRECT - async method
+      await db.saveChanges();
+   }
+❌ create(entity) {                      // WRONG - sync method
+      db.saveChanges();                  // No await!
+   }
+
+// Querying (all require await)
+✅ const users = await db.User.toList();  // CORRECT
+✅ const user = await db.User.findById(1); // CORRECT
+❌ const users = db.User.toList();         // WRONG - returns Promise
+```
+
+---
 
 ## Installation
 
@@ -1256,7 +1386,723 @@ await .findById(id)              // Find by primary key
 
 // Entity methods (Active Record style - REQUIRE AWAIT)
 await entity.save()              // Save this entity (and all tracked changes)
+await entity.delete()            // Delete this entity
+await entity.reload()            // Reload from database, discarding changes
+entity.clone()                   // Create a copy for duplication (synchronous)
+entity.toObject(options)         // Convert to plain JavaScript object (synchronous)
+entity.toJSON()                  // JSON.stringify compatibility (synchronous)
 ```
+
+---
+
+## Entity Serialization
+
+### .toObject(options)
+
+Convert a MasterRecord entity to a plain JavaScript object, removing all internal properties and handling circular references automatically.
+
+**Parameters:**
+- `options.includeRelationships` (boolean, default: `true`) - Include related entities
+- `options.depth` (number, default: `1`) - Maximum depth for relationship traversal
+
+**Examples:**
+
+```javascript
+// Basic usage - get plain object
+const user = await db.User.findById(1);
+const plain = user.toObject();
+console.log(plain);
+// { id: 1, name: 'Alice', email: 'alice@example.com', age: 28 }
+
+// Include relationships
+const userWithPosts = user.toObject({ includeRelationships: true });
+console.log(userWithPosts);
+// {
+//   id: 1,
+//   name: 'Alice',
+//   Posts: [
+//     { id: 10, title: 'First Post', content: '...' },
+//     { id: 11, title: 'Second Post', content: '...' }
+//   ]
+// }
+
+// Control relationship depth
+const deep = user.toObject({ includeRelationships: true, depth: 3 });
+
+// Exclude relationships
+const shallow = user.toObject({ includeRelationships: false });
+```
+
+**Circular Reference Protection:**
+
+`.toObject()` automatically prevents infinite loops from circular references:
+
+```javascript
+// Scenario: User → Posts → User creates a cycle
+const user = await db.User.findById(1);
+await user.Posts;  // Load posts relationship
+
+const plain = user.toObject({ includeRelationships: true, depth: 2 });
+// Circular references marked as:
+// { __circular: true, __entityName: 'User', id: 1 }
+```
+
+**Why It's Needed:**
+
+MasterRecord entities have internal properties that cause `JSON.stringify()` to fail:
+
+```javascript
+const user = await db.User.findById(1);
+
+// ❌ FAILS: TypeError: Converting circular structure to JSON
+JSON.stringify(user);
+
+// ✅ WORKS: Use toObject() or toJSON()
+const plain = user.toObject();
+JSON.stringify(plain);  // Success!
+```
+
+### .toJSON()
+
+Used automatically by `JSON.stringify()` and Express `res.json()`. Returns the same as `.toObject({ includeRelationships: false })`.
+
+**Examples:**
+
+```javascript
+// JSON.stringify automatically calls toJSON()
+const user = await db.User.findById(1);
+const json = JSON.stringify(user);
+console.log(json);
+// '{"id":1,"name":"Alice","email":"alice@example.com"}'
+
+// Express automatically uses toJSON()
+app.get('/api/users/:id', async (req, res) => {
+    const user = await db.User.findById(req.params.id);
+    res.json(user);  // ✅ Works automatically!
+});
+
+// Array of entities
+app.get('/api/users', async (req, res) => {
+    const users = await db.User.toList();
+    res.json(users);  // ✅ Each entity's toJSON() called automatically
+});
+```
+
+---
+
+## Entity Instance Methods
+
+### .delete()
+
+Delete an entity without manually calling `context.remove()` and `context.saveChanges()`.
+
+**Example:**
+
+```javascript
+// Before
+const user = await db.User.findById(1);
+db.remove(user);
+await db.saveChanges();
+
+// After (Active Record style)
+const user = await db.User.findById(1);
+await user.delete();  // ✅ Entity deletes itself
+```
+
+**Cascade Deletion:**
+
+If your entity has cascade delete rules, they will be applied automatically:
+
+```javascript
+class User {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+
+        // Posts will be deleted when user is deleted
+        this.Posts = {
+            type: 'hasMany',
+            model: 'Post',
+            foreignKey: 'user_id',
+            cascade: true  // Enable cascade delete
+        };
+    }
+}
+
+const user = await db.User.findById(1);
+await user.delete();  // ✅ Also deletes related Posts automatically
+```
+
+### .reload()
+
+Refresh an entity from the database, discarding any unsaved changes.
+
+**Example:**
+
+```javascript
+const user = await db.User.findById(1);
+console.log(user.name);  // 'Alice'
+
+user.name = 'Modified';
+console.log(user.name);  // 'Modified'
+
+await user.reload();  // ✅ Fetch fresh data from database
+console.log(user.name);  // 'Alice' - changes discarded
+```
+
+**Use Cases:**
+- Discard unsaved changes
+- Refresh stale data after external updates
+- Synchronize after concurrent modifications
+- Reset entity to clean state
+
+### .clone()
+
+Create a copy of an entity for duplication (primary key excluded).
+
+**Example:**
+
+```javascript
+const user = await db.User.findById(1);
+const duplicate = user.clone();
+
+duplicate.name = 'Copy of ' + user.name;
+duplicate.email = 'copy@example.com';
+
+await duplicate.save();
+console.log(duplicate.id);  // ✅ New ID (different from original)
+```
+
+**Notes:**
+- Primary key is automatically excluded
+- Relationships are not cloned (set manually if needed)
+- Useful for templates and duplicating records
+
+---
+
+## Query Helper Methods
+
+### .first()
+
+Get the first record ordered by primary key.
+
+**Example:**
+
+```javascript
+// Automatically orders by primary key
+const firstUser = await db.User.first();
+
+// With custom order (respects existing orderBy)
+const newestUser = await db.User
+    .orderByDescending(u => u.created_at)
+    .first();
+
+// With conditions
+const firstActive = await db.User
+    .where(u => u.status == $$, 'active')
+    .first();
+```
+
+### .last()
+
+Get the last record ordered by primary key (descending).
+
+**Example:**
+
+```javascript
+const lastUser = await db.User.last();
+
+// With custom order
+const oldestUser = await db.User
+    .orderBy(u => u.created_at)
+    .last();
+```
+
+### .exists()
+
+Check if any records match the query (returns boolean).
+
+**Example:**
+
+```javascript
+// Before
+const count = await db.User
+    .where(u => u.email == $$, 'test@example.com')
+    .count();
+const exists = count > 0;
+
+// After
+const exists = await db.User
+    .where(u => u.email == $$, 'test@example.com')
+    .exists();
+
+if (exists) {
+    throw new Error('Email already registered');
+}
+
+// Check if any users exist
+const hasUsers = await db.User.exists();
+if (!hasUsers) {
+    // Create default admin user
+}
+```
+
+### .pluck(fieldName)
+
+Extract a single column as an array.
+
+**Example:**
+
+```javascript
+// Get all active user emails
+const emails = await db.User
+    .where(u => u.status == $$, 'active')
+    .pluck('email');
+console.log(emails);
+// ['alice@example.com', 'bob@example.com', 'charlie@example.com']
+
+// Get all user IDs
+const ids = await db.User.pluck('id');
+console.log(ids);  // [1, 2, 3, 4, 5]
+
+// With sorting
+const recentEmails = await db.User
+    .orderByDescending(u => u.created_at)
+    .take(10)
+    .pluck('email');
+```
+
+---
+
+## Lifecycle Hooks
+
+Add lifecycle hooks to your entity definitions to execute logic before/after database operations.
+
+**Available Hooks:**
+- `beforeSave()` - Execute before insert or update
+- `afterSave()` - Execute after insert or update
+- `beforeDelete()` - Execute before deletion
+- `afterDelete()` - Execute after deletion
+
+**Example:**
+
+```javascript
+const bcrypt = require('bcrypt');
+
+class User {
+    constructor() {
+        this.id = { type: 'integer', primary: true, auto: true };
+        this.email = { type: 'string' };
+        this.password = { type: 'string' };
+        this.created_at = { type: 'timestamp' };
+        this.updated_at = { type: 'timestamp' };
+        this.role = { type: 'string' };
+    }
+
+    // Hash password before saving
+    beforeSave() {
+        // Only hash if password was changed
+        if (this.__dirtyFields.includes('password')) {
+            this.password = bcrypt.hashSync(this.password, 10);
+        }
+    }
+
+    // Set timestamps automatically
+    beforeSave() {
+        if (this.__state === 'insert') {
+            this.created_at = new Date();
+        }
+        this.updated_at = new Date();
+    }
+
+    // Log after successful save
+    afterSave() {
+        console.log(`User ${this.id} saved successfully`);
+    }
+
+    // Prevent deleting admin users
+    beforeDelete() {
+        if (this.role === 'admin') {
+            throw new Error('Cannot delete admin user');
+        }
+    }
+
+    // Cleanup related data after deletion
+    async afterDelete() {
+        console.log(`User ${this.id} deleted, cleaning up related data...`);
+        // Cleanup logic here (e.g., delete user files, clear cache)
+    }
+}
+```
+
+**Usage:**
+
+```javascript
+// Hooks execute automatically during save
+const user = db.User.new();
+user.email = 'alice@example.com';
+user.password = 'plain-text-password';
+await user.save();
+// ✅ beforeSave() hashes password automatically
+// ✅ afterSave() logs success message
+
+// Load and update
+const user = await db.User.findById(1);
+user.email = 'newemail@example.com';
+await user.save();
+// ✅ beforeSave() sets updated_at timestamp
+// ✅ Password not re-hashed (not in dirtyFields)
+
+// Hooks can prevent operations
+const admin = await db.User.where(u => u.role == $$, 'admin').single();
+try {
+    await admin.delete();
+} catch (error) {
+    console.log(error.message);  // "Cannot delete admin user"
+}
+// ✅ beforeDelete() prevented deletion
+```
+
+**Hook Execution Order:**
+
+```javascript
+// Insert:
+// 1. beforeSave()
+// 2. SQL INSERT
+// 3. afterSave()
+
+// Update:
+// 1. beforeSave()
+// 2. SQL UPDATE
+// 3. afterSave()
+
+// Delete:
+// 1. beforeDelete()
+// 2. SQL DELETE
+// 3. afterDelete()
+```
+
+**Notes:**
+- Hooks can be async (use `async` keyword)
+- Exceptions in `before*` hooks prevent the operation
+- Hooks execute for each entity during batch operations
+- Access entity state via `this.__state` ('insert', 'modified', 'delete')
+- Access changed fields via `this.__dirtyFields` array
+
+---
+
+## Business Logic Validation
+
+Add validators to your entity definitions for automatic validation on property assignment.
+
+**Built-in Validators:**
+- `required(message)` - Field must have a value
+- `email(message)` - Must be valid email format
+- `minLength(length, message)` - Minimum string length
+- `maxLength(length, message)` - Maximum string length
+- `pattern(regex, message)` - Must match regex pattern
+- `min(value, message)` - Minimum numeric value
+- `max(value, message)` - Maximum numeric value
+- `custom(fn, message)` - Custom validation function
+
+**Example:**
+
+```javascript
+class User {
+    id(db) {
+        db.integer().primary().auto();
+    }
+
+    name(db) {
+        db.string()
+          .required('Name is required')
+          .minLength(3, 'Name must be at least 3 characters')
+          .maxLength(50, 'Name cannot exceed 50 characters');
+    }
+
+    email(db) {
+        db.string()
+          .required('Email is required')
+          .email('Must be a valid email address');
+    }
+
+    password(db) {
+        db.string()
+          .required('Password is required')
+          .minLength(8, 'Password must be at least 8 characters')
+          .maxLength(100);
+    }
+
+    username(db) {
+        db.string()
+          .required()
+          .pattern(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores');
+    }
+
+    age(db) {
+        db.integer()
+          .min(18, 'Must be at least 18 years old')
+          .max(120, 'Age cannot exceed 120');
+    }
+
+    status(db) {
+        db.string()
+          .custom((value) => {
+              return ['active', 'inactive', 'pending'].includes(value);
+          }, 'Status must be active, inactive, or pending');
+    }
+}
+```
+
+**Validation Execution:**
+
+Validators run automatically when you assign values:
+
+```javascript
+const user = db.User.new();
+
+// ❌ Validation fails immediately
+try {
+    user.email = 'invalid-email';
+} catch (error) {
+    console.log(error.message);
+    // "Validation failed: Must be a valid email address"
+}
+
+// ✅ Valid value accepted
+user.email = 'valid@example.com';  // OK
+
+// ❌ Length validation
+try {
+    user.password = 'short';
+} catch (error) {
+    console.log(error.message);
+    // "Validation failed: Password must be at least 8 characters"
+}
+
+// ✅ Valid password
+user.password = 'secure-password-123';  // OK
+
+// ❌ Custom validation
+try {
+    user.status = 'invalid-status';
+} catch (error) {
+    console.log(error.message);
+    // "Validation failed: Status must be active, inactive, or pending"
+}
+
+// ✅ Valid status
+user.status = 'active';  // OK
+
+// Save (all fields already validated)
+await user.save();
+```
+
+**Validator Chaining:**
+
+Validators can be chained together:
+
+```javascript
+email(db) {
+    db.string()
+      .required('Email is required')      // ← First validator
+      .email('Invalid email format')      // ← Second validator
+      .minLength(5, 'Email too short')    // ← Third validator
+      .maxLength(100, 'Email too long');  // ← Fourth validator
+}
+```
+
+**Custom Validation:**
+
+```javascript
+discount(db) {
+    db.integer()
+      .min(0, 'Discount cannot be negative')
+      .max(100, 'Discount cannot exceed 100%')
+      .custom((value) => {
+          // Only allow multiples of 5
+          return value % 5 === 0;
+      }, 'Discount must be a multiple of 5');
+}
+
+// Usage
+product.discount = 7;   // ❌ Throws: "Discount must be a multiple of 5"
+product.discount = 10;  // ✅ OK
+```
+
+**Nullable Fields:**
+
+Required validation respects nullable fields:
+
+```javascript
+bio(db) {
+    db.string()
+      .maxLength(500, 'Bio cannot exceed 500 characters');
+    // No .required() = field is optional
+}
+
+// Both are valid
+user.bio = null;  // ✅ OK (nullable)
+user.bio = 'Short bio';  // ✅ OK (with value)
+user.bio = 'a'.repeat(501);  // ❌ Throws: "Bio cannot exceed 500 characters"
+```
+
+---
+
+## Bulk Operations API
+
+Efficiently create, update, or delete multiple entities in a single operation.
+
+**Available Methods:**
+- `context.bulkCreate(entityName, data)` - Create multiple entities
+- `context.bulkUpdate(entityName, updates)` - Update multiple entities
+- `context.bulkDelete(entityName, ids)` - Delete multiple entities
+
+### bulkCreate(entityName, data)
+
+Create multiple entities efficiently in a batch operation.
+
+**Example:**
+
+```javascript
+// Create 5 users at once
+const users = await db.bulkCreate('User', [
+    { name: 'Alice', email: 'alice@example.com', status: 'active' },
+    { name: 'Bob', email: 'bob@example.com', status: 'active' },
+    { name: 'Charlie', email: 'charlie@example.com', status: 'inactive' },
+    { name: 'Dave', email: 'dave@example.com', status: 'active' },
+    { name: 'Eve', email: 'eve@example.com', status: 'pending' }
+]);
+
+console.log(users.length);  // 5
+console.log(users[0].id);   // 1 (auto-increment IDs assigned)
+console.log(users[4].id);   // 5
+
+// Entities are returned in the same order
+console.log(users.map(u => u.name));
+// ['Alice', 'Bob', 'Charlie', 'Dave', 'Eve']
+```
+
+**Performance:**
+
+```javascript
+// ❌ SLOW: Multiple individual inserts
+for (const data of users) {
+    const user = db.User.new();
+    user.name = data.name;
+    user.email = data.email;
+    await user.save();  // Separate database call
+}
+
+// ✅ FAST: Single bulk insert
+await db.bulkCreate('User', users);  // One database call
+```
+
+### bulkUpdate(entityName, updates)
+
+Update multiple entities by their primary keys.
+
+**Example:**
+
+```javascript
+// Update multiple users' status
+await db.bulkUpdate('User', [
+    { id: 1, status: 'inactive' },
+    { id: 2, status: 'inactive' },
+    { id: 4, status: 'inactive' }
+]);
+
+// Verify updates
+const user1 = await db.User.findById(1);
+console.log(user1.status);  // 'inactive'
+
+// Other fields unchanged
+console.log(user1.name);   // Original name preserved
+console.log(user1.email);  // Original email preserved
+```
+
+**Partial Updates:**
+
+Only the fields you specify are updated:
+
+```javascript
+// Update only email for multiple users
+await db.bulkUpdate('User', [
+    { id: 1, email: 'newemail1@example.com' },
+    { id: 2, email: 'newemail2@example.com' }
+]);
+
+// name, status, age, etc. remain unchanged
+```
+
+### bulkDelete(entityName, ids)
+
+Delete multiple entities by their primary keys.
+
+**Example:**
+
+```javascript
+// Delete multiple users by ID
+await db.bulkDelete('User', [3, 5, 7]);
+
+// Verify deletion
+const user3 = await db.User.findById(3);
+console.log(user3);  // null
+
+const remaining = await db.User.toList();
+console.log(remaining.length);  // Total users minus 3
+```
+
+**Non-Existent IDs:**
+
+Bulk delete handles non-existent IDs gracefully:
+
+```javascript
+// Some IDs don't exist
+await db.bulkDelete('User', [999, 1000, 1001]);
+// ✅ No error thrown - operation completes successfully
+```
+
+**Error Handling:**
+
+```javascript
+// Empty array throws error
+try {
+    await db.bulkCreate('User', []);
+} catch (error) {
+    console.log(error.message);
+    // "bulkCreate requires a non-empty array of data"
+}
+
+// Invalid entity name throws error
+try {
+    await db.bulkUpdate('NonExistentEntity', [{ id: 1 }]);
+} catch (error) {
+    console.log(error.message);
+    // "Entity NonExistentEntity not found"
+}
+```
+
+**Lifecycle Hooks:**
+
+Bulk operations execute lifecycle hooks for each entity:
+
+```javascript
+class User {
+    beforeSave() {
+        console.log(`Saving user: ${this.name}`);
+    }
+}
+
+await db.bulkCreate('User', [
+    { name: 'Alice' },
+    { name: 'Bob' }
+]);
+// Console output:
+// Saving user: Alice
+// Saving user: Bob
+```
+
+---
 
 ### Migration Methods
 
@@ -1653,7 +2499,128 @@ Created by Alexander Rich
 
 ---
 
-## Recent Improvements (v0.3.13)
+## Recent Improvements
+
+### v0.3.30 - Mature ORM Features (Latest)
+
+MasterRecord is now feature-complete with lifecycle hooks, validation, and bulk operations - matching the capabilities of mature ORMs like Sequelize, TypeORM, and Prisma.
+
+**🎯 Entity Serialization:**
+- ✅ **`.toObject()`** - Convert entities to plain JavaScript objects with circular reference protection
+- ✅ **`.toJSON()`** - Automatic JSON.stringify() compatibility for Express responses
+- ✅ **Circular Reference Handling** - Prevents infinite loops from bidirectional relationships
+- ✅ **Depth Control** - Configurable relationship traversal depth
+
+**🎯 Active Record Pattern:**
+- ✅ **`.delete()`** - Entities can delete themselves (`await user.delete()`)
+- ✅ **`.reload()`** - Refresh entity from database, discard unsaved changes
+- ✅ **`.clone()`** - Create entity copies for duplication (excludes primary key)
+- ✅ **`.save()`** - Already existed, now part of complete Active Record pattern
+
+**🎯 Query Helpers:**
+- ✅ **`.first()`** - Get first record ordered by primary key
+- ✅ **`.last()`** - Get last record ordered by primary key descending
+- ✅ **`.exists()`** - Check if any records match query (returns boolean)
+- ✅ **`.pluck(field)`** - Extract single column values as array
+
+**🎯 Lifecycle Hooks:**
+- ✅ **`beforeSave()`** - Execute before insert or update (e.g., hash passwords)
+- ✅ **`afterSave()`** - Execute after successful save (e.g., logging)
+- ✅ **`beforeDelete()`** - Execute before deletion (can prevent deletion)
+- ✅ **`afterDelete()`** - Execute after deletion (e.g., cleanup)
+- ✅ **Hook Execution Order** - Guaranteed execution order with error handling
+- ✅ **Async Support** - Hooks can be async for database operations
+
+**🎯 Business Logic Validation:**
+- ✅ **`.required()`** - Field must have a value
+- ✅ **`.email()`** - Must be valid email format
+- ✅ **`.minLength()` / `.maxLength()`** - String length constraints
+- ✅ **`.min()` / `.max()`** - Numeric value constraints
+- ✅ **`.pattern()`** - Must match regex pattern
+- ✅ **`.custom()`** - Custom validation functions
+- ✅ **Chainable Validators** - Multiple validators per field
+- ✅ **Immediate Validation** - Errors thrown on property assignment
+
+**🎯 Bulk Operations API:**
+- ✅ **`bulkCreate()`** - Create multiple entities efficiently in one transaction
+- ✅ **`bulkUpdate()`** - Update multiple entities by primary key
+- ✅ **`bulkDelete()`** - Delete multiple entities by primary key
+- ✅ **Lifecycle Hook Support** - Hooks execute for each entity in bulk operations
+- ✅ **Auto-Increment IDs** - IDs properly assigned after bulk inserts
+
+**🎯 Critical Bug Fixes:**
+- ✅ **Auto-Increment ID Bug Fixed** - IDs now correctly set on entities after insert (SQLite, MySQL, PostgreSQL)
+- ✅ **Lifecycle Hook Isolation** - Hooks excluded from SQL queries and INSERT/UPDATE operations
+- ✅ **Circular Reference Prevention** - WeakSet-based tracking prevents infinite loops
+
+**Example Usage:**
+
+```javascript
+// Entity serialization
+const user = await db.User.findById(1);
+const plain = user.toObject({ includeRelationships: true, depth: 2 });
+res.json(user);  // Works automatically with toJSON()
+
+// Active Record pattern
+await user.delete();    // Entity deletes itself
+await user.reload();    // Discard changes
+const copy = user.clone();  // Duplicate entity
+
+// Query helpers
+const first = await db.User.first();
+const exists = await db.User.where(u => u.email == $$, 'test@test.com').exists();
+const emails = await db.User.where(u => u.status == $$, 'active').pluck('email');
+
+// Lifecycle hooks
+class User {
+    beforeSave() {
+        if (this.__dirtyFields.includes('password')) {
+            this.password = bcrypt.hashSync(this.password, 10);
+        }
+        this.updated_at = new Date();
+    }
+
+    beforeDelete() {
+        if (this.role === 'admin') {
+            throw new Error('Cannot delete admin user');
+        }
+    }
+}
+
+// Business validation
+class User {
+    email(db) {
+        db.string()
+          .required('Email is required')
+          .email('Must be a valid email address');
+    }
+
+    age(db) {
+        db.integer()
+          .min(18, 'Must be at least 18 years old')
+          .max(120);
+    }
+}
+
+// Bulk operations
+const users = await db.bulkCreate('User', [
+    { name: 'Alice', email: 'alice@example.com' },
+    { name: 'Bob', email: 'bob@example.com' },
+    { name: 'Charlie', email: 'charlie@example.com' }
+]);
+console.log(users.map(u => u.id));  // [1, 2, 3] - IDs assigned
+
+await db.bulkUpdate('User', [
+    { id: 1, status: 'inactive' },
+    { id: 2, status: 'inactive' }
+]);
+
+await db.bulkDelete('User', [3, 5, 7]);
+```
+
+---
+
+### v0.3.13 - FAANG Engineering Standards
 
 MasterRecord has been upgraded to meet **FAANG engineering standards** (Google/Meta/Amazon) with critical bug fixes and performance improvements:
 

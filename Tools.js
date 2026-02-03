@@ -84,7 +84,7 @@ class Tools{
     }
 
     static clearAllProto(proto){
-       
+
         var newproto = {}
         if(proto.__proto__ ){
             // Include non-enumerable own properties so we don't lose values defined via getters
@@ -93,6 +93,15 @@ class Tools{
                 if(!key.startsWith("_") && !key.startsWith("__")){
                     try{
                         const value = proto[key];
+                        // Skip lifecycle hooks by checking entity definition
+                        if(proto.__entity && proto.__entity[key] && proto.__entity[key].lifecycle === true){
+                            continue;
+                        }
+                        // Skip functions EXCEPT if they're defined via getters (typeof returns value, not function)
+                        // Only skip if it's actually a function value (methods like save, delete, toObject)
+                        if(typeof value === "function"){
+                            continue;
+                        }
                         if(typeof value === "object" && value !== null){
                             // Recursively clone nested objects without altering the source
                             newproto[key] = this.clearAllProto(value);
@@ -180,10 +189,14 @@ class Tools{
     // converts any object into SQL parameter select string
 
     static convertEntityToSelectParameterString(obj){
-        // todo: loop throgh object and append string with comma to 
+        // todo: loop throgh object and append string with comma to
         var mainString = "";
         const entries = Object.keys(obj);
         for (const key of entries) {
+            // Skip lifecycle hooks - they are not database columns
+            if(obj[key].lifecycle === true){
+                continue;
+            }
             if(obj[key].type !== 'hasManyThrough' && obj[key].type !== "hasMany" && obj[key].type !== "hasOne"){
                 if(obj[key].name){
                     mainString = mainString === "" ?  `${obj.__name}.${obj[key].name}` : `${mainString}, ${obj.__name}.${obj[key].name}`;

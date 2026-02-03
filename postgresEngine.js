@@ -120,7 +120,12 @@ class postgresEngine {
 
             const query = `INSERT INTO "${first.tableName}" (${first.columns}) VALUES ${valueGroups.join(', ')} RETURNING ${primaryKey}`;
             const result = await this._runWithParams(query, allParams);
-            results.push(result.rows);
+
+            // PostgreSQL returns rows with the primary key values
+            // Convert to consistent format: { id: value }
+            for (const row of result.rows) {
+                results.push({ id: row[primaryKey] });
+            }
         }
 
         return results;
