@@ -94,10 +94,10 @@ module.exports = ${this.name};
         });
 
         if(type === "up"){
-            this.#up += os.EOL + `     this.createIndex(${indexInfoStr});`
+            this.#up += os.EOL + `     await this.createIndex(${indexInfoStr});`
         }
         else{
-            this.#down += os.EOL + `     this.dropIndex(${indexInfoStr});`
+            this.#down += os.EOL + `     await this.dropIndex(${indexInfoStr});`
         }
     }
 
@@ -113,10 +113,10 @@ module.exports = ${this.name};
         });
 
         if(type === "up"){
-            this.#up += os.EOL + `     this.dropIndex(${indexInfoStr});`
+            this.#up += os.EOL + `     await this.dropIndex(${indexInfoStr});`
         }
         else{
-            this.#down += os.EOL + `     this.createIndex(${indexInfoStr});`
+            this.#down += os.EOL + `     await this.createIndex(${indexInfoStr});`
         }
     }
 
@@ -129,10 +129,10 @@ module.exports = ${this.name};
         });
 
         if(type === "up"){
-            this.#up += os.EOL + `     this.createCompositeIndex(${indexInfoStr});`
+            this.#up += os.EOL + `     await this.createCompositeIndex(${indexInfoStr});`
         }
         else{
-            this.#down += os.EOL + `     this.dropCompositeIndex(${indexInfoStr});`
+            this.#down += os.EOL + `     await this.dropCompositeIndex(${indexInfoStr});`
         }
     }
 
@@ -145,10 +145,10 @@ module.exports = ${this.name};
         });
 
         if(type === "up"){
-            this.#up += os.EOL + `     this.dropCompositeIndex(${indexInfoStr});`
+            this.#up += os.EOL + `     await this.dropCompositeIndex(${indexInfoStr});`
         }
         else{
-            this.#down += os.EOL + `     this.createCompositeIndex(${indexInfoStr});`
+            this.#down += os.EOL + `     await this.createCompositeIndex(${indexInfoStr});`
         }
     }
 
@@ -187,7 +187,7 @@ module.exports = ${this.name};
 
                 this.#up += os.EOL + `     ];`;
                 this.#up += os.EOL + `     for (const record of factoryRecords) {`;
-                this.#up += os.EOL + `         await table.${tableName}.create(record);`;
+                this.#up += os.EOL + `         this.seed('${tableName}', record);`;
                 this.#up += os.EOL + `     }`;
             } else {
                 // Standard individual inserts for non-factory or small batches
@@ -214,10 +214,10 @@ module.exports = ${this.name};
                             const formattedRecord = JSON.stringify(cleanRecord, null, 12)
                                 .split('\n')
                                 .join(os.EOL + '            ');
-                            this.#up += os.EOL + `     await table.${tableName}.create(${formattedRecord});`;
+                            this.#up += os.EOL + `     this.seed('${tableName}', ${formattedRecord});`;
                         } else {
                             // Single-line format
-                            this.#up += os.EOL + `     await table.${tableName}.create(${recordStr});`;
+                            this.#up += os.EOL + `     this.seed('${tableName}', ${recordStr});`;
                         }
                     }
                 });
@@ -236,7 +236,7 @@ module.exports = ${this.name};
         }
 
         this.#up += os.EOL + `     {`;
-        this.#up += os.EOL + `         const existing = await table.${tableName}.where(r => r.${conflictKey} == ${JSON.stringify(conflictValue)}).single();`;
+        this.#up += os.EOL + `         const existing = await this.context.${tableName}.where(r => r.${conflictKey} == ${JSON.stringify(conflictValue)}).single();`;
         this.#up += os.EOL + `         if (existing) {`;
 
         // Update logic
@@ -257,7 +257,7 @@ module.exports = ${this.name};
 
         this.#up += os.EOL + `             await existing.save();`;
         this.#up += os.EOL + `         } else {`;
-        this.#up += os.EOL + `             await table.${tableName}.create(${JSON.stringify(cleanRecord)});`;
+        this.#up += os.EOL + `             this.seed('${tableName}', ${JSON.stringify(cleanRecord)});`;
         this.#up += os.EOL + `         }`;
         this.#up += os.EOL + `     }`;
     }

@@ -158,6 +158,13 @@ class migrationSQLiteQuery {
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
                     continue;
                 }
+
+                // Whitelist: Only process objects that look like column definitions
+                // Valid columns must have 'name' and 'type' properties
+                if(!col.name || !col.type){
+                    continue;
+                }
+
                 queryVar += `${this.#columnMapping(col)}, `;
             }
         }

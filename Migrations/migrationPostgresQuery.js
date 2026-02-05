@@ -202,8 +202,16 @@ class migrationPostgresQuery {
             }
 
             if(typeof table[key] === "object"){
-                if(table[key].type !== "hasOne" && table[key].type !== "hasMany" && table[key].type !== "hasManyThrough"){
-                    queryVar += `${this.#columnMapping(table[key])}, `;
+                var col = table[key];
+
+                if(col.type !== "hasOne" && col.type !== "hasMany" && col.type !== "hasManyThrough"){
+                    // Whitelist: Only process objects that look like column definitions
+                    // Valid columns must have 'name' and 'type' properties
+                    if(!col.name || !col.type){
+                        continue;
+                    }
+
+                    queryVar += `${this.#columnMapping(col)}, `;
                 }
             }
         }

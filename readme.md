@@ -3367,11 +3367,48 @@ if (ids.length > 0) {
 user.name = null;  // Error if name is { nullable: false }
 ```
 
+## Changelog
+
+### Version 0.3.34 (2026-02-05)
+
+#### Bug Fixes
+- **Fixed**: Seed API migration generation - resolved `table.EntityName.create is not a function` error
+  - Migrations now use `this.seed('TableName', data)` instead of `table.TableName.create(data)`
+  - Ensures compatibility with the migration schema base class
+- **Fixed**: Eliminated duplicate table creation statements in generated migrations
+- **Fixed**: Eliminated duplicate seed insertion statements in generated migrations
+- **Fixed**: Duplicate index creation when using `.index()` in column definitions
+  - Index operations now properly deduplicated during migration generation
+- **Fixed**: Missing `await` keywords on `createIndex()`, `dropIndex()`, `createCompositeIndex()`, and `dropCompositeIndex()` calls in migrations
+  - All async index operations now properly awaited for consistency
+
+#### Improvements
+- **Enhanced**: Query builders now use whitelist validation for column definitions
+  - Validates that objects have both `name` and `type` properties before processing as columns
+  - More robust metadata property filtering in schema processing
+  - Combines blacklist (skip `indexes`, `__*` prefixed) with whitelist (require `name` and `type`) for comprehensive validation
+- **Documentation**: Enhanced migration generation documentation
+- **Testing**: Added comprehensive test suite for v0.3.34 bug fixes
+  - Tests whitelist validation across all three database backends
+  - Tests async/await consistency in index operations
+  - Tests seed API correctness and deduplication
+
+#### Technical Details
+- Query builders (SQLite, MySQL, PostgreSQL) validate column definitions have required `name` and `type` properties
+- Migration template generates proper ORM API calls for seed data using `this.seed()` method
+- Index deduplication logic prevents duplicate CREATE INDEX statements
+- All migration operations consistently use `await` for async consistency
+
+#### Migration Notes
+- Existing migrations generated with older versions will continue to work
+- New migrations will use the corrected seed API syntax
+- If you have migrations with `table.EntityName.create()` that haven't been run, regenerate them with this version
+
 ## Version Compatibility
 
 | Component     | Version       | Notes                                    |
 |---------------|---------------|------------------------------------------|
-| MasterRecord  | 0.3.13        | Current version with PostgreSQL support  |
+| MasterRecord  | 0.3.34        | Current version with bug fixes and improvements |
 | Node.js       | 14+           | Async/await support required             |
 | PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
 | MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |
