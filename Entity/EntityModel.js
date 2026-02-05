@@ -1,5 +1,6 @@
 /*
 
+Supported column types:
 :binary
 :boolean
 :date
@@ -14,6 +15,11 @@
 :text
 :time
 :timestamp
+
+Reserved Property Names:
+- Properties starting with '__' (double underscore) are reserved for internal metadata
+- 'indexes' property is reserved for index definitions
+- These properties are automatically skipped during table creation in migration queries
 
 */
 
@@ -115,6 +121,17 @@ class EntityModel {
 
     }
 
+    /**
+     * Adds an index to this column definition.
+     *
+     * Note: The 'indexes' property is metadata and will be automatically skipped
+     * during table creation. Properties starting with '__' are also reserved for
+     * internal metadata and filtered during schema processing.
+     *
+     * @param {string} indexName - Optional custom name for the index. If not provided,
+     *                              a default name will be generated.
+     * @returns {EntityModel} Returns this for method chaining
+     */
     index(indexName){
         if(!this.obj.indexes){
             this.obj.indexes = [];
