@@ -275,15 +275,17 @@ program.option('-V', 'output the version');
           return;
         }
         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+        var seedData = contextInstance.__contextSeedData || {};
+        var seedConfig = contextInstance.__contextSeedConfig || {};
 
         // Skip if no changes between snapshot schema and current entities
-        const has = migration.hasChanges(contextSnapshot.schema || [], cleanEntities || []);
+        const has = migration.hasChanges(contextSnapshot.schema || [], cleanEntities || [], seedData);
         if(!has){
           console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
           return;
         }
 
-        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities);
+        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig);
         if(!fs.existsSync(migBase)){
           try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
         }
@@ -465,6 +467,7 @@ program.option('-V', 'output the version');
            executedLocation : executedLocation,
            context : contextInstance,
            contextEntities : cleanEntities,
+           contextSeedData: contextInstance.__contextSeedData || {},
            contextFileName: contextFileName
          }
 
@@ -582,6 +585,8 @@ program.option('-V', 'output the version');
          executedLocation : executedLocation,
          context : contextInstance,
          contextEntities : cleanEntities,
+         contextSeedData: contextInstance.__contextSeedData || {},
+         contextSeedConfig: contextInstance.__contextSeedConfig || {},
          contextFileName: contextFileName
        }
        migration.createSnapShot(snap);
@@ -832,6 +837,8 @@ program.option('-V', 'output the version');
         executedLocation : executedLocation,
         context : contextInstance,
         contextEntities : cleanEntities,
+        contextSeedData: contextInstance.__contextSeedData || {},
+        contextSeedConfig: contextInstance.__contextSeedConfig || {},
         contextFileName: path.basename(snapshotFile).replace('_contextSnapShot.json','')
       }
       migration.createSnapShot(snap);
@@ -887,13 +894,15 @@ program.option('-V', 'output the version');
           }
           var migration = new Migration();
           var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          var seedData = contextInstance.__contextSeedData || {};
+          var seedConfig = contextInstance.__contextSeedConfig || {};
           // If no changes, skip with message
-          const has = migration.hasChanges(cs.schema || [], cleanEntities || []);
+          const has = migration.hasChanges(cs.schema || [], cleanEntities || [], seedData);
           if(!has){
             console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
             continue;
           }
-          var newEntity = migration.template(name, cs.schema, cleanEntities);
+          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig);
           if(!fs.existsSync(migBase)){
             try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
           }
@@ -1010,6 +1019,8 @@ program.option('-V', 'output the version');
             executedLocation : executedLocation,
             context : contextInstance,
             contextEntities : cleanEntities,
+            contextSeedData: contextInstance.__contextSeedData || {},
+            contextSeedConfig: contextInstance.__contextSeedConfig || {},
             contextFileName: entry.ctxName
           }
           migration.createSnapShot(snap);
@@ -1072,6 +1083,8 @@ program.option('-V', 'output the version');
             file : abs,
             executedLocation : executedLocation,
             contextEntities : [],
+            contextSeedData: {},
+            contextSeedConfig: {},
             contextFileName: key
           };
           migration.createSnapShot(snap);

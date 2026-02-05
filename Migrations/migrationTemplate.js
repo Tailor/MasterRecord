@@ -152,6 +152,150 @@ module.exports = ${this.name};
         }
     }
 
+    seedData(type, tableName, records, currentEnv = 'development'){
+        if(!records || records.length === 0) return;
+
+        if(type === "up"){
+            // Filter records by environment first
+            const filteredRecords = records.filter(record => {
+                const envCondition = record.__seedEnv;
+                if (envCondition && envCondition.strategy === 'generation-time') {
+                    return envCondition.conditions.includes(currentEnv);
+                }
+                return true; // No environment condition, include record
+            });
+
+            if (filteredRecords.length === 0) return;
+
+            // Check if all records are factory-generated
+            const allGenerated = filteredRecords.every(r => r.__seedMeta?.generated);
+
+            // Use optimized loop syntax for bulk factory data (10+ records)
+            if (allGenerated && filteredRecords.length >= 10) {
+                this.#up += os.EOL + `     const factoryRecords = [`;
+
+                filteredRecords.forEach((record, i) => {
+                    const cleanRecord = { ...record };
+                    delete cleanRecord.__rollback;
+                    delete cleanRecord.__seedEnv;
+                    delete cleanRecord.__seedStrategy;
+                    delete cleanRecord.__seedMeta;
+
+                    const recordStr = JSON.stringify(cleanRecord);
+                    this.#up += os.EOL + `         ${recordStr}${i < filteredRecords.length - 1 ? ',' : ''}`;
+                });
+
+                this.#up += os.EOL + `     ];`;
+                this.#up += os.EOL + `     for (const record of factoryRecords) {`;
+                this.#up += os.EOL + `         await table.${tableName}.create(record);`;
+                this.#up += os.EOL + `     }`;
+            } else {
+                // Standard individual inserts for non-factory or small batches
+                filteredRecords.forEach(record => {
+                    const strategy = record.__seedStrategy;
+
+                    // Clean up metadata before generating migration code
+                    const cleanRecord = { ...record };
+                    delete cleanRecord.__rollback;
+                    delete cleanRecord.__seedEnv;
+                    delete cleanRecord.__seedStrategy;
+                    delete cleanRecord.__seedMeta;
+
+                    // Handle upsert strategy
+                    if (strategy && strategy.type === 'upsert') {
+                        this._generateUpsert(tableName, cleanRecord, strategy);
+                    } else {
+                        // Standard insert
+                        const recordStr = JSON.stringify(cleanRecord);
+
+                        // Check if record is too long for single line (> 80 chars)
+                        if (recordStr.length > 80) {
+                            // Multi-line format with proper indentation
+                            const formattedRecord = JSON.stringify(cleanRecord, null, 12)
+                                .split('\n')
+                                .join(os.EOL + '            ');
+                            this.#up += os.EOL + `     await table.${tableName}.create(${formattedRecord});`;
+                        } else {
+                            // Single-line format
+                            this.#up += os.EOL + `     await table.${tableName}.create(${recordStr});`;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    _generateUpsert(tableName, cleanRecord, strategy) {
+        const conflictKey = strategy.conflictKey === 'primaryKey'
+            ? (cleanRecord.id !== undefined ? 'id' : Object.keys(cleanRecord)[0])
+            : strategy.conflictKey;
+
+        const conflictValue = cleanRecord[conflictKey];
+        if (conflictValue === undefined) {
+            throw new Error(`Upsert requires a value for conflict key: ${conflictKey}`);
+        }
+
+        this.#up += os.EOL + `     {`;
+        this.#up += os.EOL + `         const existing = await table.${tableName}.where(r => r.${conflictKey} == ${JSON.stringify(conflictValue)}).single();`;
+        this.#up += os.EOL + `         if (existing) {`;
+
+        // Update logic
+        if (strategy.updateFields && Array.isArray(strategy.updateFields)) {
+            strategy.updateFields.forEach(field => {
+                if (cleanRecord[field] !== undefined) {
+                    this.#up += os.EOL + `             existing.${field} = ${JSON.stringify(cleanRecord[field])};`;
+                }
+            });
+        } else {
+            // Update all fields except conflict key
+            Object.keys(cleanRecord).forEach(field => {
+                if (field !== conflictKey) {
+                    this.#up += os.EOL + `             existing.${field} = ${JSON.stringify(cleanRecord[field])};`;
+                }
+            });
+        }
+
+        this.#up += os.EOL + `             await existing.save();`;
+        this.#up += os.EOL + `         } else {`;
+        this.#up += os.EOL + `             await table.${tableName}.create(${JSON.stringify(cleanRecord)});`;
+        this.#up += os.EOL + `         }`;
+        this.#up += os.EOL + `     }`;
+    }
+
+    seedDataDown(type, tableName, records, config){
+        if(type !== "down" || !config || !config.generateDownMigrations) return;
+        if(!records || records.length === 0) return;
+
+        // Reverse order for safe FK deletion (children before parents)
+        const reversed = [...records].reverse();
+
+        reversed.forEach(record => {
+            const rollback = record.__rollback;
+            if (!rollback || !rollback.value) {
+                // Skip if no rollback metadata (e.g., no primary key specified)
+                return;
+            }
+
+            const pkValue = rollback.value;
+            const pkKey = rollback.key || 'id';
+
+            // Generate delete code with error handling
+            this.#down += os.EOL + `     try {`;
+            this.#down += os.EOL + `         const record = await table.${tableName}.findById(${JSON.stringify(pkValue)});`;
+            this.#down += os.EOL + `         if (record) await record.delete();`;
+            this.#down += os.EOL + `     } catch (e) {`;
+
+            if (config.onRollbackError === 'throw') {
+                this.#down += os.EOL + `         throw new Error('Seed rollback failed: ${tableName} id=${pkValue} - ' + e.message);`;
+            } else if (config.onRollbackError === 'warn') {
+                this.#down += os.EOL + `         console.warn('Seed rollback: ${tableName} id=${pkValue} not found or error:', e.message);`;
+            }
+            // else ignore (onRollbackError === 'ignore')
+
+            this.#down += os.EOL + `     }`;
+        });
+    }
+
 }
 
 module.exports = MigrationTemplate;

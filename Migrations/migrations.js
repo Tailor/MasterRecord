@@ -28,7 +28,8 @@ class Migrations{
                         newIndexes : [],
                         deletedIndexes : [],
                         newCompositeIndexes : [],
-                        deletedCompositeIndexes : []
+                        deletedCompositeIndexes : [],
+                        newSeedData : []
                     }
                     tables.push(table);
                 });
@@ -46,7 +47,8 @@ class Migrations{
                         newIndexes : [],
                         deletedIndexes : [],
                         newCompositeIndexes : [],
-                        deletedCompositeIndexes : []
+                        deletedCompositeIndexes : [],
+                        newSeedData : []
                     }
 
                     oldSchema.forEach(function (oldItem, index) {
@@ -161,7 +163,7 @@ class Migrations{
     }
 
     // build table to build new migration snapshot
-    #buildMigrationObject(oldSchema, newSchema){
+    #buildMigrationObject(oldSchema, newSchema, newSeedData = {}){
 
         var tables = this.#organizeSchemaByTables(oldSchema, newSchema);
 
@@ -173,6 +175,7 @@ class Migrations{
         tables = this.#findDeletedIndexes(tables);
         tables = this.#findNewCompositeIndexes(tables);
         tables = this.#findDeletedCompositeIndexes(tables);
+        tables = this.#findNewSeedData(tables, newSeedData);
         return tables;
     }
 
@@ -325,6 +328,17 @@ class Migrations{
         return tables;
     }
 
+    #findNewSeedData(tables, newSeedData) {
+        // newSeedData is from schema snapshot: { tableName: [records] }
+        tables.forEach(function(item) {
+            const tableSeedData = newSeedData[item.name];
+            if (tableSeedData && tableSeedData.length > 0) {
+                item.newSeedData = tableSeedData;
+            }
+        });
+        return tables;
+    }
+
 
 
     findContextFile(executedLocation, contextFileName){
@@ -397,11 +411,18 @@ class Migrations{
         const relMigrationFolder = '.'; // the snapshot sits inside migrationsDirectory
         const relSnapshotLocation = path.basename(snapshotPath);
 
+        // Order seed data by dependencies if context instance is available
+        const orderedSeedData = snap.context && snap.context.getOrderedSeedData
+            ? snap.context.getOrderedSeedData()
+            : snap.contextSeedData || {};
+
         const content = {
             contextLocation: relContextLocation,
             migrationFolder: relMigrationFolder,
             snapShotLocation: relSnapshotLocation,
-            schema : snap.contextEntities
+            schema : snap.contextEntities,
+            seedData: orderedSeedData,
+            seedConfig: snap.contextSeedConfig || {}
         };
 
         const jsonContent = JSON.stringify(content, null, 2);
@@ -455,8 +476,8 @@ class Migrations{
     }
 
     // Returns true if there are any changes between old and new schema
-    hasChanges(oldSchema, newSchema){
-        const tables = this.#buildMigrationObject(oldSchema, newSchema);
+    hasChanges(oldSchema, newSchema, newSeedData = {}){
+        const tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
         for(const t of tables){
             if(!t) continue;
             if((t.newTables && t.newTables.length) ||
@@ -467,6 +488,7 @@ class Migrations{
                (t.deletedIndexes && t.deletedIndexes.length) ||
                (t.newCompositeIndexes && t.newCompositeIndexes.length) ||
                (t.deletedCompositeIndexes && t.deletedCompositeIndexes.length) ||
+               (t.newSeedData && t.newSeedData.length) ||
                (t.old === null) || (t.new === null)){
                 return true;
             }
@@ -474,16 +496,20 @@ class Migrations{
         return false;
     }
 
-    template(name, oldSchema, newSchema){
+    template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null){
         var MT = new MigrationTemplate(name);
-        var tables = this.#buildMigrationObject(oldSchema, newSchema);
-    
+        // Determine current environment if not provided
+        if (!currentEnv) {
+            currentEnv = process.env.NODE_ENV || process.env.master || 'development';
+        }
+        var tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
+
         tables.forEach(function (item, index) {
             if(item.old === null){
                 MT.createTable("up", column, item.name);
                 MT.dropTable("down", column, item.name);
             }
-            
+
             if(item.new === null){
                 MT.dropTable("up", column, item.name);
                 MT.createTable("down", column, item.name);
@@ -528,6 +554,12 @@ class Migrations{
             item.deletedCompositeIndexes.forEach(function (indexInfo, index) {
                 MT.dropCompositeIndex("up", indexInfo);
             });
+
+            // Generate seed data code
+            if (item.newSeedData && item.newSeedData.length > 0) {
+                MT.seedData("up", item.name, item.newSeedData, currentEnv);
+                MT.seedDataDown("down", item.name, item.newSeedData, seedConfig);
+            }
 
         });
 

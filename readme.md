@@ -51,11 +51,14 @@
   - [.exists()](#exists)
   - [.pluck()](#pluckfieldname)
 - [Lifecycle Hooks](#lifecycle-hooks)
+- [Field Constraints & Indexes](#field-constraints--indexes)
 - [Business Logic Validation](#business-logic-validation)
 - [Bulk Operations API](#bulk-operations-api)
   - [bulkCreate()](#bulkcreateentityname-data)
   - [bulkUpdate()](#bulkupdateentityname-updates)
   - [bulkDelete()](#bulkdeleteentityname-ids)
+- [Composite Indexes](#composite-indexes)
+- [Seed Data](#seed-data)
 - [Migrations](#migrations)
 - [Advanced Features](#advanced-features)
   - [Query Result Caching](#query-result-caching)
@@ -2117,6 +2120,577 @@ class User {
 **When to use single vs composite:**
 - **Single index**: Column queried independently (`WHERE email = ?`)
 - **Composite index**: Columns queried together (`WHERE last_name = ? AND first_name = ?`)
+
+---
+
+## Seed Data
+
+Define seed data in your context file that automatically generates migration code using the ORM.
+
+### Context-Level Seed API (Recommended)
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Single seed record
+        this.dbset(User).seed({
+            user_name: 'admin',
+            first_name: 'System',
+            last_name: 'Administrator',
+            email: 'admin@bookbag.ai',
+            system_role: 'system_admin',
+            admin_type: 'engineering',
+            onboarding_completed: 1,
+            availability_status: 'online'
+        });
+
+        // Chain multiple records
+        this.dbset(Post)
+            .seed({ title: 'Welcome', content: 'Hello world', author_id: 1 })
+            .seed({ title: 'Getting Started', content: 'Tutorial', author_id: 1 });
+
+        // Bulk seed with array
+        this.dbset(Category).seed([
+            { name: 'Technology', slug: 'tech' },
+            { name: 'Business', slug: 'biz' },
+            { name: 'Science', slug: 'science' }
+        ]);
+    }
+}
+```
+
+### Automatic Migration Generation
+
+When you define seed data in the context, MasterRecord generates migration code using the ORM:
+
+```javascript
+// Your context definition triggers this migration
+class Migration_20250205_123456 extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+
+        // Generated ORM create calls
+        await table.User.create({
+            user_name: 'admin',
+            first_name: 'System',
+            last_name: 'Administrator',
+            email: 'admin@bookbag.ai',
+            system_role: 'system_admin',
+            admin_type: 'engineering',
+            onboarding_completed: 1,
+            availability_status: 'online'
+        });
+
+        await table.Post.create({
+            title: 'Welcome',
+            content: 'Hello world',
+            author_id: 1
+        });
+
+        await table.Post.create({
+            title: 'Getting Started',
+            content: 'Tutorial',
+            author_id: 1
+        });
+    }
+
+    async down(table) {
+        this.init(table);
+        // Seed data typically not removed in down migrations
+    }
+}
+```
+
+### Benefits of ORM-Based Seeding
+
+1. **Lifecycle Hooks**: Triggers `beforeSave` and `afterSave` hooks
+2. **Validation**: Uses entity field definitions and validators
+3. **Type Safety**: Ensures fields match entity schema
+4. **Maintainable**: Changes to entity structure reflected automatically
+
+### Manual Seed Methods (Advanced)
+
+For more control, use raw SQL seed methods directly in migrations:
+
+```javascript
+class Migration_20250205_123456 extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+
+        // Single record with raw SQL
+        this.seed('User', {
+            user_name: 'admin',
+            email: 'admin@bookbag.ai'
+        });
+
+        // Bulk insert with raw SQL (more performant for large datasets)
+        this.bulkSeed('Category', [
+            { name: 'Technology', slug: 'tech' },
+            { name: 'Business', slug: 'biz' },
+            { name: 'Science', slug: 'science' }
+        ]);
+    }
+}
+```
+
+**When to use manual seed methods:**
+- Large datasets (1000+ records) - `bulkSeed()` is more performant
+- Need raw SQL control
+- Don't need lifecycle hooks or validation
+
+### Idempotency
+
+**ORM approach** (context-level seed):
+- Generates plain `create()` calls
+- Fails if primary key exists (user must remove seed data after first migration)
+- Best for one-time initial setup data
+
+**Manual approach** (idempotent):
+- Uses database-specific INSERT OR IGNORE syntax
+- SQLite: `INSERT OR IGNORE INTO`
+- MySQL: `INSERT IGNORE INTO`
+- PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING`
+- Best for repeatable migrations and re-seeding
+
+Example:
+```javascript
+// Context-level (runs once)
+this.dbset(User).seed({ id: 1, name: 'admin' });
+// After first migration, remove or comment out seed data
+
+// Manual (repeatable)
+class Migration_xyz extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+        // Can run multiple times without error
+        this.seed('User', { id: 1, name: 'admin' });
+    }
+}
+```
+
+### Best Practices
+
+1. **Use context-level seed** for one-time initial setup (admin users, default categories)
+   - Remove seed data from context after first successful migration
+   - Or comment out after initial setup
+2. **Use manual seed methods** for repeatable/idempotent seeding
+3. **Use manual bulkSeed** for large datasets (1000+ records) - more performant
+4. **Keep seed data minimal** - only essential bootstrap data
+5. **Use fixtures/factories** for test data, not seed methods
+6. **Don't delete seed data** in down migrations (can cause referential integrity issues)
+
+### Example: Multi-Tenant Seed Data
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        this.dbset(User);
+        this.dbset(Tenant);
+        this.dbset(Permission);
+
+        // Seed default tenant
+        this.dbset(Tenant).seed({
+            name: 'Default Organization',
+            slug: 'default',
+            is_active: 1
+        });
+
+        // Seed system admin
+        this.dbset(User).seed({
+            email: 'admin@system.com',
+            tenant_id: 1,
+            role: 'system_admin'
+        });
+
+        // Seed default permissions
+        this.dbset(Permission).seed([
+            { name: 'users.read', description: 'Read users' },
+            { name: 'users.write', description: 'Create/update users' },
+            { name: 'users.delete', description: 'Delete users' }
+        ]);
+    }
+}
+```
+
+---
+
+## Advanced Seed Data Features
+
+MasterRecord provides 5 enterprise-grade seed data enhancements for production-ready data management:
+
+### 1. Down Migrations - Automatic Rollback
+
+Enable automatic cleanup of seed data in down migrations:
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Enable down migration generation
+        this.seedConfig({
+            generateDownMigrations: true,  // Default: false
+            downStrategy: 'delete',        // 'delete' | 'skip'
+            onRollbackError: 'warn'        // 'warn' | 'throw' | 'ignore'
+        });
+
+        this.dbset(User).seed({ id: 1, name: 'admin', email: 'admin@example.com' });
+    }
+}
+```
+
+**Generated Migration:**
+```javascript
+async up(table) {
+    this.init(table);
+    await table.User.create({ id: 1, name: 'admin', email: 'admin@example.com' });
+}
+
+async down(table) {
+    this.init(table);
+    // Auto-generated rollback (reverse order for FK safety)
+    try {
+        const record = await table.User.findById(1);
+        if (record) await record.delete();
+    } catch (e) {
+        console.warn('Seed rollback: User id=1 not found');
+    }
+}
+```
+
+**Use Cases:**
+- Development environments where you frequently rollback migrations
+- Testing scenarios requiring clean database state
+- Staged deployments where rollback may be necessary
+
+**Note:** Production environments typically don't rollback seed data due to referential integrity concerns.
+
+---
+
+### 2. Conditional Seeding - Environment-Based Data
+
+Seed different data based on environment:
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Development/test only seed data
+        this.dbset(User)
+            .seed({ name: 'Test User', email: 'test@example.com' })
+            .when('development', 'test');
+
+        // Production-only seed data
+        this.dbset(Config)
+            .seed({ key: 'api_endpoint', value: 'https://api.production.com' })
+            .when('production');
+
+        // Multiple environments
+        this.dbset(Feature)
+            .seed({ name: 'beta_feature', enabled: true })
+            .when('staging', 'production');
+    }
+}
+```
+
+**How It Works:**
+- Migration code is filtered at **generation time** (not runtime)
+- Only seed data matching current environment is included in migration
+- Cleaner migrations, no runtime overhead
+
+**Environment Detection:**
+- Uses `process.env.NODE_ENV` or `process.env.master`
+- Defaults to 'development' if not set
+- Supports multiple environments per seed
+
+---
+
+### 3. Automatic Dependency Ordering
+
+Seeds are automatically ordered based on foreign key relationships:
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Order doesn't matter - automatically sorted!
+        this.dbset(Post).seed({
+            title: 'Welcome',
+            user_id: 1  // Foreign key to User
+        });
+
+        this.dbset(User).seed({
+            id: 1,
+            name: 'admin'
+        });
+
+        // Generated migration will seed User BEFORE Post
+    }
+}
+```
+
+**How It Works:**
+- Analyzes `belongsTo` relationships in entity definitions
+- Builds dependency graph using topological sort (Kahn's algorithm)
+- Parents are always seeded before children
+- Detects circular dependencies and warns
+
+**Circular Dependency Handling:**
+```javascript
+this.seedConfig({
+    detectCircularDependencies: true,
+    circularStrategy: 'warn'  // 'warn' | 'throw' | 'ignore'
+});
+```
+
+**Benefits:**
+- Prevents foreign key constraint violations
+- No manual ordering required
+- Works with complex multi-level dependencies
+- Junction tables (many-to-many) handled automatically
+
+---
+
+### 4. Seed Factories - Parameterized Data Generation
+
+Generate multiple seed records with variations:
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Inline factory with generator function
+        this.dbset(User).seedFactory(10, i => ({
+            name: `User ${i}`,
+            email: `user${i}@example.com`,
+            role: 'member',
+            created_at: Date.now()
+        }));
+
+        // External factory class
+        this.dbset(User).seed(UserFactory.admin({
+            email: 'custom@example.com'
+        }));
+    }
+}
+
+// External factory pattern
+class UserFactory {
+    static admin(overrides = {}) {
+        return {
+            name: 'Admin User',
+            email: 'admin@example.com',
+            role: 'admin',
+            is_active: true,
+            ...overrides
+        };
+    }
+
+    static members(count) {
+        return Array.from({ length: count }, (_, i) => ({
+            name: `Member ${i}`,
+            email: `member${i}@example.com`,
+            role: 'member'
+        }));
+    }
+}
+```
+
+**Generated Migration (Optimized):**
+```javascript
+// Bulk insert with loop (10+ records)
+const factoryRecords = [
+    {"name":"User 0","email":"user0@example.com","role":"member"},
+    {"name":"User 1","email":"user1@example.com","role":"member"},
+    // ... 8 more
+];
+for (const record of factoryRecords) {
+    await table.User.create(record);
+}
+```
+
+**Use Cases:**
+- Generate test users for development
+- Create sample data for demos
+- Populate lookup tables with variations
+- Bulk seed with consistent patterns
+
+**Faker Integration (Optional):**
+```javascript
+const { faker } = require('@faker-js/faker');
+
+this.dbset(User).seedFactory(100, i => ({
+    name: faker.person.fullName(),
+    email: faker.internet.email(),
+    bio: faker.lorem.paragraph()
+}));
+```
+
+---
+
+### 5. Upsert - Update if Exists, Insert if Not
+
+Create idempotent seed data that can run multiple times:
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        // Upsert by primary key
+        this.dbset(User)
+            .seed({ id: 1, name: 'admin', email: 'admin@example.com' })
+            .upsert();
+
+        // Upsert by custom field (business key)
+        this.dbset(User)
+            .seed({ email: 'admin@example.com', name: 'Administrator' })
+            .upsert({ conflictKey: 'email' });
+
+        // Partial update (only update specific fields)
+        this.dbset(Config)
+            .seed({ key: 'api_url', value: 'https://new-api.com', updated_at: Date.now() })
+            .upsert({
+                conflictKey: 'key',
+                updateFields: ['value', 'updated_at']  // Don't update other fields
+            });
+
+        // Context-level default (all seeds become upserts)
+        this.seedConfig({
+            defaultStrategy: 'upsert'
+        });
+    }
+}
+```
+
+**Generated Migration:**
+```javascript
+async up(table) {
+    this.init(table);
+
+    // Check-then-update pattern (database-agnostic)
+    {
+        const existing = await table.User.where(r => r.email == 'admin@example.com').single();
+        if (existing) {
+            existing.name = 'Administrator';
+            await existing.save();
+        } else {
+            await table.User.create({ email: 'admin@example.com', name: 'Administrator' });
+        }
+    }
+}
+```
+
+**Use Cases:**
+- Configuration tables that need updates
+- Master data that changes over time
+- Idempotent migrations (can run multiple times safely)
+- CI/CD pipelines where migrations may re-run
+
+**Benefits:**
+- Database-agnostic (works on SQLite, MySQL, PostgreSQL)
+- Triggers ORM lifecycle hooks (`beforeSave`, `afterSave`)
+- Type-safe and validated
+- Prevents duplicate key errors
+
+---
+
+### Advanced Example - All Features Together
+
+```javascript
+class AppContext extends context {
+    constructor() {
+        super();
+        this.env('./config');
+
+        // Global seed configuration
+        this.seedConfig({
+            generateDownMigrations: true,     // Enable rollback
+            defaultStrategy: 'upsert',        // Idempotent by default
+            detectCircularDependencies: true, // Warn on cycles
+            circularStrategy: 'warn'
+        });
+
+        // Define entities
+        this.dbset(User);
+        this.dbset(Organization);
+        this.dbset(Post);
+        this.dbset(Category);
+
+        // Seed with all features combined
+        this.dbset(Organization)
+            .seed([
+                { id: 1, name: 'Default Org', slug: 'default' },
+                { id: 2, name: 'Partner Org', slug: 'partner' }
+            ])
+            .upsert({ conflictKey: 'slug' });
+
+        this.dbset(User)
+            .seedFactory(5, i => ({
+                id: i + 1,
+                name: `Admin ${i}`,
+                email: `admin${i}@example.com`,
+                org_id: 1,  // Foreign key (dependency)
+                role: 'admin'
+            }))
+            .when('development', 'test')  // Only in dev/test
+            .upsert({ conflictKey: 'email' });
+
+        this.dbset(Category)
+            .seed([
+                { name: 'Technology' },
+                { name: 'Business' },
+                { name: 'Science' }
+            ])
+            .upsert();
+
+        this.dbset(Post)
+            .seedFactory(10, i => ({
+                title: `Sample Post ${i}`,
+                content: 'Lorem ipsum...',
+                user_id: 1,      // Depends on User
+                category_id: 1   // Depends on Category
+            }))
+            .when('development');
+    }
+}
+```
+
+**What Happens:**
+1. **Dependency ordering**: Organization → User → Category → Post (automatic)
+2. **Conditional filtering**: User and Post seeds only in dev/test
+3. **Upsert safety**: Won't fail on duplicate keys
+4. **Factory generation**: 5 users and 10 posts created with variations
+5. **Rollback support**: Down migration deletes in reverse order
+
+---
+
+### Seed Configuration API
+
+```javascript
+// In context constructor
+this.seedConfig({
+    generateDownMigrations: false,     // Enable/disable rollback generation
+    downStrategy: 'delete',            // 'delete' | 'skip'
+    defaultStrategy: 'insert',         // 'insert' | 'upsert'
+    detectCircularDependencies: true,  // Detect circular FK references
+    circularStrategy: 'warn',          // 'warn' | 'throw' | 'ignore'
+    deleteByPrimaryKey: true,          // Use PK for down migrations
+    onRollbackError: 'warn'            // 'warn' | 'throw' | 'ignore'
+});
+```
+
+### Enhanced Seed Methods
+
+```javascript
+// Context-level seed API (extended)
+this.dbset(EntityName).seed(data)                              // Basic seed
+    .seed(moreData)                                            // Chainable
+    .seedFactory(count, generatorFn)                           // Factory pattern
+    .when(...environments)                                     // Conditional
+    .upsert({ conflictKey, updateFields })                     // Upsert mode
+
+// Examples
+this.dbset(User)
+    .seed({ name: 'admin' })                                   // Single record
+    .seed([{ name: 'user1' }, { name: 'user2' }])             // Array
+    .seedFactory(10, i => ({ name: `User ${i}` }))            // Factory
+    .when('development', 'test')                               // Conditional
+    .upsert({ conflictKey: 'email' });                         // Upsert
+```
 
 ---
 

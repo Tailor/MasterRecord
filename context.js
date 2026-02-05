@@ -150,6 +150,16 @@ class context {
     __trackedEntities = [];
     __trackedEntitiesMap = new Map();  // Performance: O(1) entity lookup instead of O(n) linear search
     __relationshipModels = [];
+    __contextSeedData = {};  // Store seed data by table name
+    __contextSeedConfig = {  // Seed data configuration
+        generateDownMigrations: false,
+        downStrategy: 'delete',
+        deleteByPrimaryKey: true,
+        onRollbackError: 'warn',
+        detectCircularDependencies: true,
+        circularStrategy: 'warn',
+        defaultStrategy: 'insert'  // 'insert' | 'upsert'
+    };
 
     // Configuration
     __environment = '';
@@ -712,6 +722,32 @@ class context {
     }
 
     /**
+     * Configure seed data behavior for migrations
+     *
+     * @param {object} config - Seed configuration options
+     * @param {boolean} [config.generateDownMigrations=false] - Generate rollback logic for seed data
+     * @param {string} [config.downStrategy='delete'] - Strategy for down migrations ('delete' | 'skip')
+     * @param {boolean} [config.deleteByPrimaryKey=true] - Use primary key for deletion in down migrations
+     * @param {string} [config.onRollbackError='warn'] - How to handle rollback errors ('warn' | 'throw' | 'ignore')
+     * @returns {this} Context instance for chaining
+     *
+     * @example
+     * context.seedConfig({
+     *     generateDownMigrations: true,
+     *     downStrategy: 'delete'
+     * });
+     */
+    seedConfig(config) {
+        if (config && typeof config === 'object') {
+            this.__contextSeedConfig = {
+                ...this.__contextSeedConfig,
+                ...config
+            };
+        }
+        return this;
+    }
+
+    /**
      * Initialize SQLite database connection using environment file
      *
      * @param {string} rootFolderLocation - Path to folder containing environment files
@@ -925,11 +961,13 @@ class context {
      *
      * @param {Function|object} model - Entity class or model definition
      * @param {string} [name] - Optional custom table name (defaults to model.name)
+     * @returns {object} Chainable object with seed() method
      * @throws {EntityValidationError} If model is invalid or table name contains SQL injection
      *
      * @example
      * context.dbset(User);
      * context.dbset(Post, 'blog_posts');
+     * context.dbset(User).seed({ name: 'Admin', email: 'admin@example.com' });
      */
     dbset(model, name) {
         // Input validation
@@ -996,6 +1034,11 @@ class context {
             configurable: true,
             enumerable: true
         });
+
+        // Return chainable object with seed() method
+        return {
+            seed: (data) => this.#addSeedData(tableName, data)
+        };
     }
 
     /**
@@ -1075,6 +1118,168 @@ class context {
         });
 
         entityObj.__compositeIndexes = allIndexes;
+    }
+
+    /**
+     * Add seed data for a table
+     * @private
+     * @param {string} tableName - Table name
+     * @param {object|Array<object>} data - Seed data (single object or array)
+     * @returns {object} Chainable object with seed() method
+     */
+    #addSeedData(tableName, data) {
+        // Initialize seed data storage if not exists
+        if (!this.__contextSeedData) {
+            this.__contextSeedData = {};
+        }
+        if (!this.__contextSeedData[tableName]) {
+            this.__contextSeedData[tableName] = [];
+        }
+
+        // Handle both single object and array of objects
+        const records = Array.isArray(data) ? data : [data];
+
+        // Attach rollback metadata if down migrations are enabled
+        if (this.__contextSeedConfig.generateDownMigrations) {
+            // Find primary key for this table
+            const entity = this.__entities.find(e => e.__name === tableName);
+            let primaryKey = 'id'; // Default
+            if (entity) {
+                for (const key in entity) {
+                    if (entity[key] && entity[key].primary) {
+                        primaryKey = key;
+                        break;
+                    }
+                }
+            }
+
+            records.forEach(record => {
+                if (record[primaryKey] !== undefined) {
+                    record.__rollback = {
+                        strategy: this.__contextSeedConfig.downStrategy,
+                        key: primaryKey,
+                        value: record[primaryKey]
+                    };
+                }
+            });
+        }
+
+        // Apply default upsert strategy if configured
+        if (this.__contextSeedConfig.defaultStrategy === 'upsert') {
+            records.forEach(record => {
+                if (!record.__seedStrategy) {
+                    record.__seedStrategy = {
+                        type: 'upsert',
+                        conflictKey: 'primaryKey',
+                        updateFields: null
+                    };
+                }
+            });
+        }
+
+        this.__contextSeedData[tableName].push(...records);
+
+        // Return chainable object with seed(), when(), seedFactory(), and upsert() methods
+        const chainable = {
+            seed: (moreData) => this.#addSeedData(tableName, moreData),
+            seedFactory: (count, generator) => this.#seedFactory(tableName, count, generator),
+            when: (...envs) => {
+                // Mark last batch of records with environment condition
+                const lastBatch = this.__contextSeedData[tableName].slice(-records.length);
+                lastBatch.forEach(r => {
+                    r.__seedEnv = {
+                        conditions: envs,
+                        strategy: 'generation-time'
+                    };
+                });
+                return chainable; // Return self for further chaining
+            },
+            upsert: (options = {}) => {
+                // Mark last batch of records with upsert strategy
+                const lastBatch = this.__contextSeedData[tableName].slice(-records.length);
+                lastBatch.forEach(r => {
+                    r.__seedStrategy = {
+                        type: 'upsert',
+                        conflictKey: options.conflictKey || 'primaryKey',
+                        updateFields: options.updateFields || null
+                    };
+                });
+                return chainable; // Return self for further chaining
+            }
+        };
+
+        return chainable;
+    }
+
+    /**
+     * Add factory-generated seed data for a table
+     * @private
+     * @param {string} tableName - Table name
+     * @param {number} count - Number of records to generate
+     * @param {Function} generator - Function that takes index and returns record object
+     * @returns {object} Chainable object
+     */
+    #seedFactory(tableName, count, generator) {
+        if (typeof generator !== 'function') {
+            throw new Error('seedFactory requires a generator function as the second parameter');
+        }
+
+        if (typeof count !== 'number' || count < 1) {
+            throw new Error('seedFactory requires a positive number as the first parameter');
+        }
+
+        // Generate records using the generator function
+        const records = Array.from({ length: count }, (_, i) => {
+            const record = generator(i);
+            if (!record || typeof record !== 'object') {
+                throw new Error(`Generator function must return an object (returned ${typeof record} for index ${i})`);
+            }
+
+            // Mark as factory-generated
+            record.__seedMeta = {
+                generated: true,
+                index: i,
+                generatedAt: Date.now()
+            };
+
+            return record;
+        });
+
+        // Add generated records using the existing #addSeedData method
+        return this.#addSeedData(tableName, records);
+    }
+
+    /**
+     * Get seed data ordered by dependency relationships
+     * Uses topological sort to ensure foreign key constraints are satisfied
+     * @returns {Object} Ordered seed data by table name
+     */
+    getOrderedSeedData() {
+        if (!this.__contextSeedData || Object.keys(this.__contextSeedData).length === 0) {
+            return {};
+        }
+
+        const DependencyGraph = require('./Migrations/dependencyGraph');
+        const graph = new DependencyGraph(this.__entities);
+        graph.buildFromEntities();
+
+        try {
+            const orderedTables = graph.filterToSeededTables(this.__contextSeedData);
+            const orderedSeedData = {};
+            orderedTables.forEach(table => {
+                orderedSeedData[table] = this.__contextSeedData[table];
+            });
+            return orderedSeedData;
+        } catch (error) {
+            // Handle circular dependency based on strategy
+            if (this.__contextSeedConfig.circularStrategy === 'throw') {
+                throw error;
+            } else if (this.__contextSeedConfig.circularStrategy === 'warn') {
+                console.warn(`[MasterRecord] ${error.message}, using insertion order instead`);
+            }
+            // Fall back to original insertion order
+            return this.__contextSeedData;
+        }
     }
 
     /**
