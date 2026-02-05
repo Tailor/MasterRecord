@@ -147,6 +147,11 @@ class migrationSQLiteQuery {
     createTable(table){
         var queryVar = "";
         for (var key in table) {
+            // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
+            if(key === 'indexes' || key.startsWith('__')){
+                continue;
+            }
+
             if(typeof table[key] === "object"){
                 var col = table[key];
                 // Skip relationship-only fields
@@ -156,7 +161,7 @@ class migrationSQLiteQuery {
                 queryVar += `${this.#columnMapping(col)}, `;
             }
         }
-    
+
         return `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*

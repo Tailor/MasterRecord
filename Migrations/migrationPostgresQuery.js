@@ -196,6 +196,11 @@ class migrationPostgresQuery {
         var queryVar = "";
 
         for (var key in table) {
+            // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
+            if(key === 'indexes' || key.startsWith('__')){
+                continue;
+            }
+
             if(typeof table[key] === "object"){
                 if(table[key].type !== "hasOne" && table[key].type !== "hasMany" && table[key].type !== "hasManyThrough"){
                     queryVar += `${this.#columnMapping(table[key])}, `;
