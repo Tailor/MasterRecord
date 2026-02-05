@@ -126,6 +126,19 @@ class schema{
                         });
                     }
                 });
+
+                // Create composite indexes
+                if (table.__compositeIndexes) {
+                    table.__compositeIndexes.forEach(function(compositeIdx) {
+                        const indexInfo = {
+                            tableName: tableName,
+                            columns: compositeIdx.columns,
+                            indexName: compositeIdx.name,
+                            unique: compositeIdx.unique
+                        };
+                        self.createCompositeIndex(indexInfo);
+                    });
+                }
             }
         }else{
             console.log("Table that you're trying to create is undefined. Please check if there are any changes that need to be made");
@@ -455,6 +468,56 @@ class schema{
                 var postgresQuery = require("./migrationPostgresQuery");
                 var queryBuilder = new postgresQuery();
                 var query = queryBuilder.dropIndex(indexInfo);
+                this.context._execute(query);
+            }
+        }
+    }
+
+    createCompositeIndex(indexInfo){
+        if(indexInfo){
+            if(this.context.isSQLite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.createCompositeIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isMySQL){
+                var sqlquery = require("./migrationMySQLQuery");
+                var queryBuilder = new sqlquery();
+                var query = queryBuilder.createCompositeIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.createCompositeIndex(indexInfo);
+                this.context._execute(query);
+            }
+        }
+    }
+
+    dropCompositeIndex(indexInfo){
+        if(indexInfo){
+            if(this.context.isSQLite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.dropCompositeIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isMySQL){
+                var sqlquery = require("./migrationMySQLQuery");
+                var queryBuilder = new sqlquery();
+                var query = queryBuilder.dropCompositeIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.dropCompositeIndex(indexInfo);
                 this.context._execute(query);
             }
         }

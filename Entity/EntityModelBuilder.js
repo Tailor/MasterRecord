@@ -46,15 +46,58 @@ class EntityModelBuilder {
             MDB.obj.name = methodName;
             obj[methodName] = MDB.obj;
         }
+
+        // Extract composite indexes from static property (Option A)
+        if (model.compositeIndexes) {
+            obj.__compositeIndexes = this.#normalizeCompositeIndexes(
+                model.compositeIndexes,
+                model.name
+            );
+        } else {
+            obj.__compositeIndexes = [];  // Initialize empty array
+        }
+
         return obj;
     }
 
     static cleanNull(obj) {
-        for (var propName in obj) { 
+        for (var propName in obj) {
           if (obj[propName] === null) {
             delete obj[propName];
           }
         }
+    }
+
+    static #normalizeCompositeIndexes(indexes, tableName) {
+        if (!Array.isArray(indexes)) {
+            throw new Error(`compositeIndexes must be an array`);
+        }
+
+        return indexes.map((index, i) => {
+            // Simple array: ['col1', 'col2'] -> auto-generate name
+            if (Array.isArray(index)) {
+                const colNames = index.join('_');
+                return {
+                    columns: index,
+                    name: `idx_${tableName.toLowerCase()}_${colNames}`,
+                    unique: false
+                };
+            }
+
+            // Object: { columns: [...], name?, unique? }
+            if (!index.columns || !Array.isArray(index.columns)) {
+                throw new Error(`Composite index must have 'columns' array`);
+            }
+
+            const name = index.name ||
+                `idx_${tableName.toLowerCase()}_${index.columns.join('_')}`;
+
+            return {
+                columns: index.columns,
+                name: name,
+                unique: index.unique || false
+            };
+        });
     }
 
 }

@@ -980,6 +980,10 @@ class context {
         }
 
         validModel.__name = tableName;
+
+        // Merge context-level composite indexes with entity-defined indexes
+        this.#mergeCompositeIndexes(validModel, tableName);
+
         this.__entities.push(validModel);  // Store model object
         const buildMod = tools.createNewInstance(validModel, query, this);
         this.__builderEntities.push(buildMod);  // Store query builder entity
@@ -992,6 +996,85 @@ class context {
             configurable: true,
             enumerable: true
         });
+    }
+
+    /**
+     * Define a composite index on an entity (Option C - Context-level)
+     * @param {Function|string} model - Entity class or table name
+     * @param {Array<string>} columns - Column names to include in index
+     * @param {Object} options - Index options { name?: string, unique?: boolean }
+     */
+    compositeIndex(model, columns, options = {}) {
+        // Resolve table name
+        let tableName;
+        if (typeof model === 'string') {
+            tableName = model;
+        } else if (typeof model === 'function') {
+            tableName = model.name;
+        } else {
+            throw new Error('compositeIndex: model must be entity class or table name');
+        }
+
+        // Validate columns
+        if (!Array.isArray(columns) || columns.length < 2) {
+            throw new Error('compositeIndex: columns must be array with at least 2 columns');
+        }
+
+        // Auto-generate name if not provided
+        const indexName = options.name ||
+            `idx_${tableName.toLowerCase()}_${columns.join('_')}`;
+
+        const indexDef = {
+            columns: columns,
+            name: indexName,
+            unique: options.unique || false
+        };
+
+        // Store in context for later merging with entity-defined indexes
+        if (!this.__contextCompositeIndexes) {
+            this.__contextCompositeIndexes = {};
+        }
+        if (!this.__contextCompositeIndexes[tableName]) {
+            this.__contextCompositeIndexes[tableName] = [];
+        }
+
+        // Check for duplicate index names
+        const existing = this.__contextCompositeIndexes[tableName].find(
+            idx => idx.name === indexName
+        );
+        if (existing) {
+            console.warn(`Warning: Composite index '${indexName}' already defined on ${tableName}`);
+            return;
+        }
+
+        this.__contextCompositeIndexes[tableName].push(indexDef);
+    }
+
+    /**
+     * Merge context-level and entity-level composite indexes
+     * @private
+     * @param {Object} entityObj - Entity object with __compositeIndexes
+     * @param {string} tableName - Table name
+     */
+    #mergeCompositeIndexes(entityObj, tableName) {
+        // Start with entity-defined indexes
+        const entityIndexes = entityObj.__compositeIndexes || [];
+
+        // Add context-defined indexes
+        const contextIndexes = (this.__contextCompositeIndexes &&
+                               this.__contextCompositeIndexes[tableName]) || [];
+
+        // Merge and deduplicate by name
+        const allIndexes = [...entityIndexes];
+        const existingNames = new Set(entityIndexes.map(idx => idx.name));
+
+        contextIndexes.forEach(idx => {
+            if (!existingNames.has(idx.name)) {
+                allIndexes.push(idx);
+            }
+        });
+
+        entityObj.__compositeIndexes = allIndexes;
     }
 
     /**

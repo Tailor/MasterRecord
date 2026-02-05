@@ -120,6 +120,38 @@ module.exports = ${this.name};
         }
     }
 
+    createCompositeIndex(type, indexInfo){
+        const indexInfoStr = JSON.stringify({
+            tableName: indexInfo.tableName,
+            columns: indexInfo.columns,
+            indexName: indexInfo.indexName,
+            unique: indexInfo.unique
+        });
+
+        if(type === "up"){
+            this.#up += os.EOL + `     this.createCompositeIndex(${indexInfoStr});`
+        }
+        else{
+            this.#down += os.EOL + `     this.dropCompositeIndex(${indexInfoStr});`
+        }
+    }
+
+    dropCompositeIndex(type, indexInfo){
+        const indexInfoStr = JSON.stringify({
+            tableName: indexInfo.tableName,
+            columns: indexInfo.columns,
+            indexName: indexInfo.indexName,
+            unique: indexInfo.unique
+        });
+
+        if(type === "up"){
+            this.#up += os.EOL + `     this.dropCompositeIndex(${indexInfoStr});`
+        }
+        else{
+            this.#down += os.EOL + `     this.createCompositeIndex(${indexInfoStr});`
+        }
+    }
+
 }
 
 module.exports = MigrationTemplate;

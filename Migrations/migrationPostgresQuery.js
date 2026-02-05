@@ -233,6 +233,16 @@ class migrationPostgresQuery {
         return `DROP INDEX IF EXISTS "${indexName}"`;
     }
 
+    createCompositeIndex(indexInfo){
+        const columns = indexInfo.columns.map(c => `"${c}"`).join(', ');
+        const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
+        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS "${indexInfo.indexName}" ON "${indexInfo.tableName}"(${columns})`;
+    }
+
+    dropCompositeIndex(indexInfo){
+        return `DROP INDEX IF EXISTS "${indexInfo.indexName}"`;
+    }
+
     /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations

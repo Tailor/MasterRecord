@@ -1900,6 +1900,226 @@ Migrations automatically include rollback logic. Running `masterrecord migrate d
 
 ---
 
+## Composite Indexes
+
+Create multi-column indexes for queries that filter or sort on multiple columns together.
+
+### API - Two Ways to Define
+
+**Option A: Entity Class (Recommended for core indexes)**
+
+```javascript
+class CreditLedger {
+    id(db) {
+        db.integer().primary().auto();
+    }
+
+    organization_id(db) {
+        db.integer().notNullable();
+    }
+
+    created_at(db) {
+        db.timestamp().default('CURRENT_TIMESTAMP');
+    }
+
+    resource_type(db) {
+        db.string().notNullable();
+    }
+
+    resource_id(db) {
+        db.integer().notNullable();
+    }
+
+    // Define composite indexes in entity
+    static compositeIndexes = [
+        // Simple array - auto-generates name
+        ['organization_id', 'created_at'],
+        ['resource_type', 'resource_id'],
+
+        // With custom name
+        {
+            columns: ['status', 'created_at'],
+            name: 'idx_status_timeline'
+        },
+
+        // Unique composite index
+        {
+            columns: ['email', 'tenant_id'],
+            unique: true
+        }
+    ];
+}
+```
+
+**Option C: Context-Level (For environment-specific or centralized schema)**
+
+```javascript
+class AppContext extends context {
+    onConfig() {
+        this.dbset(CreditLedger);
+
+        // Define composite indexes in context
+        this.compositeIndex(CreditLedger, ['organization_id', 'created_at']);
+        this.compositeIndex(CreditLedger, ['resource_type', 'resource_id']);
+        this.compositeIndex(CreditLedger, ['status', 'created_at'], {
+            name: 'idx_status_timeline'
+        });
+        this.compositeIndex(CreditLedger, ['email', 'tenant_id'], {
+            unique: true
+        });
+
+        // Can also use table name as string
+        this.compositeIndex('CreditLedger', ['user_id', 'created_at']);
+    }
+}
+```
+
+**Combined Usage (Best of Both)**
+
+```javascript
+class User {
+    email(db) { db.string(); }
+    tenant_id(db) { db.integer(); }
+    last_name(db) { db.string(); }
+    first_name(db) { db.string(); }
+
+    // Core indexes in entity
+    static compositeIndexes = [
+        ['last_name', 'first_name']
+    ];
+}
+
+class AppContext extends context {
+    onConfig() {
+        this.dbset(User);
+
+        // Add tenant-specific index for multi-tenant deployments
+        if (process.env.MULTI_TENANT === 'true') {
+            this.compositeIndex(User, ['tenant_id', 'email'], { unique: true });
+        }
+
+        // Add performance index for production
+        if (process.env.NODE_ENV === 'production') {
+            this.compositeIndex(User, ['tenant_id', 'last_name']);
+        }
+    }
+}
+```
+
+### When to Use Composite Indexes
+
+Composite indexes are most effective for queries that:
+1. **Filter on multiple columns**: `WHERE org_id = ? AND status = ?`
+2. **Filter and sort**: `WHERE status = ? ORDER BY created_at`
+3. **Enforce uniqueness**: Unique constraint on multiple columns together
+
+**Example queries that benefit:**
+
+```javascript
+// Benefits from composite index (organization_id, created_at)
+const ledger = await db.CreditLedger
+    .where(c => c.organization_id == $$, orgId)
+    .orderBy(c => c.created_at)
+    .toList();
+
+// Benefits from composite index (resource_type, resource_id)
+const entry = await db.CreditLedger
+    .where(c => c.resource_type == $$ && c.resource_id == $$, 'Order', 123)
+    .single();
+```
+
+### Column Order Matters
+
+The order of columns in a composite index affects query performance:
+
+```javascript
+static compositeIndexes = [
+    // Index: (status, created_at)
+    ['status', 'created_at']
+];
+
+// ✅ FAST: Uses index efficiently
+// WHERE status = ? ORDER BY created_at
+await db.Orders
+    .where(o => o.status == $$, 'pending')
+    .orderBy(o => o.created_at)
+    .toList();
+
+// ⚠️ SLOWER: Can only use first column
+// WHERE created_at > ?
+await db.Orders
+    .where(o => o.created_at > $$, yesterday)
+    .toList();
+```
+
+**Rule of thumb:** Put the most selective (filtered) columns first, then sort columns.
+
+### Automatic Migration Generation
+
+```javascript
+// Your entity definition triggers migration
+class CreditLedger {
+    organization_id(db) { db.integer(); }
+    created_at(db) { db.timestamp(); }
+
+    static compositeIndexes = [
+        ['organization_id', 'created_at']
+    ];
+}
+
+// Generated migration (automatic)
+class Migration_20250101 extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+        this.createCompositeIndex({
+            tableName: 'CreditLedger',
+            columns: ['organization_id', 'created_at'],
+            indexName: 'idx_creditleger_organization_id_created_at',
+            unique: false
+        });
+    }
+
+    async down(table) {
+        this.init(table);
+        this.dropCompositeIndex({
+            tableName: 'CreditLedger',
+            columns: ['organization_id', 'created_at'],
+            indexName: 'idx_creditleger_organization_id_created_at',
+            unique: false
+        });
+    }
+}
+```
+
+### Single vs Composite Indexes
+
+```javascript
+class User {
+    email(db) {
+        db.string().index();  // Single-column index
+    }
+
+    first_name(db) {
+        db.string();  // Part of composite below
+    }
+
+    last_name(db) {
+        db.string();  // Part of composite below
+    }
+
+    static compositeIndexes = [
+        // Composite index for name lookups
+        ['last_name', 'first_name']
+    ];
+}
+```
+
+**When to use single vs composite:**
+- **Single index**: Column queried independently (`WHERE email = ?`)
+- **Composite index**: Columns queried together (`WHERE last_name = ? AND first_name = ?`)
+
+---
+
 ## Business Logic Validation
 
 Add validators to your entity definitions for automatic validation on property assignment.
@@ -2411,59 +2631,40 @@ await db.saveChanges();  // Batch insert
 
 ### 3. Use Indexes
 
-Define indexes directly in your entity using `.index()`:
+**Single-column indexes:**
 
 ```javascript
 class User {
-    id(db) {
-        db.integer().primary().auto();  // Primary keys are automatically indexed
-    }
-
     email(db) {
-        db.string()
-          .notNullable()
-          .unique()
-          .index();  // Creates: idx_user_email
-    }
-
-    last_name(db) {
-        db.string().index();  // Creates: idx_user_last_name
-    }
-
-    status(db) {
-        db.string().index('idx_user_status');  // Custom index name
+        db.string().index();  // Single column
     }
 }
 ```
 
-**Migration automatically generates:**
+**Composite indexes for multi-column queries:**
 
 ```javascript
-// In migration file (generated automatically)
-this.createIndex({
-    tableName: 'User',
-    columnName: 'email',
-    indexName: 'idx_user_email'
-});
-```
+class Order {
+    user_id(db) { db.integer(); }
+    status(db) { db.string(); }
+    created_at(db) { db.timestamp(); }
 
-**Rollback support:**
+    static compositeIndexes = [
+        // For: WHERE user_id = ? AND status = ?
+        ['user_id', 'status'],
 
-```javascript
-// Down migration automatically includes
-this.dropIndex({
-    tableName: 'User',
-    columnName: 'email',
-    indexName: 'idx_user_email'
-});
+        // For: WHERE status = ? ORDER BY created_at
+        ['status', 'created_at']
+    ];
+}
 ```
 
 **Best practices:**
-- Index columns used in WHERE clauses
-- Index foreign key columns for join performance
+- Index foreign keys for join performance
+- Use composite indexes for queries with multiple WHERE conditions
+- Column order matters: most selective (filtered) columns first
 - Don't over-index - each index adds write overhead
-- Primary keys are automatically indexed (no need for `.index()`)
-- Use `.unique()` for data integrity, `.index()` for query performance
+- Primary keys are automatically indexed
 
 ### 4. Limit Result Sets
 

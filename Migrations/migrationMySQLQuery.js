@@ -246,6 +246,16 @@ class migrationMySQLQuery {
         return `DROP INDEX \`${indexName}\` ON \`${indexInfo.tableName}\``;
     }
 
+    createCompositeIndex(indexInfo){
+        const columns = indexInfo.columns.map(c => `\`${c}\``).join(', ');
+        const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
+        return `CREATE ${uniqueKeyword}INDEX \`${indexInfo.indexName}\` ON \`${indexInfo.tableName}\`(${columns})`;
+    }
+
+    dropCompositeIndex(indexInfo){
+        return `DROP INDEX \`${indexInfo.indexName}\` ON \`${indexInfo.tableName}\``;
+    }
+
     /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations

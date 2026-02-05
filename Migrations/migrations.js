@@ -26,7 +26,9 @@ class Migrations{
                         deletedColumns : [],
                         updatedColumns : [],
                         newIndexes : [],
-                        deletedIndexes : []
+                        deletedIndexes : [],
+                        newCompositeIndexes : [],
+                        deletedCompositeIndexes : []
                     }
                     tables.push(table);
                 });
@@ -42,9 +44,11 @@ class Migrations{
                         deletedColumns : [],
                         updatedColumns : [],
                         newIndexes : [],
-                        deletedIndexes : []
+                        deletedIndexes : [],
+                        newCompositeIndexes : [],
+                        deletedCompositeIndexes : []
                     }
-                    
+
                     oldSchema.forEach(function (oldItem, index) {
                         var oldItemName = oldItem["__name"];
                         if(table.name === oldItemName){
@@ -52,7 +56,7 @@ class Migrations{
                             tables.push(table);
                         }
                     });
-    
+
                 });
             }
 
@@ -167,6 +171,8 @@ class Migrations{
         tables = this.#findUpdatedColumns(tables);
         tables = this.#findNewIndexes(tables);
         tables = this.#findDeletedIndexes(tables);
+        tables = this.#findNewCompositeIndexes(tables);
+        tables = this.#findDeletedCompositeIndexes(tables);
         return tables;
     }
 
@@ -251,6 +257,67 @@ class Migrations{
                                 }
                             });
                         }
+                    }
+                });
+            }
+        });
+        return tables;
+    }
+
+    #findNewCompositeIndexes(tables) {
+        tables.forEach(function (item, index) {
+            if (item.new && item.old) {
+                const newComposite = item.new.__compositeIndexes || [];
+                const oldComposite = item.old.__compositeIndexes || [];
+
+                newComposite.forEach(function(newIdx) {
+                    const exists = oldComposite.some(oldIdx =>
+                        oldIdx.name === newIdx.name
+                    );
+
+                    if (!exists) {
+                        item.newCompositeIndexes.push({
+                            tableName: item.name,
+                            columns: newIdx.columns,
+                            indexName: newIdx.name,
+                            unique: newIdx.unique
+                        });
+                    }
+                });
+            } else if (item.new && !item.old) {
+                // New table - all composite indexes are new
+                const composites = item.new.__compositeIndexes || [];
+                composites.forEach(function(idx) {
+                    item.newCompositeIndexes.push({
+                        tableName: item.name,
+                        columns: idx.columns,
+                        indexName: idx.name,
+                        unique: idx.unique
+                    });
+                });
+            }
+        });
+        return tables;
+    }
+
+    #findDeletedCompositeIndexes(tables) {
+        tables.forEach(function (item, index) {
+            if (item.new && item.old) {
+                const newComposite = item.new.__compositeIndexes || [];
+                const oldComposite = item.old.__compositeIndexes || [];
+
+                oldComposite.forEach(function(oldIdx) {
+                    const exists = newComposite.some(newIdx =>
+                        newIdx.name === oldIdx.name
+                    );
+
+                    if (!exists) {
+                        item.deletedCompositeIndexes.push({
+                            tableName: item.name,
+                            columns: oldIdx.columns,
+                            indexName: oldIdx.name,
+                            unique: oldIdx.unique
+                        });
                     }
                 });
             }
@@ -398,6 +465,8 @@ class Migrations{
                (t.updatedColumns && t.updatedColumns.length) ||
                (t.newIndexes && t.newIndexes.length) ||
                (t.deletedIndexes && t.deletedIndexes.length) ||
+               (t.newCompositeIndexes && t.newCompositeIndexes.length) ||
+               (t.deletedCompositeIndexes && t.deletedCompositeIndexes.length) ||
                (t.old === null) || (t.new === null)){
                 return true;
             }
@@ -450,6 +519,14 @@ class Migrations{
 
             item.deletedIndexes.forEach(function (indexInfo, index) {
                 MT.dropIndex("up", indexInfo);
+            });
+
+            item.newCompositeIndexes.forEach(function (indexInfo, index) {
+                MT.createCompositeIndex("up", indexInfo);
+            });
+
+            item.deletedCompositeIndexes.forEach(function (indexInfo, index) {
+                MT.dropCompositeIndex("up", indexInfo);
             });
 
         });
