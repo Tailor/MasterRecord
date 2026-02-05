@@ -82,6 +82,44 @@ module.exports = ${this.name};
         }
     }
 
+    createIndex(type, indexInfo){
+        const indexName = indexInfo.indexName === true
+            ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
+            : indexInfo.indexName;
+
+        const indexInfoStr = JSON.stringify({
+            tableName: indexInfo.tableName,
+            columnName: indexInfo.columnName,
+            indexName: indexInfo.indexName
+        });
+
+        if(type === "up"){
+            this.#up += os.EOL + `     this.createIndex(${indexInfoStr});`
+        }
+        else{
+            this.#down += os.EOL + `     this.dropIndex(${indexInfoStr});`
+        }
+    }
+
+    dropIndex(type, indexInfo){
+        const indexName = indexInfo.indexName === true
+            ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
+            : indexInfo.indexName;
+
+        const indexInfoStr = JSON.stringify({
+            tableName: indexInfo.tableName,
+            columnName: indexInfo.columnName,
+            indexName: indexInfo.indexName
+        });
+
+        if(type === "up"){
+            this.#up += os.EOL + `     this.dropIndex(${indexInfoStr});`
+        }
+        else{
+            this.#down += os.EOL + `     this.createIndex(${indexInfoStr});`
+        }
+    }
+
 }
 
 module.exports = MigrationTemplate;

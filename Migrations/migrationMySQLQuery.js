@@ -232,6 +232,20 @@ class migrationMySQLQuery {
         return `ALTER TABLE \`${table.tableName}\` RENAME COLUMN \`${table.name}\` TO \`${table.newName}\``
     }
 
+    createIndex(indexInfo){
+        const indexName = indexInfo.indexName === true
+            ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
+            : indexInfo.indexName;
+        return `CREATE INDEX \`${indexName}\` ON \`${indexInfo.tableName}\`(\`${indexInfo.columnName}\`)`;
+    }
+
+    dropIndex(indexInfo){
+        const indexName = indexInfo.indexName === true
+            ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
+            : indexInfo.indexName;
+        return `DROP INDEX \`${indexName}\` ON \`${indexInfo.tableName}\``;
+    }
+
     /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations

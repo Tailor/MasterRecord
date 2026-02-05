@@ -111,8 +111,16 @@ class EntityModel {
 
     unique(){
         this.obj.unique = true; // yes
-        return this; 
+        return this;
 
+    }
+
+    index(indexName){
+        if(!this.obj.indexes){
+            this.obj.indexes = [];
+        }
+        this.obj.indexes.push(indexName || true);
+        return this;
     }
 
     // this means that it can be an empty field

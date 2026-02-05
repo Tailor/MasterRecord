@@ -110,6 +110,22 @@ class schema{
                     var query = queryBuilder.createTable(table);
                     this.context._execute(query);
                 }
+
+                // Create indexes for columns that have .index() defined
+                const self = this;
+                Object.keys(table).forEach(function(key){
+                    if(typeof table[key] === "object" && table[key].indexes && !key.startsWith('__')){
+                        const columnName = table[key].name;
+                        table[key].indexes.forEach(function(indexName){
+                            const indexInfo = {
+                                tableName: tableName,
+                                columnName: columnName,
+                                indexName: indexName
+                            };
+                            self.createIndex(indexInfo);
+                        });
+                    }
+                });
             }
         }else{
             console.log("Table that you're trying to create is undefined. Please check if there are any changes that need to be made");
@@ -389,6 +405,56 @@ class schema{
                 var postgresQuery = require("./migrationPostgresQuery");
                 var queryBuilder = new postgresQuery();
                 var query = queryBuilder.renameColumn(table);
+                this.context._execute(query);
+            }
+        }
+    }
+
+    createIndex(indexInfo){
+        if(indexInfo){
+            if(this.context.isSQLite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.createIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isMySQL){
+                var sqlquery = require("./migrationMySQLQuery");
+                var queryBuilder = new sqlquery();
+                var query = queryBuilder.createIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.createIndex(indexInfo);
+                this.context._execute(query);
+            }
+        }
+    }
+
+    dropIndex(indexInfo){
+        if(indexInfo){
+            if(this.context.isSQLite){
+                var sqliteQuery = require("./migrationSQLiteQuery");
+                var queryBuilder = new sqliteQuery();
+                var query = queryBuilder.dropIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isMySQL){
+                var sqlquery = require("./migrationMySQLQuery");
+                var queryBuilder = new sqlquery();
+                var query = queryBuilder.dropIndex(indexInfo);
+                this.context._execute(query);
+            }
+
+            if(this.context.isPostgres){
+                var postgresQuery = require("./migrationPostgresQuery");
+                var queryBuilder = new postgresQuery();
+                var query = queryBuilder.dropIndex(indexInfo);
                 this.context._execute(query);
             }
         }

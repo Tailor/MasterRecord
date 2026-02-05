@@ -24,7 +24,9 @@ class Migrations{
                         newColumns : [],
                         newTables : [],
                         deletedColumns : [],
-                        updatedColumns : []
+                        updatedColumns : [],
+                        newIndexes : [],
+                        deletedIndexes : []
                     }
                     tables.push(table);
                 });
@@ -38,7 +40,9 @@ class Migrations{
                         newColumns : [],
                         newTables : [],
                         deletedColumns : [],
-                        updatedColumns : []
+                        updatedColumns : [],
+                        newIndexes : [],
+                        deletedIndexes : []
                     }
                     
                     oldSchema.forEach(function (oldItem, index) {
@@ -156,11 +160,101 @@ class Migrations{
     #buildMigrationObject(oldSchema, newSchema){
 
         var tables = this.#organizeSchemaByTables(oldSchema, newSchema);
-        
+
         tables = this.#findNewTables(tables);
         tables = this.#findNewColumns(tables);
         tables = this.#findDeletedColumns(tables);
         tables = this.#findUpdatedColumns(tables);
+        tables = this.#findNewIndexes(tables);
+        tables = this.#findDeletedIndexes(tables);
+        return tables;
+    }
+
+    #findNewIndexes(tables){
+        tables.forEach(function (item, index) {
+            if(item.new && item.old){
+                Object.keys(item.new).forEach(function (key) {
+                    if(typeof item.new[key] === "object" && item.new[key].indexes){
+                        var columnName = item.new[key].name;
+                        var newIndexes = item.new[key].indexes;
+
+                        // Check if this column existed before
+                        var oldColumn = null;
+                        Object.keys(item.old).forEach(function (oldKey) {
+                            if(typeof item.old[oldKey] === "object" && item.old[oldKey].name === columnName){
+                                oldColumn = item.old[oldKey];
+                            }
+                        });
+
+                        // If column didn't exist before, or didn't have indexes, all indexes are new
+                        if(!oldColumn || !oldColumn.indexes){
+                            newIndexes.forEach(function(indexName){
+                                item.newIndexes.push({
+                                    tableName: item.name,
+                                    columnName: columnName,
+                                    indexName: indexName
+                                });
+                            });
+                        } else {
+                            // Check for new indexes that weren't in the old column
+                            newIndexes.forEach(function(indexName){
+                                if(!oldColumn.indexes.includes(indexName)){
+                                    item.newIndexes.push({
+                                        tableName: item.name,
+                                        columnName: columnName,
+                                        indexName: indexName
+                                    });
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+        });
+        return tables;
+    }
+
+    #findDeletedIndexes(tables){
+        tables.forEach(function (item, index) {
+            if(item.new && item.old){
+                Object.keys(item.old).forEach(function (key) {
+                    if(typeof item.old[key] === "object" && item.old[key].indexes){
+                        var columnName = item.old[key].name;
+                        var oldIndexes = item.old[key].indexes;
+
+                        // Check if this column still exists
+                        var newColumn = null;
+                        Object.keys(item.new).forEach(function (newKey) {
+                            if(typeof item.new[newKey] === "object" && item.new[newKey].name === columnName){
+                                newColumn = item.new[newKey];
+                            }
+                        });
+
+                        // If column doesn't exist anymore, or doesn't have indexes, all indexes are deleted
+                        if(!newColumn || !newColumn.indexes){
+                            oldIndexes.forEach(function(indexName){
+                                item.deletedIndexes.push({
+                                    tableName: item.name,
+                                    columnName: columnName,
+                                    indexName: indexName
+                                });
+                            });
+                        } else {
+                            // Check for indexes that were removed
+                            oldIndexes.forEach(function(indexName){
+                                if(!newColumn.indexes.includes(indexName)){
+                                    item.deletedIndexes.push({
+                                        tableName: item.name,
+                                        columnName: columnName,
+                                        indexName: indexName
+                                    });
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+        });
         return tables;
     }
 
@@ -302,6 +396,8 @@ class Migrations{
                (t.newColumns && t.newColumns.length) ||
                (t.deletedColumns && t.deletedColumns.length) ||
                (t.updatedColumns && t.updatedColumns.length) ||
+               (t.newIndexes && t.newIndexes.length) ||
+               (t.deletedIndexes && t.deletedIndexes.length) ||
                (t.old === null) || (t.new === null)){
                 return true;
             }
@@ -346,6 +442,14 @@ class Migrations{
                     MT.alterColumn("up", column.table.name, item.name);
                     MT.alterColumn("down", column.table.name, item.name);
                 }
+            });
+
+            item.newIndexes.forEach(function (indexInfo, index) {
+                MT.createIndex("up", indexInfo);
+            });
+
+            item.deletedIndexes.forEach(function (indexInfo, index) {
+                MT.dropIndex("up", indexInfo);
             });
 
         });

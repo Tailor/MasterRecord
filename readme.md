@@ -1790,6 +1790,116 @@ try {
 
 ---
 
+## Field Constraints & Indexes
+
+Define database constraints and performance indexes using the fluent API:
+
+```javascript
+class User {
+    id(db) {
+        db.integer().primary().auto();
+    }
+
+    email(db) {
+        db.string()
+          .notNullable()
+          .unique()
+          .index();  // Creates performance index
+    }
+
+    username(db) {
+        db.string()
+          .notNullable()
+          .index('idx_username_custom');  // Custom index name
+    }
+
+    status(db) {
+        db.string().nullable();
+    }
+
+    created_at(db) {
+        db.timestamp().default('CURRENT_TIMESTAMP');
+    }
+}
+```
+
+### Available Constraint Methods
+
+- `.notNullable()` - Column cannot be NULL
+- `.nullable()` - Column can be NULL (default)
+- `.unique()` - Unique constraint (enforces uniqueness at DB level)
+- `.index()` - Creates performance index (auto-generated name: `idx_tablename_columnname`)
+- `.index('custom_name')` - Creates index with custom name
+- `.primary()` - Primary key (automatically indexed)
+- `.default(value)` - Default value
+
+### Index vs Unique Constraint
+
+**Understanding the difference:**
+
+- `.unique()` creates a UNIQUE constraint (prevents duplicate values, enforces data integrity)
+- `.index()` creates a performance index (improves query speed, allows duplicates)
+- You can use both together: `.unique().index()` creates a unique index for both integrity and performance
+
+**Examples:**
+
+```javascript
+// Email must be unique (no performance index)
+email(db) {
+    db.string().notNullable().unique();
+}
+
+// Username indexed for fast lookups (allows duplicates)
+username(db) {
+    db.string().notNullable().index();
+}
+
+// Email with both unique constraint AND performance index
+email(db) {
+    db.string().notNullable().unique().index();
+}
+```
+
+### Automatic Index Migration
+
+When you add `.index()` to a field, MasterRecord automatically generates migration code:
+
+```javascript
+// In your entity
+class User {
+    email(db) {
+        db.string().notNullable().index();
+    }
+}
+
+// Generated migration (automatic)
+class Migration_20250101 extends masterrecord.schema {
+    async up(table) {
+        this.init(table);
+        this.createIndex({
+            tableName: 'User',
+            columnName: 'email',
+            indexName: 'idx_user_email'
+        });
+    }
+
+    async down(table) {
+        this.init(table);
+        this.dropIndex({
+            tableName: 'User',
+            columnName: 'email',
+            indexName: 'idx_user_email'
+        });
+    }
+}
+```
+
+**Rollback support:**
+
+Migrations automatically include rollback logic. Running `masterrecord migrate down` will drop all indexes created by that migration.
+
+---
+
 ## Business Logic Validation
 
 Add validators to your entity definitions for automatic validation on property assignment.
@@ -2301,19 +2411,59 @@ await db.saveChanges();  // Batch insert
 
 ### 3. Use Indexes
 
+Define indexes directly in your entity using `.index()`:
+
 ```javascript
 class User {
-    constructor() {
-        this.email = {
-            type: 'string',
-            unique: true  // Automatically creates index
-        };
+    id(db) {
+        db.integer().primary().auto();  // Primary keys are automatically indexed
+    }
+
+    email(db) {
+        db.string()
+          .notNullable()
+          .unique()
+          .index();  // Creates: idx_user_email
+    }
+
+    last_name(db) {
+        db.string().index();  // Creates: idx_user_last_name
+    }
+
+    status(db) {
+        db.string().index('idx_user_status');  // Custom index name
     }
 }
-
-// For complex queries, add database indexes manually
-// CREATE INDEX idx_user_status ON User(status);
 ```
+
+**Migration automatically generates:**
+
+```javascript
+// In migration file (generated automatically)
+this.createIndex({
+    tableName: 'User',
+    columnName: 'email',
+    indexName: 'idx_user_email'
+});
+```
+
+**Rollback support:**
+
+```javascript
+// Down migration automatically includes
+this.dropIndex({
+    tableName: 'User',
+    columnName: 'email',
+    indexName: 'idx_user_email'
+});
+```
+
+**Best practices:**
+- Index columns used in WHERE clauses
+- Index foreign key columns for join performance
+- Don't over-index - each index adds write overhead
+- Primary keys are automatically indexed (no need for `.index()`)
+- Use `.unique()` for data integrity, `.index()` for query performance
 
 ### 4. Limit Result Sets
 
