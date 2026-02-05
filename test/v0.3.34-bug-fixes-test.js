@@ -292,13 +292,93 @@ test('Complex scenario: Multiple tables with seed data, indexes, and composite i
 });
 
 // =============================================================================
+// Test Suite 4: Duplicate Table Deduplication (v0.3.35)
+// =============================================================================
+console.log("\n📋 Test Suite 4: Duplicate Table Deduplication\n");
+
+test('Deduplicates when snapshot has duplicate table definitions', () => {
+    const migrations = new Migrations();
+
+    // Simulate snapshot with duplicate Settings table (real-world bug from ragContext)
+    const oldSchema = [];
+    const newSchema = [
+        {
+            __name: 'Settings',
+            id: { name: 'id', type: 'integer', primaryKey: true },
+            disable_rag: { name: 'disable_rag', type: 'integer' }
+        },
+        {
+            __name: 'Document',
+            id: { name: 'id', type: 'integer', primaryKey: true }
+        },
+        {
+            __name: 'Settings',  // DUPLICATE - this caused the bug
+            id: { name: 'id', type: 'integer', primaryKey: true },
+            disable_rag: { name: 'disable_rag', type: 'integer' }
+        }
+    ];
+
+    const seedData = {
+        Settings: [{ disable_rag: 0 }]
+    };
+
+    const migrationCode = migrations.template('TestMigration', oldSchema, newSchema, seedData);
+
+    const createTableCount = (migrationCode.match(/createTable\(table\.Settings\)/g) || []).length;
+    const seedCount = (migrationCode.match(/this\.seed\('Settings'/g) || []).length;
+
+    assert(createTableCount === 1, `Expected 1 createTable for Settings, got ${createTableCount}`);
+    assert(seedCount === 1, `Expected 1 seed call for Settings, got ${seedCount}`);
+});
+
+test('Deduplicates multiple tables with multiple seeds (qaContext scenario)', () => {
+    const migrations = new Migrations();
+
+    const oldSchema = [];
+    const newSchema = [
+        {
+            __name: 'TaxonomyTemplate',
+            id: { name: 'id', type: 'integer', primaryKey: true },
+            template_id: { name: 'template_id', type: 'string' }
+        },
+        {
+            __name: 'Document',
+            id: { name: 'id', type: 'integer', primaryKey: true }
+        },
+        {
+            __name: 'TaxonomyTemplate',  // DUPLICATE
+            id: { name: 'id', type: 'integer', primaryKey: true },
+            template_id: { name: 'template_id', type: 'string' }
+        }
+    ];
+
+    const seedData = {
+        TaxonomyTemplate: [
+            { template_id: 'template1' },
+            { template_id: 'template2' },
+            { template_id: 'template3' },
+            { template_id: 'template4' },
+            { template_id: 'template5' }
+        ]
+    };
+
+    const migrationCode = migrations.template('TestMigration', oldSchema, newSchema, seedData);
+
+    const createTableCount = (migrationCode.match(/createTable\(table\.TaxonomyTemplate\)/g) || []).length;
+    const seedCount = (migrationCode.match(/this\.seed\('TaxonomyTemplate'/g) || []).length;
+
+    assert(createTableCount === 1, `Expected 1 createTable for TaxonomyTemplate, got ${createTableCount}`);
+    assert(seedCount === 5, `Expected 5 seed calls for TaxonomyTemplate, got ${seedCount}`);
+});
+
+// =============================================================================
 // Test Results Summary
 // =============================================================================
 console.log("\n" + "=".repeat(68));
 console.log(`\n📊 Test Results: ${passed} passed, ${failed} failed\n`);
 
 if (failed === 0) {
-    console.log("✅ All tests passed! v0.3.34 fixes are working correctly.\n");
+    console.log("✅ All tests passed! v0.3.34/0.3.35 fixes are working correctly.\n");
     process.exit(0);
 } else {
     console.log(`⚠️  ${failed} test(s) failed. Please review the output above.\n`);

@@ -15,10 +15,21 @@ class Migrations{
 
     #organizeSchemaByTables(oldSchema, newSchema){
             var tables = []
+            var seenTableNames = new Set();  // Track processed table names to prevent duplicates
+
             if(oldSchema.length === 0){
                 newSchema.forEach(function (item, index) {
+                    var tableName = item["__name"];
+
+                    // Skip if we've already processed this table name
+                    if(seenTableNames.has(tableName)){
+                        console.warn(`Warning: Duplicate table definition detected for "${tableName}" - using first occurrence only`);
+                        return;
+                    }
+                    seenTableNames.add(tableName);
+
                     var table = {
-                        name: item["__name"],
+                        name: tableName,
                         new :item,
                         old : {},
                         newColumns : [],
@@ -36,8 +47,17 @@ class Migrations{
             }
             else{
                 newSchema.forEach(function (item, index) {
+                    var tableName = item["__name"];
+
+                    // Skip if we've already processed this table name
+                    if(seenTableNames.has(tableName)){
+                        console.warn(`Warning: Duplicate table definition detected for "${tableName}" - using first occurrence only`);
+                        return;
+                    }
+                    seenTableNames.add(tableName);
+
                     var table = {
-                        name: item["__name"],
+                        name: tableName,
                         old: null,
                         new :item,
                         newColumns : [],

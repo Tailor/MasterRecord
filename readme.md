@@ -3369,18 +3369,43 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
-### Version 0.3.34 (2026-02-05)
+### Version 0.3.35 (2026-02-05) - CRITICAL FIX
+
+#### Critical Bug Fix
+- **FIXED**: Duplicate table operations in migrations when snapshots contain duplicate table definitions
+  - **Root Cause**: If a context registered the same entity twice (via multiple `dbset()` calls), the snapshot would contain duplicate table definitions with the same `__name`
+  - **Impact**: Migrations would generate duplicate `createTable()` and `seed()` calls, causing duplicate records in the database
+  - **Examples**:
+    - ragContext: Settings table appeared twice → 2x seed insertions
+    - qaContext: TaxonomyTemplate appeared twice → 18 template records instead of 9
+  - **Fix**: Added deduplication in `#organizeSchemaByTables()` using a `Set` to track processed table names
+  - **User Impact**: If you ran migrations from v0.3.34 or earlier and have duplicate records:
+    1. Manually remove duplicates from your database
+    2. Regenerate migrations with v0.3.35: `masterrecord add-migration YourContext "regenerate"`
+    3. Future migrations will not create duplicates
+
+#### Technical Details
+- Modified `Migrations/migrations.js` - `#organizeSchemaByTables()` method
+- Added `seenTableNames` Set to track processed tables and prevent duplicates
+- Emits warning: `"Warning: Duplicate table definition detected for 'TableName' - using first occurrence only"`
+- Works for both initial migrations (`oldSchema.length === 0`) and subsequent migrations
+
+#### Testing
+- Added 2 new tests for duplicate table scenarios (13 total tests)
+- All tests passing with duplicate detection and deduplication verified
+
+### Version 0.3.34 (2026-02-05) - PARTIALLY EFFECTIVE
+
+⚠️ **Note**: This version fixed the seed API bug but did NOT fix duplicate operations. Use v0.3.35 instead.
 
 #### Bug Fixes
 - **Fixed**: Seed API migration generation - resolved `table.EntityName.create is not a function` error
   - Migrations now use `this.seed('TableName', data)` instead of `table.TableName.create(data)`
   - Ensures compatibility with the migration schema base class
-- **Fixed**: Eliminated duplicate table creation statements in generated migrations
-- **Fixed**: Eliminated duplicate seed insertion statements in generated migrations
-- **Fixed**: Duplicate index creation when using `.index()` in column definitions
-  - Index operations now properly deduplicated during migration generation
 - **Fixed**: Missing `await` keywords on `createIndex()`, `dropIndex()`, `createCompositeIndex()`, and `dropCompositeIndex()` calls in migrations
   - All async index operations now properly awaited for consistency
+- ~~**Fixed**: Eliminated duplicate table creation statements~~ ❌ **NOT ACTUALLY FIXED** - see v0.3.35
+- ~~**Fixed**: Eliminated duplicate seed insertion statements~~ ❌ **NOT ACTUALLY FIXED** - see v0.3.35
 
 #### Improvements
 - **Enhanced**: Query builders now use whitelist validation for column definitions
@@ -3408,7 +3433,7 @@ user.name = null;  // Error if name is { nullable: false }
 
 | Component     | Version       | Notes                                    |
 |---------------|---------------|------------------------------------------|
-| MasterRecord  | 0.3.34        | Current version with bug fixes and improvements |
+| MasterRecord  | 0.3.35        | Current version - fixes critical duplicate table bug |
 | Node.js       | 14+           | Async/await support required             |
 | PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
 | MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |
