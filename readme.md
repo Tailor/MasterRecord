@@ -3369,6 +3369,65 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.36 (2026-02-05) - ROOT CAUSE FIX
+
+#### Critical Bug Fix - Complete Resolution
+- **FIXED**: Root cause of duplicate entities and seed data in migrations
+  - **Previous Fix (v0.3.35)**: Added band-aid deduplication at migration generation time
+  - **This Fix (v0.3.36)**: Addresses the actual root cause in context registration
+  - **Pattern**: User contexts calling `dbset(Entity)` then later `dbset(Entity).seed(data)` caused:
+    - Entity registered twice in `__entities` array
+    - Seed data duplicated in `__contextSeedData`
+    - Snapshots containing duplicate table definitions
+    - Migrations generating 2x operations (e.g., 18 template records instead of 9)
+
+#### Implementation - EF Core HasData Semantics
+**Fix #1: Entity Deduplication in `dbset()`** (`context.js` lines 1025-1037)
+- Added `findIndex()` check before adding entities to `__entities` array
+- If entity with same table name exists, updates it instead of adding duplicate
+- Emits warning: `"Warning: dbset() called multiple times for table 'X' - updating existing registration"`
+
+**Fix #2: Seed Data Deduplication in `#addSeedData()`** (`context.js` lines 1190-1223)
+- Implements Entity Framework Core `HasData` semantics:
+  - **Update**: If record with same primary key exists, merge/update fields
+  - **Insert**: If primary key doesn't exist or is undefined, append record
+- Upserts by primary key (supports custom primary keys like `uuid`)
+- Emits warning: `"Warning: seed() called multiple times for table 'X' - using upsert semantics..."`
+- User requested this approach to match EF Core behavior
+
+#### Technical Details
+**Files Modified:**
+1. `context.js` - Added deduplication logic in `dbset()` and `#addSeedData()`
+2. `test/entity-deduplication-test.js` (NEW) - 5 tests for entity deduplication
+3. `test/seed-deduplication-test.js` (NEW) - 8 tests for EF Core seed semantics
+4. `test/qa-context-pattern-test.js` (NEW) - 7 tests for real-world patterns
+5. `package.json` - Updated version to 0.3.36
+6. `readme.md` - Added changelog and documentation
+
+**Test Results:**
+- **20 new tests** - All passing ✅
+- Tests cover the exact qaContext pattern (lines 58 + 207) that caused the bug
+- Tests verify 9 seeds stay as 9 (not 18), Settings stay as 2 (not 4)
+
+#### Upgrade Path
+1. **Update to v0.3.36**: `npm install -g masterrecord@0.3.36`
+2. **If you have duplicate data in your database from v0.3.34/v0.3.35**:
+   - Manually remove duplicate records (check by primary key)
+   - Delete existing snapshots: `rm db/migrations/*_contextSnapShot.json`
+   - Regenerate migrations: `masterrecord add-migration YourContext "clean-regenerate"`
+3. **Future migrations**: Will automatically deduplicate entities and seed data
+
+#### Why This Fix is Better Than v0.3.35
+- **v0.3.35**: Band-aid at migration generation time (still keeps duplicates in memory)
+- **v0.3.36**: Fixes root cause - prevents duplicates from ever being created
+- **Defense-in-depth**: Both fixes remain in place for safety
+
+#### Impact
+- ✅ Entities registered only once even with multiple `dbset()` calls
+- ✅ Seed data uses EF Core semantics (upsert by primary key)
+- ✅ Warning messages guide users to fix their code patterns
+- ✅ Backward compatible - existing single `dbset()` calls work as before
+
 ### Version 0.3.35 (2026-02-05) - CRITICAL FIX
 
 #### Critical Bug Fix
@@ -3433,7 +3492,7 @@ user.name = null;  // Error if name is { nullable: false }
 
 | Component     | Version       | Notes                                    |
 |---------------|---------------|------------------------------------------|
-| MasterRecord  | 0.3.35        | Current version - fixes critical duplicate table bug |
+| MasterRecord  | 0.3.36        | Current version - root cause fix for duplicate entities/seeds |
 | Node.js       | 14+           | Async/await support required             |
 | PostgreSQL    | 9.6+ (12+)    | Tested with 12, 13, 14, 15, 16          |
 | MySQL         | 5.7+ (8.0+)   | Tested with 8.0+                        |

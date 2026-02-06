@@ -1022,9 +1022,19 @@ class context {
         // Merge context-level composite indexes with entity-defined indexes
         this.#mergeCompositeIndexes(validModel, tableName);
 
-        this.__entities.push(validModel);  // Store model object
-        const buildMod = tools.createNewInstance(validModel, query, this);
-        this.__builderEntities.push(buildMod);  // Store query builder entity
+        // Check if this entity (by table name) is already registered
+        const existingIndex = this.__entities.findIndex(e => e.__name === tableName);
+        if (existingIndex !== -1) {
+            // Entity already exists - update it instead of adding duplicate
+            console.warn(`Warning: dbset() called multiple times for table '${tableName}' - updating existing registration`);
+            this.__entities[existingIndex] = validModel;
+            this.__builderEntities[existingIndex] = tools.createNewInstance(validModel, query, this);
+        } else {
+            // New entity - add to arrays
+            this.__entities.push(validModel);  // Store model object
+            const buildMod = tools.createNewInstance(validModel, query, this);
+            this.__builderEntities.push(buildMod);  // Store query builder entity
+        }
 
         // Use getter to return fresh query instance each time (prevents parameter accumulation)
         Object.defineProperty(this, validModel.__name, {
@@ -1177,7 +1187,45 @@ class context {
             });
         }
 
-        this.__contextSeedData[tableName].push(...records);
+        // Deduplicate seed data using EF Core HasData semantics:
+        // - If record with same primary key exists, update it
+        // - If record doesn't exist, insert it
+        // This prevents duplicate seed data when seed() is called multiple times
+        const entity = this.__entities.find(e => e.__name === tableName);
+        let primaryKey = 'id'; // Default
+        if (entity) {
+            for (const key in entity) {
+                if (entity[key] && entity[key].primary) {
+                    primaryKey = key;
+                    break;
+                }
+            }
+        }
+
+        // Check if we're adding duplicate seed data
+        const existingData = this.__contextSeedData[tableName];
+        if (existingData.length > 0) {
+            console.warn(`Warning: seed() called multiple times for table '${tableName}' - using upsert semantics (update if primary key exists, insert otherwise)`);
+        }
+
+        // Upsert each record by primary key
+        records.forEach(newRecord => {
+            const pkValue = newRecord[primaryKey];
+            if (pkValue !== undefined) {
+                // Find existing record with same primary key
+                const existingIndex = existingData.findIndex(r => r[primaryKey] === pkValue);
+                if (existingIndex !== -1) {
+                    // Update existing record (merge properties)
+                    existingData[existingIndex] = { ...existingData[existingIndex], ...newRecord };
+                } else {
+                    // Insert new record
+                    existingData.push(newRecord);
+                }
+            } else {
+                // No primary key value - just append (insert semantics)
+                existingData.push(newRecord);
+            }
+        });
 
         // Return chainable object with seed(), when(), seedFactory(), and upsert() methods
         const chainable = {
