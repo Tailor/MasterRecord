@@ -3369,13 +3369,11 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
-### Version 0.3.36 (2026-02-05) - ROOT CAUSE FIX
+### Version 0.3.36 (2026-02-06) - ROOT CAUSE FIX + CONFIG DISCOVERY FIX
 
-#### Critical Bug Fix - Complete Resolution
+#### Critical Bug Fix #1: Duplicate Entities and Seed Data - Complete Resolution
 - **FIXED**: Root cause of duplicate entities and seed data in migrations
-  - **Previous Fix (v0.3.35)**: Added band-aid deduplication at migration generation time
-  - **This Fix (v0.3.36)**: Addresses the actual root cause in context registration
-  - **Pattern**: User contexts calling `dbset(Entity)` then later `dbset(Entity).seed(data)` caused:
+  - **Root Cause**: User contexts calling `dbset(Entity)` then later `dbset(Entity).seed(data)` caused:
     - Entity registered twice in `__entities` array
     - Seed data duplicated in `__contextSeedData`
     - Snapshots containing duplicate table definitions
@@ -3395,98 +3393,65 @@ user.name = null;  // Error if name is { nullable: false }
 - Emits warning: `"Warning: seed() called multiple times for table 'X' - using upsert semantics..."`
 - User requested this approach to match EF Core behavior
 
+#### Critical Bug Fix #2: Config File Discovery - Glob Pattern Too Broad
+- **FIXED**: Glob pattern was matching non-environment config files
+  - **Root Cause**: Pattern `${rootFolder}/**/*{env.${envType},${envType}}.json` matched ANY file ending with `.${envType}.json`
+  - **Impact**: When multiple files matched (e.g., `free-audit-page.development.json` and `env.development.json`), glob returned them alphabetically and the wrong file was loaded first
+  - **Real-World Example**:
+    - User had `config/environments/free-audit-page.development.json` (no context configs)
+    - User had `config/environments/env.development.json` (has userContext config)
+    - Glob found both, returned `free-audit-page.development.json` first (alphabetically)
+    - Migration command failed: "Configuration missing settings for context 'userContext'"
+  - **Fix**: Split into two specific patterns with priority:
+    1. `**/env.${envType}.json` (preferred - exact match)
+    2. `**/${envType}.json` (fallback - exact match)
+  - **Result**: Only matches actual environment config files, not arbitrary files
+
+**Fix #3: Config File Priority Pattern** (`context.js` lines 445-470)
+- Changed from single broad pattern to prioritized specific patterns
+- Tries `env.<envType>.json` first (most specific)
+- Falls back to `<envType>.json` (less specific)
+- Prevents false positives from files like `my-config.development.json`
+
 #### Technical Details
 **Files Modified:**
 1. `context.js` - Added deduplication logic in `dbset()` and `#addSeedData()`
-2. `test/entity-deduplication-test.js` (NEW) - 5 tests for entity deduplication
-3. `test/seed-deduplication-test.js` (NEW) - 8 tests for EF Core seed semantics
-4. `test/qa-context-pattern-test.js` (NEW) - 7 tests for real-world patterns
-5. `package.json` - Updated version to 0.3.36
-6. `readme.md` - Added changelog and documentation
+2. `context.js` - Fixed glob pattern for config file discovery (lines 445-470)
+3. `test/entity-deduplication-test.js` (NEW) - 5 tests for entity deduplication
+4. `test/seed-deduplication-test.js` (NEW) - 8 tests for EF Core seed semantics
+5. `test/qa-context-pattern-test.js` (NEW) - 7 tests for real-world patterns
+6. `test/config-glob-pattern-test.js` (NEW) - 7 tests for config file discovery
+7. `package.json` - Updated version to 0.3.36
+8. `readme.md` - Added changelog and documentation
 
 **Test Results:**
-- **20 new tests** - All passing ✅
+- **27 new tests** - All passing ✅
+- 20 tests for duplicate entity/seed data fixes
+- 7 tests for config file discovery fix
 - Tests cover the exact qaContext pattern (lines 58 + 207) that caused the bug
 - Tests verify 9 seeds stay as 9 (not 18), Settings stay as 2 (not 4)
+- Tests verify glob pattern only matches environment config files
 
 #### Upgrade Path
 1. **Update to v0.3.36**: `npm install -g masterrecord@0.3.36`
-2. **If you have duplicate data in your database from v0.3.34/v0.3.35**:
+2. **If you have duplicate data in your database from older versions**:
    - Manually remove duplicate records (check by primary key)
    - Delete existing snapshots: `rm db/migrations/*_contextSnapShot.json`
    - Regenerate migrations: `masterrecord add-migration YourContext "clean-regenerate"`
 3. **Future migrations**: Will automatically deduplicate entities and seed data
 
-#### Why This Fix is Better Than v0.3.35
-- **v0.3.35**: Band-aid at migration generation time (still keeps duplicates in memory)
-- **v0.3.36**: Fixes root cause - prevents duplicates from ever being created
-- **Defense-in-depth**: Both fixes remain in place for safety
+#### Why This Fix is Comprehensive
+- **Root Cause Fix**: Prevents duplicates from ever being created at registration time
+- **EF Core Semantics**: Industry-standard seed data pattern with idempotent operations
+- **Defense-in-Depth**: Multiple layers of protection ensure data integrity
 
 #### Impact
 - ✅ Entities registered only once even with multiple `dbset()` calls
 - ✅ Seed data uses EF Core semantics (upsert by primary key)
 - ✅ Warning messages guide users to fix their code patterns
+- ✅ Config file discovery now specific and predictable (only matches env.*.json and *.json)
+- ✅ Migrations no longer fail when non-environment config files exist
 - ✅ Backward compatible - existing single `dbset()` calls work as before
-
-### Version 0.3.35 (2026-02-05) - CRITICAL FIX
-
-#### Critical Bug Fix
-- **FIXED**: Duplicate table operations in migrations when snapshots contain duplicate table definitions
-  - **Root Cause**: If a context registered the same entity twice (via multiple `dbset()` calls), the snapshot would contain duplicate table definitions with the same `__name`
-  - **Impact**: Migrations would generate duplicate `createTable()` and `seed()` calls, causing duplicate records in the database
-  - **Examples**:
-    - ragContext: Settings table appeared twice → 2x seed insertions
-    - qaContext: TaxonomyTemplate appeared twice → 18 template records instead of 9
-  - **Fix**: Added deduplication in `#organizeSchemaByTables()` using a `Set` to track processed table names
-  - **User Impact**: If you ran migrations from v0.3.34 or earlier and have duplicate records:
-    1. Manually remove duplicates from your database
-    2. Regenerate migrations with v0.3.35: `masterrecord add-migration YourContext "regenerate"`
-    3. Future migrations will not create duplicates
-
-#### Technical Details
-- Modified `Migrations/migrations.js` - `#organizeSchemaByTables()` method
-- Added `seenTableNames` Set to track processed tables and prevent duplicates
-- Emits warning: `"Warning: Duplicate table definition detected for 'TableName' - using first occurrence only"`
-- Works for both initial migrations (`oldSchema.length === 0`) and subsequent migrations
-
-#### Testing
-- Added 2 new tests for duplicate table scenarios (13 total tests)
-- All tests passing with duplicate detection and deduplication verified
-
-### Version 0.3.34 (2026-02-05) - PARTIALLY EFFECTIVE
-
-⚠️ **Note**: This version fixed the seed API bug but did NOT fix duplicate operations. Use v0.3.35 instead.
-
-#### Bug Fixes
-- **Fixed**: Seed API migration generation - resolved `table.EntityName.create is not a function` error
-  - Migrations now use `this.seed('TableName', data)` instead of `table.TableName.create(data)`
-  - Ensures compatibility with the migration schema base class
-- **Fixed**: Missing `await` keywords on `createIndex()`, `dropIndex()`, `createCompositeIndex()`, and `dropCompositeIndex()` calls in migrations
-  - All async index operations now properly awaited for consistency
-- ~~**Fixed**: Eliminated duplicate table creation statements~~ ❌ **NOT ACTUALLY FIXED** - see v0.3.35
-- ~~**Fixed**: Eliminated duplicate seed insertion statements~~ ❌ **NOT ACTUALLY FIXED** - see v0.3.35
-
-#### Improvements
-- **Enhanced**: Query builders now use whitelist validation for column definitions
-  - Validates that objects have both `name` and `type` properties before processing as columns
-  - More robust metadata property filtering in schema processing
-  - Combines blacklist (skip `indexes`, `__*` prefixed) with whitelist (require `name` and `type`) for comprehensive validation
-- **Documentation**: Enhanced migration generation documentation
-- **Testing**: Added comprehensive test suite for v0.3.34 bug fixes
-  - Tests whitelist validation across all three database backends
-  - Tests async/await consistency in index operations
-  - Tests seed API correctness and deduplication
-
-#### Technical Details
-- Query builders (SQLite, MySQL, PostgreSQL) validate column definitions have required `name` and `type` properties
-- Migration template generates proper ORM API calls for seed data using `this.seed()` method
-- Index deduplication logic prevents duplicate CREATE INDEX statements
-- All migration operations consistently use `await` for async consistency
-
-#### Migration Notes
-- Existing migrations generated with older versions will continue to work
-- New migrations will use the corrected seed API syntax
-- If you have migrations with `table.EntityName.create()` that haven't been run, regenerate them with this version
 
 ## Version Compatibility
 

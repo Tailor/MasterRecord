@@ -448,14 +448,25 @@ class context {
                 ? rootFolderLocation
                 : path.join(currentRoot, rootFolderLocation);
 
-            // Performance: Single glob search with OR pattern (50% faster)
-            const searchPattern = `${rootFolder}/**/*{env.${envType},${envType}}.json`;
-            const files = globSearch.sync(searchPattern, {
-                cwd: currentRoot,
-                dot: true,
-                nocase: true,
-                windowsPathsNoEscape: true
-            });
+            // Search for environment config files with priority:
+            // 1. env.<envType>.json (preferred)
+            // 2. <envType>.json (fallback)
+            // Note: Using separate patterns prevents matching files like "my-config.development.json"
+            const patterns = [
+                `${rootFolder}/**/env.${envType}.json`,
+                `${rootFolder}/**/${envType}.json`
+            ];
+
+            let files = [];
+            for (const pattern of patterns) {
+                files = globSearch.sync(pattern, {
+                    cwd: currentRoot,
+                    dot: true,
+                    nocase: true,
+                    windowsPathsNoEscape: true
+                });
+                if (files && files.length > 0) break;
+            }
 
             // Return first match
             if (files && files.length > 0) {
