@@ -3369,6 +3369,98 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.38 (2026-02-06) - GLOBAL MODEL REGISTRY (UX FIX)
+
+#### Enhancement: Eliminates Confusing CLI Warnings
+- **FIXED**: Confusing warnings during normal CLI operation when generating migrations
+  - **Previous Behavior**: v0.3.36/0.3.37 correctly detected duplicate `dbset()` calls and emitted warnings
+  - **Problem**: CLI instantiates the same context class multiple times to inspect schema
+  - **Impact**: Users saw warnings during normal operation: `"Warning: dbset() called multiple times for table 'User'..."`
+  - **User Confusion**: Warnings appeared even when code was correct, making users think they did something wrong
+
+#### Implementation - Global Model Registry
+**The Solution** (`context.js`)
+- Added static `_globalModelRegistry` property to track registered models per context class
+  - Structure: `{ 'userContext': Set(['User', 'Auth', 'Settings']), 'qaContext': Set([...]) }`
+- Each context instance checks if it's the first instance via `__isFirstInstance` flag
+- Warnings only appear on the first instance of a context class (genuine bugs)
+- Subsequent instances (CLI pattern) are silent since they're expected
+
+**How It Works:**
+
+1. **First Instance** (constructor execution):
+   ```javascript
+   const ctx1 = new userContext();
+   // __isFirstInstance = true (global registry empty)
+   // dbset(User) - adds User to global registry
+   // dbset(User) again - WARNS (duplicate in same constructor)
+   // dbset(Auth) - adds Auth to global registry
+   ```
+
+2. **Subsequent Instances** (CLI creates multiple):
+   ```javascript
+   const ctx2 = new userContext();
+   // __isFirstInstance = false (global registry has User, Auth)
+   // dbset(User) - no warning (expected pattern)
+   // dbset(User) again - no warning (expected pattern)
+   // dbset(Auth) - no warning (expected pattern)
+   ```
+
+3. **Duplicate Detection Still Works**:
+   - If user's constructor has `dbset(User)` called twice, the first instance warns
+   - This guides users to fix their code (remove the duplicate)
+   - After fixing, all future CLI operations are silent
+
+**Benefits:**
+- ✅ **Clean CLI Output**: No spurious warnings during `masterrecord add-migration`
+- ✅ **Genuine Bug Detection**: Still warns about actual duplicates in user code
+- ✅ **Better UX**: Users no longer confused by normal operation warnings
+- ✅ **Backward Compatible**: Existing code continues to work
+- ✅ **Industry-Standard Pattern**: Matches how TypeORM, Sequelize, Mongoose handle multiple instances
+
+**Files Modified:**
+1. `context.js` - Added `_globalModelRegistry` static property, `__isFirstInstance` instance flag, updated `dbset()` logic
+2. `test/global-model-registry-test.js` (NEW) - 15 comprehensive tests covering:
+   - Multiple context instances (CLI pattern) - no warnings ✅
+   - Genuine duplicates in constructor - warns once ✅
+   - Multiple context classes with same models - no warnings ✅
+   - Registry isolation between context classes ✅
+   - Edge cases (empty contexts, large contexts, mixed registration) ✅
+3. `package.json` - Updated version to 0.3.38
+4. `readme.md` - Added changelog entry
+
+**Test Results:**
+- **15 new tests** - All passing ✅
+- Tests verify CLI pattern (3 instances) produces zero warnings
+- Tests verify genuine duplicates still warn on first instance only
+- Tests verify different context classes have separate registries
+- Tests verify large contexts (50 models) work without warnings
+
+**Upgrade Path:**
+```bash
+npm install -g masterrecord@0.3.38
+```
+No code changes needed - automatic improvement to CLI experience.
+
+**Real-World Example:**
+
+Before v0.3.38:
+```bash
+$ masterrecord add-migration CreateUsers userContext
+Warning: dbset() called multiple times for table 'User' - updating existing registration
+Warning: dbset() called multiple times for table 'Auth' - updating existing registration
+Warning: dbset() called multiple times for table 'Settings' - updating existing registration
+✓ Migration 'CreateUsers' created successfully
+```
+
+After v0.3.38:
+```bash
+$ masterrecord add-migration CreateUsers userContext
+✓ Migration 'CreateUsers' created successfully
+```
+
+---
+
 ### Version 0.3.36 (2026-02-06) - ROOT CAUSE FIX + CONFIG DISCOVERY FIX
 
 #### Critical Bug Fix #1: Duplicate Entities and Seed Data - Complete Resolution

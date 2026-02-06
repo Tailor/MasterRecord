@@ -177,6 +177,11 @@ class context {
     // Sequential ID counter for collision-safe entity tracking
     static _nextEntityId = 1;
 
+    // Global model registry - tracks registered models per context class
+    // Structure: { 'userContext': Set(['User', 'Auth', 'Settings']), 'qaContext': Set([...]) }
+    // Purpose: Prevents duplicate warnings when CLI instantiates same context multiple times
+    static _globalModelRegistry = {};
+
     /**
      * Creates a new database context instance
      *
@@ -188,6 +193,17 @@ class context {
         this.__name = this.constructor.name;
         this._SQLEngine = null;  // Will be set during database initialization
         this.__trackedEntitiesMap = new Map();  // Initialize Map for O(1) lookups
+
+        // Track if this is the first instance of this context class
+        // Used to determine if duplicate warnings should be shown
+        const globalRegistry = context._globalModelRegistry[this.__name];
+        this.__isFirstInstance = !globalRegistry || globalRegistry.size === 0;
+
+        // Initialize global model registry for this context class if not exists
+        // This prevents duplicate warnings when CLI instantiates the same context multiple times
+        if (!context._globalModelRegistry[this.__name]) {
+            context._globalModelRegistry[this.__name] = new Set();
+        }
 
         // Initialize shared query cache (only once across all instances)
         if (!context._sharedQueryCache) {
@@ -1033,19 +1049,28 @@ class context {
         // Merge context-level composite indexes with entity-defined indexes
         this.#mergeCompositeIndexes(validModel, tableName);
 
-        // Check if this entity (by table name) is already registered
+        // Check if model is registered in this specific instance
         const existingIndex = this.__entities.findIndex(e => e.__name === tableName);
+
         if (existingIndex !== -1) {
-            // Entity already exists - update it instead of adding duplicate
-            console.warn(`Warning: dbset() called multiple times for table '${tableName}' - updating existing registration`);
+            // Model already registered in THIS instance - this is a duplicate within same constructor
+            // Only warn on the first instance of this context class (subsequent instances expected to have same pattern)
+            if (this.__isFirstInstance) {
+                console.warn(`Warning: dbset() called multiple times for table '${tableName}' in constructor - updating existing registration`);
+            }
+            // Update existing registration
             this.__entities[existingIndex] = validModel;
             this.__builderEntities[existingIndex] = tools.createNewInstance(validModel, query, this);
         } else {
-            // New entity - add to arrays
+            // Model not registered in this instance - add it
             this.__entities.push(validModel);  // Store model object
             const buildMod = tools.createNewInstance(validModel, query, this);
             this.__builderEntities.push(buildMod);  // Store query builder entity
         }
+
+        // Always mark model as globally seen (after handling instance registration)
+        const globalRegistry = context._globalModelRegistry[this.__name];
+        globalRegistry.add(tableName);
 
         // Use getter to return fresh query instance each time (prevents parameter accumulation)
         Object.defineProperty(this, validModel.__name, {
