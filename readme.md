@@ -3369,6 +3369,96 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.39 (2026-02-09) - CRITICAL BUG FIX: Foreign Key String Values
+
+#### Bug Fixed: Foreign Key Fields Silently Ignoring String Values
+- **FIXED**: Critical bug where string values assigned to foreign key fields were silently excluded from INSERT statements
+  - **Problem**: When you assign `orgRole.user_id = "2"` (string), MasterRecord excluded it from INSERT, causing NOT NULL constraint failures
+  - **Root Cause**: INSERT builder only checked navigation property name (`User`), not foreign key field name (`user_id`)
+  - **Impact**: Common in real-world apps where IDs come from JWT tokens, HTTP requests, or authService (returns string IDs)
+
+#### What Was Happening (Before v0.3.39)
+```javascript
+// User assigns string value to foreign key
+orgRole.user_id = "2";  // ← STRING (from currentUser.id)
+orgRole.organization_id = 8;  // ← NUMBER (from database)
+orgRole.role = 'org_admin';
+
+await userContext.saveChanges();
+// ❌ Generated SQL: INSERT INTO [UserOrganizationRole] ([role]) VALUES ('org_admin')
+// ❌ Error: NOT NULL constraint failed: UserOrganizationRole.user_id
+```
+
+**Why It Failed:**
+- `belongsTo('User', 'user_id')` creates property `User` with `foreignKey: 'user_id'`
+- INSERT builder looked for `fields['User']` (navigation property)
+- User set `fields['user_id']` (foreign key field name)
+- Field not found → silently skipped → INSERT failed
+
+#### The Fix (v0.3.39)
+Updated `_buildSQLInsertObjectParameterized` in all database engines:
+- Now checks BOTH navigation property name AND foreign key field name
+- Auto-converts string values to integers for integer foreign key fields
+- Maintains backward compatibility (setting navigation property still works)
+
+```javascript
+// After fix - both patterns work:
+orgRole.User = 2;        // ✅ Works (navigation property)
+orgRole.user_id = "2";   // ✅ Works (foreign key field, auto-converted to integer)
+```
+
+#### Files Modified
+1. **SQLLiteEngine.js** (lines 1127-1137) - Added foreign key field lookup
+2. **mySQLEngine.js** (lines 654-664) - Added foreign key field lookup
+3. **postgresEngine.js** (lines 601-611) - Added foreign key field lookup
+4. **test/foreign-key-string-value-test.js** (NEW) - 8 comprehensive tests
+5. **package.json** - Updated to v0.3.39
+6. **readme.md** - Added changelog
+
+#### Test Results
+- **8 new tests** - All passing ✅
+  1. String foreign key value included in INSERT ✅
+  2. Number foreign key value still works ✅
+  3. Mixed string and number foreign keys ✅
+  4. String with leading zeros (e.g., "007" → 7) ✅
+  5. Invalid strings throw error (not silent failure) ✅
+  6. Empty strings throw error ✅
+  7. Backward compatible (navigation property still works) ✅
+  8. Prefers navigation property if both set ✅
+
+#### Real-World Example: authService Returns String IDs
+```javascript
+// authService.js returns:
+const currentUser = {
+  id: "2",  // ← STRING (from String(obj.user.id))
+  email: "customer1@bookbag.ai",
+  system_role: "system_user"
+};
+
+// User creates association:
+const orgRole = new UserOrganizationRole();
+orgRole.user_id = currentUser.id;  // ← Before: silently skipped. After: auto-converted to 2
+orgRole.organization_id = newOrg.id;  // ← NUMBER from database
+orgRole.role = 'org_admin';
+
+await userContext.saveChanges();  // ✅ Now works!
+```
+
+#### Impact
+- ✅ **Auto-converts** string foreign keys to integers (with validation)
+- ✅ **Clear errors** for invalid strings (not silent failures)
+- ✅ **Backward compatible** - navigation property pattern still works
+- ✅ **Works across all databases** (SQLite, MySQL, PostgreSQL)
+- ✅ **Matches real-world usage** where IDs are often strings
+
+#### Upgrade Path
+```bash
+npm install -g masterrecord@0.3.39
+```
+No code changes needed - automatic fix! If you have workarounds like `parseInt(currentUser.id)`, you can now remove them (but leaving them is harmless).
+
+---
+
 ### Version 0.3.38 (2026-02-06) - GLOBAL MODEL REGISTRY (UX FIX)
 
 #### Enhancement: Eliminates Confusing CLI Warnings

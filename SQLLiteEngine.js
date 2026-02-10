@@ -1126,6 +1126,14 @@ class SQLLiteEngine {
             if(column.indexOf("__") === -1 ){
                 var fieldColumn = fields[column];
 
+                // 🔥 FIX: For belongsTo relationships, also check the foreignKey field name
+                // Users can set either orgRole.User = obj OR orgRole.user_id = 2
+                if((fieldColumn === undefined || fieldColumn === null) &&
+                   modelEntity[column].relationshipType === "belongsTo" &&
+                   modelEntity[column].foreignKey) {
+                    fieldColumn = fields[modelEntity[column].foreignKey];
+                }
+
                 if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     // 🔥 Apply toDatabase transformer before validation
                     try {

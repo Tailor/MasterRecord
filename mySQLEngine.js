@@ -653,6 +653,14 @@ class MySQLEngine {
             if (column.indexOf("__") === -1) {
                 let fieldColumn = fields[column];
 
+                // 🔥 FIX: For belongsTo relationships, also check the foreignKey field name
+                // Users can set either orgRole.User = obj OR orgRole.user_id = 2
+                if ((fieldColumn === undefined || fieldColumn === null) &&
+                    modelEntity[column].relationshipType === "belongsTo" &&
+                    modelEntity[column].foreignKey) {
+                    fieldColumn = fields[modelEntity[column].foreignKey];
+                }
+
                 if ((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object") {
                     try {
                         fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column);
