@@ -13,6 +13,11 @@ class MySQLAsyncClient {
             connectionLimit: config.connectionLimit || 10,
             queueLimit: 0
         };
+
+        // Pass through SSL config for managed databases (DigitalOcean, AWS RDS, PlanetScale, etc.)
+        if (config.ssl !== undefined) {
+            this.config.ssl = config.ssl;
+        }
         this.pool = null;
     }
 
