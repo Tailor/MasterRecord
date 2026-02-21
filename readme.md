@@ -3369,6 +3369,18 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.44 (2026-02-20) - FIX: MySQL/PostgreSQL Auto-Create Database During Migrations
+
+#### Bug Fixed: `update-database` failing when database doesn't exist yet (MySQL & PostgreSQL)
+- **FIXED**: Running `masterrecord update-database` on a fresh MySQL or PostgreSQL server would fail because `__mysqlInit`/`__postgresInit` tried to connect to the database before it was created
+  - **Root Cause**: The `createDatabase()` method depended on `this.context.db` (the connected client) to get config, but the client connection failed because the database didn't exist — a chicken-and-egg problem
+  - **Solution**: Store config as `this._dbConfig` on the context before async init. `_ensureReady()` now catches database-not-found errors (MySQL: "Unknown database", PostgreSQL: "does not exist"), creates the database using a server-level connection, then retries the full init
+  - **Impact**: `update-database` now automatically creates the database if it doesn't exist for all three engines (SQLite, MySQL, PostgreSQL)
+
+#### Files Modified
+1. **`context.js`** - Store `_dbConfig` before async MySQL and PostgreSQL init
+2. **`Migrations/schema.js`** - Added `_createDatabaseFromConfig()`, `_retryMySQLInit()`, `_createPostgresDatabaseFromConfig()`, `_retryPostgresInit()`, updated `_ensureReady()` to handle missing database for both engines
+
 ### Version 0.3.42 (2026-02-20) - FIX: Migration System + add-migration Improvements
 
 #### Bug Fixed: `update-database` failing for MySQL/PostgreSQL with "Cannot read properties of null"

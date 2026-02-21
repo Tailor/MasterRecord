@@ -711,6 +711,9 @@ class context {
                 this.isSQLite = false;
                 this.isPostgres = false;
 
+                // Store config so migration schema can create the database if it doesn't exist
+                this._dbConfig = options;
+
                 // MySQL is async - caller must await env()
                 // Store promise so migration schema can await it
                 this._initPromise = (async () => {
@@ -726,6 +729,9 @@ class context {
                 this.isPostgres = true;
                 this.isMySQL = false;
                 this.isSQLite = false;
+
+                // Store config so migration schema can create the database if it doesn't exist
+                this._dbConfig = options;
 
                 // PostgreSQL is async - caller must await env()
                 // Store promise so migration schema can await it

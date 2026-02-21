@@ -11,11 +11,140 @@ class schema{
      * The context constructor fires off an async pool init that may not have
      * finished by the time migration methods run. This must be awaited before
      * accessing this.context._SQLEngine or this.context.db.
+     *
+     * For MySQL: if the init fails because the database doesn't exist yet,
+     * create the database first, then retry the connection.
      */
     async _ensureReady(){
         if(this.context && this.context._initPromise){
-            await this.context._initPromise;
+            try{
+                await this.context._initPromise;
+            }catch(err){
+                const msg = err && (err.message || (err.context && err.context.originalError) || '');
+                const msgStr = typeof msg === 'string' ? msg : '';
+                // MySQL: "Unknown database 'X'"
+                if(this.context.isMySQL && msgStr.includes('Unknown database')){
+                    await this._createDatabaseFromConfig();
+                    await this._retryMySQLInit();
+                // PostgreSQL: 'database "X" does not exist'
+                }else if(this.context.isPostgres && msgStr.includes('does not exist')){
+                    await this._createPostgresDatabaseFromConfig();
+                    await this._retryPostgresInit();
+                }else{
+                    throw err;
+                }
+            }
         }
+    }
+
+    /**
+     * Create MySQL database using stored config (no existing connection needed).
+     * Used when the initial connection fails because the database doesn't exist.
+     */
+    async _createDatabaseFromConfig(){
+        try{
+            const config = this.context._dbConfig;
+            if(!config || !config.database){ return; }
+            const dbName = config.database;
+            // Validate database name
+            if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
+                throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
+            }
+            const MySQLAsyncClient = require('masterrecord/mySQLConnect');
+            // Connect without specifying database
+            const adminConfig = { ...config };
+            delete adminConfig.database;
+            delete adminConfig.type;
+            const admin = new MySQLAsyncClient(adminConfig);
+            await admin.connect();
+            const pool = admin.getPool();
+            if(!pool){ return; }
+            // Check and create
+            const [rows] = await pool.execute(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?`, [dbName]);
+            const exists = Array.isArray(rows) && rows.length > 0;
+            if(!exists){
+                await pool.execute(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+                console.log(`[MySQL] Created database '${dbName}'`);
+            }
+            await admin.close();
+            this._dbEnsured = true;
+        }catch(err){
+            console.error('[MySQL] Failed to create database:', err.message);
+        }
+    }
+
+    /**
+     * Retry MySQL init after database creation.
+     * Re-runs __mysqlInit and stores the new promise.
+     */
+    async _retryMySQLInit(){
+        const config = this.context._dbConfig;
+        if(!config){ throw new Error('No MySQL config available for retry'); }
+        const MySQLEngine = require('masterrecord/mySQLEngine');
+        const MySQLAsyncClient = require('masterrecord/mySQLConnect');
+        console.log('[MySQL] Retrying connection after database creation...');
+        const client = new MySQLAsyncClient(config);
+        await client.connect();
+        const pool = client.getPool();
+        this.context._SQLEngine = new MySQLEngine();
+        this.context._SQLEngine.setDB(pool);
+        this.context._SQLEngine.__name = 'mysql2';
+        this.context.db = client;
+        console.log('[MySQL] Connection pool ready');
+    }
+
+    /**
+     * Create PostgreSQL database using stored config (no existing connection needed).
+     * Used when the initial connection fails because the database doesn't exist.
+     */
+    async _createPostgresDatabaseFromConfig(){
+        try{
+            const config = this.context._dbConfig;
+            if(!config || !config.database){ return; }
+            const dbName = config.database;
+            // Validate database name
+            if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
+                throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
+            }
+            const { Pool } = require('pg');
+            // Connect to default 'postgres' database to run CREATE DATABASE
+            const adminConfig = {
+                host: config.host || 'localhost',
+                port: config.port || 5432,
+                user: config.user,
+                password: config.password,
+                database: 'postgres',
+                ssl: config.ssl || false
+            };
+            const adminPool = new Pool(adminConfig);
+            // Check if database exists
+            const result = await adminPool.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [dbName]);
+            if(result.rows.length === 0){
+                // CREATE DATABASE cannot use parameterized queries, but name is validated above
+                await adminPool.query(`CREATE DATABASE "${dbName}" ENCODING 'UTF8'`);
+                console.log(`[PostgreSQL] Created database '${dbName}'`);
+            }
+            await adminPool.end();
+            this._dbEnsured = true;
+        }catch(err){
+            console.error('[PostgreSQL] Failed to create database:', err.message);
+        }
+    }
+
+    /**
+     * Retry PostgreSQL init after database creation.
+     */
+    async _retryPostgresInit(){
+        const config = this.context._dbConfig;
+        if(!config){ throw new Error('No PostgreSQL config available for retry'); }
+        const PostgresClient = require('masterrecord/postgresSyncConnect');
+        console.log('[PostgreSQL] Retrying connection after database creation...');
+        const connection = new PostgresClient();
+        await connection.connect(config);
+        this.context._SQLEngine = connection.getEngine();
+        this.context._SQLEngine.__name = 'pg';
+        this.context.db = connection.getPool();
+        console.log('[PostgreSQL] Connection pool ready');
     }
 
     async init(table){
@@ -23,10 +152,6 @@ class schema{
         await this._ensureReady();
         if(table){
             this.fullTable = table.___table;
-        }
-        // Ensure backing database exists for MySQL before running any DDL
-        if(this.context && this.context.isMySQL && this._dbEnsured !== true){
-            try{ await this.createDatabase(); }catch(_){ /* best-effort */ }
         }
     }
     
@@ -340,38 +465,9 @@ class schema{
     }
 
     // EnsureCreated equivalent for MySQL: create DB if missing
+    // Delegates to _createDatabaseFromConfig which uses stored config
     async createDatabase(){
-        try{
-            if(!(this.context && this.context.isMySQL)){ return; }
-            const MySQLAsyncClient = require('masterrecord/mySQLConnect');
-            const client = this.context.db; // main client (may not be connected yet)
-            if(!client || !client.config || !client.config.database){ return; }
-            const dbName = client.config.database;
-            // Build server-level connection (no database)
-            const baseConfig = { ...client.config };
-            delete baseConfig.database;
-            const admin = new MySQLAsyncClient(baseConfig);
-            await admin.connect();
-            const pool = admin.getPool();
-            if(!pool){ return; }
-
-            // Use parameterized query for checking database existence
-            const [rows] = await pool.execute(`SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?`, [dbName]);
-            const exists = Array.isArray(rows) && rows.length > 0;
-            if(!exists){
-                // Validate database name (alphanumeric, underscore, hyphen only)
-                if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
-                    throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
-                }
-                // CREATE DATABASE doesn't support placeholders, but we've validated the name
-                await pool.execute(`CREATE DATABASE \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-            }
-            await admin.close();
-            this._dbEnsured = true;
-        }catch(err){
-            // Non-fatal: migrations may still proceed if DB already exists or permissions blocked
-            try{ console.error(err); }catch(_){ }
-        }
+        return this._createDatabaseFromConfig();
     }
 
     // Alias for consistency with user expectation
