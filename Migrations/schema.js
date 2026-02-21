@@ -327,7 +327,7 @@ class schema{
     async createDatabase(){
         try{
             if(!(this.context && this.context.isMySQL)){ return; }
-            const MySQLAsyncClient = require('masterrecord/mySQLAsyncConnect');
+            const MySQLAsyncClient = require('masterrecord/mySQLConnect');
             const client = this.context.db; // main client (may not be connected yet)
             if(!client || !client.config || !client.config.database){ return; }
             const dbName = client.config.database;
