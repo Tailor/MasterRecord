@@ -799,6 +799,14 @@ class MySQLEngine {
     }
 
     /**
+     * Execute raw SQL (DDL statements like CREATE TABLE, ALTER TABLE, etc.)
+     * Used by migration schema for non-parameterized DDL queries.
+     */
+    _execute(query) {
+        return this._runWithParams(query, []);
+    }
+
+    /**
      * Execute parameterized query with mysql2/promise
      */
     async _runWithParams(query, params = []) {

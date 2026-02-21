@@ -750,6 +750,14 @@ class postgresEngine {
     /**
      * Execute parameterized query with pg library
      */
+    /**
+     * Execute raw SQL (DDL statements like CREATE TABLE, ALTER TABLE, etc.)
+     * Used by migration schema for non-parameterized DDL queries.
+     */
+    _execute(query) {
+        return this._runWithParams(query, []);
+    }
+
     async _runWithParams(query, params = []) {
         try {
             if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {

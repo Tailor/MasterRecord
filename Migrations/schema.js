@@ -16,6 +16,7 @@ class schema{
      * create the database first, then retry the connection.
      */
     async _ensureReady(){
+        if(this._ready){ return; }
         if(this.context && this.context._initPromise){
             try{
                 await this.context._initPromise;
@@ -35,6 +36,7 @@ class schema{
                 }
             }
         }
+        this._ready = true;
     }
 
     /**
