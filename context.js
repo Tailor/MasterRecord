@@ -721,6 +721,8 @@ class context {
                     // Note: engine is already set in __mysqlInit
                     return this;
                 })();
+                // Prevent unhandled rejection crash — _ensureReady() will handle errors
+                this._initPromise.catch(() => {});
                 return this._initPromise;
             }
 
@@ -740,6 +742,8 @@ class context {
                     // Note: engine is already set in __postgresInit
                     return this;
                 })();
+                // Prevent unhandled rejection crash — _ensureReady() will handle errors
+                this._initPromise.catch(() => {});
                 return this._initPromise;
             }
 
