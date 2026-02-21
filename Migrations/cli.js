@@ -259,8 +259,11 @@ program.option('-V', 'output the version');
         }
         let contextInstance;
         try{
+          process.env.MASTERRECORD_SCHEMA_ONLY = '1';
           contextInstance = new ContextCtor();
+          delete process.env.MASTERRECORD_SCHEMA_ONLY;
         }catch(err){
+          delete process.env.MASTERRECORD_SCHEMA_ONLY;
           console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
           console.error(`\nThis usually happens when:`);
           console.error(`  • Environment configuration is missing or invalid`);
@@ -291,27 +294,16 @@ program.option('-V', 'output the version');
         }
         var migrationDate = Date.now();
         var outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
-        fs.writeFile(outputFile, newEntity, 'utf8', async function (err) {
+        fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
           if (err) {
             console.log("--- Error running cammand, re-run command add-migration ---- ", err);
-            if (contextInstance && typeof contextInstance.close === 'function') {
-              await contextInstance.close();
-            }
             process.exit(1);
           }
           console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
-
-          // Close database connections to prevent hanging
-          if (contextInstance && typeof contextInstance.close === 'function') {
-            await contextInstance.close();
-          }
           process.exit(0);
         });
        }catch (e){
          console.log("Error - Cannot read or find file ", e);
-         if (contextInstance && typeof contextInstance.close === 'function') {
-           await contextInstance.close();
-         }
          process.exit(1);
       }
   });

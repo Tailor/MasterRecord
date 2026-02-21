@@ -3369,6 +3369,20 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.41 (2026-02-20) - FIX: add-migration No Longer Creates Unnecessary Database Connections
+
+#### Bug Fixed: `add-migration` creating real database connections and files
+- **FIXED**: Running `masterrecord add-migration` would open a real database connection (creating SQLite files on disk, or connecting to MySQL/PostgreSQL) even though it only needs entity schemas and seed data to generate migration files
+  - **Problem**: On production servers, `add-migration` created unwanted `.sqlite3` files and printed misleading "SQLite database closed" messages
+  - **Root Cause**: The context constructor calls `env()` which initializes a full database connection; `add-migration` only needs entity metadata
+  - **Solution**: Added schema-only mode (`MASTERRECORD_SCHEMA_ONLY` env var) that sets database type flags for correct entity registration but skips all database initialization (no file creation, no connections)
+  - **Impact**: `add-migration` is now faster, creates no side effects, and works safely on production servers
+
+#### Files Modified
+1. **`Migrations/cli.js`** - Set `MASTERRECORD_SCHEMA_ONLY=1` before context construction, removed unnecessary `close()` calls
+2. **`context.js`** - Added schema-only mode check in `env()` that returns early after setting type flags
+3. **`package.json`** - Updated to v0.3.41
+
 ### Version 0.3.39 (2026-02-09) - CRITICAL BUG FIX: Foreign Key String Values
 
 #### Bug Fixed: Foreign Key Fields Silently Ignoring String Values

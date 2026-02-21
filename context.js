@@ -675,6 +675,15 @@ class context {
 
             const type = String(options.type || '').toLowerCase();
 
+            // Schema-only mode: CLI commands like add-migration only need entity metadata,
+            // not a live database connection. Skip DB initialization entirely.
+            if (process.env.MASTERRECORD_SCHEMA_ONLY === '1') {
+                this.isSQLite = (type === DB_TYPES.SQLITE || type === DB_TYPES.BETTER_SQLITE3);
+                this.isMySQL = (type === DB_TYPES.MYSQL);
+                this.isPostgres = (type === DB_TYPES.POSTGRES || type === DB_TYPES.POSTGRESQL);
+                return this;
+            }
+
             // SQLite initialization
             if (type === DB_TYPES.SQLITE || type === DB_TYPES.BETTER_SQLITE3) {
                 this.isSQLite = true;
