@@ -116,7 +116,7 @@ test('Query builders correctly skip indexes property', () => {
 // =============================================================================
 console.log("\n📋 Test Suite 2: Index Creation with Await Keywords\n");
 
-test('createIndex generates code with await keyword', () => {
+test('New tables do NOT generate separate createIndex calls (createTable handles them)', () => {
     const migrations = new Migrations();
     const oldSchema = [];
     const newSchema = [{
@@ -127,12 +127,12 @@ test('createIndex generates code with await keyword', () => {
 
     const migrationCode = migrations.template('TestMigration', oldSchema, newSchema);
 
+    // For new tables, createTable() in schema.js handles indexes - no separate calls needed
     const createIndexMatches = migrationCode.match(/await this\.createIndex/g);
-    assert(createIndexMatches && createIndexMatches.length > 0, 'createIndex should have await keyword');
-    assert(!migrationCode.match(/\n\s+this\.createIndex\(/), 'Should not have createIndex without await');
+    assert(!createIndexMatches, 'New tables should NOT have separate createIndex calls');
 });
 
-test('createCompositeIndex generates code with await keyword', () => {
+test('New tables do NOT generate separate createCompositeIndex calls (createTable handles them)', () => {
     const migrations = new Migrations();
     const oldSchema = [];
     const newSchema = [{
@@ -147,8 +147,50 @@ test('createCompositeIndex generates code with await keyword', () => {
 
     const migrationCode = migrations.template('TestMigration', oldSchema, newSchema);
 
+    // For new tables, createTable() in schema.js handles composite indexes
     const compositeMatches = migrationCode.match(/await this\.createCompositeIndex/g);
-    assert(compositeMatches && compositeMatches.length > 0, 'createCompositeIndex should have await keyword');
+    assert(!compositeMatches, 'New tables should NOT have separate createCompositeIndex calls');
+});
+
+test('Adding index to EXISTING table generates createIndex with await', () => {
+    const migrations = new Migrations();
+    const oldSchema = [{
+        __name: 'User',
+        id: { name: 'id', type: 'integer', primaryKey: true },
+        email: { name: 'email', type: 'text' }
+    }];
+    const newSchema = [{
+        __name: 'User',
+        id: { name: 'id', type: 'integer', primaryKey: true },
+        email: { name: 'email', type: 'text', indexes: ['idx_user_email'] }
+    }];
+
+    const migrationCode = migrations.template('TestMigration', oldSchema, newSchema);
+
+    const createIndexMatches = migrationCode.match(/await this\.createIndex/g);
+    assert(createIndexMatches && createIndexMatches.length > 0, 'Existing table with new index should have createIndex with await');
+});
+
+test('Adding composite index to EXISTING table generates createCompositeIndex with await', () => {
+    const migrations = new Migrations();
+    const oldSchema = [{
+        __name: 'User',
+        id: { name: 'id', type: 'integer', primaryKey: true }
+    }];
+    const newSchema = [{
+        __name: 'User',
+        id: { name: 'id', type: 'integer', primaryKey: true },
+        __compositeIndexes: [{
+            name: 'idx_composite',
+            columns: ['col1', 'col2'],
+            unique: false
+        }]
+    }];
+
+    const migrationCode = migrations.template('TestMigration', oldSchema, newSchema);
+
+    const compositeMatches = migrationCode.match(/await this\.createCompositeIndex/g);
+    assert(compositeMatches && compositeMatches.length > 0, 'Existing table with new composite index should have createCompositeIndex with await');
 });
 
 // =============================================================================
@@ -286,9 +328,9 @@ test('Complex scenario: Multiple tables with seed data, indexes, and composite i
     assert(migrationCode.includes("this.seed('Settings'"), 'Should use this.seed() for Settings');
     assert(!migrationCode.includes('table.Settings.create'), 'Should NOT use table.Settings.create');
 
-    // Check indexes have await
-    assert(migrationCode.includes('await this.createIndex'), 'Indexes should have await');
-    assert(migrationCode.includes('await this.createCompositeIndex'), 'Composite indexes should have await');
+    // For new tables, createTable() handles indexes — no separate calls in template
+    assert(!migrationCode.includes('await this.createIndex'), 'New tables should not have separate createIndex calls');
+    assert(!migrationCode.includes('await this.createCompositeIndex'), 'New tables should not have separate createCompositeIndex calls');
 });
 
 // =============================================================================

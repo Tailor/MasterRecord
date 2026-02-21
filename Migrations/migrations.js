@@ -201,6 +201,9 @@ class Migrations{
 
     #findNewIndexes(tables){
         tables.forEach(function (item, index) {
+            // Skip new tables — createTable() in schema.js already creates their indexes
+            if(item.newTables && item.newTables.length > 0) return;
+
             if(item.new && item.old){
                 Object.keys(item.new).forEach(function (key) {
                     if(typeof item.new[key] === "object" && item.new[key].indexes){
@@ -289,6 +292,9 @@ class Migrations{
 
     #findNewCompositeIndexes(tables) {
         tables.forEach(function (item, index) {
+            // Skip new tables — createTable() in schema.js already creates their composite indexes
+            if(item.newTables && item.newTables.length > 0) return;
+
             if (item.new && item.old) {
                 const newComposite = item.new.__compositeIndexes || [];
                 const oldComposite = item.old.__compositeIndexes || [];
@@ -306,17 +312,6 @@ class Migrations{
                             unique: newIdx.unique
                         });
                     }
-                });
-            } else if (item.new && !item.old) {
-                // New table - all composite indexes are new
-                const composites = item.new.__compositeIndexes || [];
-                composites.forEach(function(idx) {
-                    item.newCompositeIndexes.push({
-                        tableName: item.name,
-                        columns: idx.columns,
-                        indexName: idx.name,
-                        unique: idx.unique
-                    });
                 });
             }
         });
