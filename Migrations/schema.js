@@ -297,8 +297,12 @@ class schema{
         const existingNames = new Set((existing || []).map(c => (c.name || c.COLUMN_NAME))); // both engines map to name
         // Add missing columns only (safe path)
         for (var key in table) {
-            if(typeof table[key] === 'object'){
+            // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
+            if(key === 'indexes' || key.startsWith('__')) continue;
+            if(typeof table[key] === 'object' && !Array.isArray(table[key])){
                 const col = table[key];
+                // Skip if missing name/type (not a valid column definition)
+                if(!col.name || !col.type) continue;
                 // Skip relationships
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough') continue;
                 const colName = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
@@ -337,8 +341,10 @@ class schema{
         // Detect modifications (nullable/default/type)
         const desiredCols = [];
         for (var key in table) {
-            if(typeof table[key] === 'object'){
+            if(key === 'indexes' || key.startsWith('__')) continue;
+            if(typeof table[key] === 'object' && !Array.isArray(table[key])){
                 const col = table[key];
+                if(!col.name || !col.type) continue;
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough') continue;
                 const colName = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
                 desiredCols.push({ name: colName, col });
