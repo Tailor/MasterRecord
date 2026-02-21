@@ -1714,7 +1714,7 @@ class context {
      * context._execute('CREATE INDEX idx_user_email ON User(email)');
      */
     _execute(query) {
-        this._SQLEngine._execute(query);
+        return this._SQLEngine._execute(query);
     }
 
     /**

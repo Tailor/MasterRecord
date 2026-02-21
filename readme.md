@@ -3369,6 +3369,27 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
+### Version 0.3.48 (2026-02-20) - FIX: Complete Async Migration Pipeline for MySQL/PostgreSQL
+
+#### Bug Fixed: Migration methods not properly awaiting async database operations
+- **FIXED**: All migration schema methods (`createTable`, `addColumn`, `dropColumn`, `dropTable`, `alterColumn`, `renameColumn`, `createIndex`, `dropIndex`, `createCompositeIndex`, `dropCompositeIndex`, `seed`, `bulkSeed`) are now fully `async` and properly `await` all database operations
+  - **Root Cause**: SQLite's `_execute()` is synchronous, but MySQL/PostgreSQL return Promises. Migration methods were calling `this.context._execute()` without `await`, causing operations to run out of order (e.g., CREATE INDEX running before CREATE TABLE finished)
+  - **Solution**: Made all schema methods async, added `await` to every `_execute()` call, converted `forEach` loops to `for...of` for proper async iteration
+- **FIXED**: `context._execute()` now properly returns the engine's Promise (`return this._SQLEngine._execute(query)`)
+- **FIXED**: Added `_execute()` method to MySQL and PostgreSQL engines (previously only existed on SQLite)
+- **FIXED**: `syncTable()` no longer crashes on metadata properties (`indexes`, `__compositeIndexes`) — now filters them out before column iteration
+- **FIXED**: Migration template now generates `await` for all method calls in migration files
+- **FIXED**: Unhandled promise rejection crash — MySQL/PostgreSQL `_initPromise` now has `.catch(() => {})` to prevent Node.js crash before `_ensureReady()` can handle errors
+- **FIXED**: Added `_ready` flag to prevent duplicate `_ensureReady()` execution
+
+#### Files Modified
+1. **`Migrations/schema.js`** - All methods async, all `_execute` calls awaited, forEach→for...of, syncTable metadata filtering, `_ready` flag
+2. **`Migrations/migrationTemplate.js`** - All generated method calls now include `await`
+3. **`mySQLEngine.js`** - Added `_execute()` method
+4. **`postgresEngine.js`** - Added `_execute()` method
+5. **`context.js`** - `_execute()` returns engine result, `.catch()` on `_initPromise`
+6. **`package.json`** - Updated to v0.3.48
+
 ### Version 0.3.44 (2026-02-20) - FIX: MySQL/PostgreSQL Auto-Create Database During Migrations
 
 #### Bug Fixed: `update-database` failing when database doesn't exist yet (MySQL & PostgreSQL)

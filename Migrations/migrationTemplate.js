@@ -39,10 +39,10 @@ module.exports = ${this.name};
 
     alterColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.alterColumn(table.${name});` 
+            this.#up += os.EOL + `     await this.alterColumn(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.alterColumn(table.${name});` 
+            this.#down += os.EOL + `     await this.alterColumn(table.${name});`
         }
     }
     createTable(type, name){
@@ -56,29 +56,29 @@ module.exports = ${this.name};
 
     addColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.addColumn(table.${name});`
+            this.#up += os.EOL + `     await this.addColumn(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.addColumn(table.${name});`
+            this.#down += os.EOL + `     await this.addColumn(table.${name});`
         }
     }
     //this.addColumn(table.${parent}.${name});`
    
     dropTable(type, name){
         if(type === "up"){
-            this.#down += os.EOL + `    this.dropTable(table.${name});`
+            this.#down += os.EOL + `    await this.dropTable(table.${name});`
         }
         else{
-            this.#down += os.EOL + `    this.dropTable(table.${name});`
+            this.#down += os.EOL + `    await this.dropTable(table.${name});`
         }
     }
 
     dropColumn(type, name, parent){
         if(type === "up"){
-            this.#up += os.EOL + `     this.dropColumn(table.${name});`
+            this.#up += os.EOL + `     await this.dropColumn(table.${name});`
         }
         else{
-            this.#down += os.EOL + `     this.dropColumn(table.${name});`
+            this.#down += os.EOL + `     await this.dropColumn(table.${name});`
         }
     }
 
@@ -187,7 +187,7 @@ module.exports = ${this.name};
 
                 this.#up += os.EOL + `     ];`;
                 this.#up += os.EOL + `     for (const record of factoryRecords) {`;
-                this.#up += os.EOL + `         this.seed('${tableName}', record);`;
+                this.#up += os.EOL + `         await this.seed('${tableName}', record);`;
                 this.#up += os.EOL + `     }`;
             } else {
                 // Standard individual inserts for non-factory or small batches
@@ -214,10 +214,10 @@ module.exports = ${this.name};
                             const formattedRecord = JSON.stringify(cleanRecord, null, 12)
                                 .split('\n')
                                 .join(os.EOL + '            ');
-                            this.#up += os.EOL + `     this.seed('${tableName}', ${formattedRecord});`;
+                            this.#up += os.EOL + `     await this.seed('${tableName}', ${formattedRecord});`;
                         } else {
                             // Single-line format
-                            this.#up += os.EOL + `     this.seed('${tableName}', ${recordStr});`;
+                            this.#up += os.EOL + `     await this.seed('${tableName}', ${recordStr});`;
                         }
                     }
                 });
@@ -257,7 +257,7 @@ module.exports = ${this.name};
 
         this.#up += os.EOL + `             await existing.save();`;
         this.#up += os.EOL + `         } else {`;
-        this.#up += os.EOL + `             this.seed('${tableName}', ${JSON.stringify(cleanRecord)});`;
+        this.#up += os.EOL + `             await this.seed('${tableName}', ${JSON.stringify(cleanRecord)});`;
         this.#up += os.EOL + `         }`;
         this.#up += os.EOL + `     }`;
     }
