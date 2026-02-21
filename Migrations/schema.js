@@ -6,14 +6,27 @@ class schema{
         this._dbEnsured = false;
     }
 
+    /**
+     * Wait for async database initialization (MySQL/PostgreSQL) to complete.
+     * The context constructor fires off an async pool init that may not have
+     * finished by the time migration methods run. This must be awaited before
+     * accessing this.context._SQLEngine or this.context.db.
+     */
+    async _ensureReady(){
+        if(this.context && this.context._initPromise){
+            await this.context._initPromise;
+        }
+    }
 
-    init(table){
+    async init(table){
+        // Wait for async DB init (MySQL/PostgreSQL) before any operations
+        await this._ensureReady();
         if(table){
             this.fullTable = table.___table;
         }
         // Ensure backing database exists for MySQL before running any DDL
         if(this.context && this.context.isMySQL && this._dbEnsured !== true){
-            try{ this.createDatabase(); }catch(_){ /* best-effort */ }
+            try{ await this.createDatabase(); }catch(_){ /* best-effort */ }
         }
     }
     
@@ -83,6 +96,9 @@ class schema{
     }
     
     async createTable(table){
+        // Ensure async DB init is complete (safety net for older migrations
+        // that call this.init(table) without await)
+        await this._ensureReady();
 
         if(table){
             // If table exists, run sync instead of blind create

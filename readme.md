@@ -3369,19 +3369,25 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
-### Version 0.3.41 (2026-02-20) - FIX: add-migration No Longer Creates Unnecessary Database Connections
+### Version 0.3.42 (2026-02-20) - FIX: Migration System + add-migration Improvements
 
-#### Bug Fixed: `add-migration` creating real database connections and files
+#### Bug Fixed: `update-database` failing for MySQL/PostgreSQL with "Cannot read properties of null"
+- **FIXED**: Running `masterrecord update-database` with MySQL or PostgreSQL would crash with `Cannot read properties of null (reading 'tableExists')`
+  - **Root Cause**: The migration `schema.js` constructor creates a new context instance, but MySQL/PostgreSQL database initialization is async. The `_SQLEngine` property was still `null` when `createTable` tried to use it because the async pool init hadn't completed yet.
+  - **Solution**: Store the async init promise as `_initPromise` on the context instance. Added `_ensureReady()` method to `schema.js` that awaits it. Called in both `init()` and `createTable()` (safety net for existing migrations).
+  - **Also fixed**: Typo in `schema.js` — `require('masterrecord/mySQLAsyncConnect')` corrected to `require('masterrecord/mySQLConnect')`
+  - **Also fixed**: `init()` now properly `await`s `createDatabase()` instead of fire-and-forget
+
+#### Bug Fixed: `add-migration` creating unnecessary database connections
 - **FIXED**: Running `masterrecord add-migration` would open a real database connection (creating SQLite files on disk, or connecting to MySQL/PostgreSQL) even though it only needs entity schemas and seed data to generate migration files
-  - **Problem**: On production servers, `add-migration` created unwanted `.sqlite3` files and printed misleading "SQLite database closed" messages
-  - **Root Cause**: The context constructor calls `env()` which initializes a full database connection; `add-migration` only needs entity metadata
-  - **Solution**: Added schema-only mode (`MASTERRECORD_SCHEMA_ONLY` env var) that sets database type flags for correct entity registration but skips all database initialization (no file creation, no connections)
-  - **Impact**: `add-migration` is now faster, creates no side effects, and works safely on production servers
+  - **Solution**: Added schema-only mode (`MASTERRECORD_SCHEMA_ONLY` env var) that sets database type flags but skips all DB initialization
 
 #### Files Modified
-1. **`Migrations/cli.js`** - Set `MASTERRECORD_SCHEMA_ONLY=1` before context construction, removed unnecessary `close()` calls
-2. **`context.js`** - Added schema-only mode check in `env()` that returns early after setting type flags
-3. **`package.json`** - Updated to v0.3.41
+1. **`Migrations/schema.js`** - Added `_ensureReady()`, made `init()` async with proper awaits, fixed `mySQLConnect` require
+2. **`Migrations/migrationTemplate.js`** - New migrations now `await this.init(table)`
+3. **`Migrations/cli.js`** - Schema-only mode for `add-migration`
+4. **`context.js`** - Store `_initPromise` for MySQL/PostgreSQL async init, schema-only mode in `env()`
+5. **`package.json`** - Updated to v0.3.42
 
 ### Version 0.3.39 (2026-02-09) - CRITICAL BUG FIX: Foreign Key String Values
 

@@ -24,12 +24,12 @@ class ${this.name} extends masterrecord.schema {
     }
 
     async up(table){
-        this.init(table);
+        await this.init(table);
         ${this.#up}
     }
 
     async down(table){
-        this.init(table);
+        await this.init(table);
         ${this.#down}
     }
 }

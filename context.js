@@ -712,11 +712,13 @@ class context {
                 this.isPostgres = false;
 
                 // MySQL is async - caller must await env()
-                return (async () => {
+                // Store promise so migration schema can await it
+                this._initPromise = (async () => {
                     this.db = await this.__mysqlInit(options, 'mysql2');
                     // Note: engine is already set in __mysqlInit
                     return this;
                 })();
+                return this._initPromise;
             }
 
             // PostgreSQL initialization (async)
@@ -726,11 +728,13 @@ class context {
                 this.isSQLite = false;
 
                 // PostgreSQL is async - caller must await env()
-                return (async () => {
+                // Store promise so migration schema can await it
+                this._initPromise = (async () => {
                     this.db = await this.__postgresInit(options, 'pg');
                     // Note: engine is already set in __postgresInit
                     return this;
                 })();
+                return this._initPromise;
             }
 
             throw new ConfigurationError(
