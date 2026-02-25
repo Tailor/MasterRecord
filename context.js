@@ -33,6 +33,19 @@ const PostgresClient = require('masterrecord/postgresSyncConnect');
 const QueryCache = require('./Cache/QueryCache');
 
 // ============================================================================
+// GLOBAL POOL REGISTRY - One pool per database, shared across all contexts
+// ============================================================================
+
+const _pools = global.__MR_POOLS__ || (global.__MR_POOLS__ = new Map());
+
+function _poolKey(type, cfg) {
+    if (type === 'sqlite') return `sqlite:${cfg.completeConnection || cfg.connection}`;
+    const host = cfg.host || 'localhost';
+    const port = cfg.port || (type === 'mysql' ? 3306 : 5432);
+    return `${type}:${cfg.user}@${host}:${port}/${cfg.database}`;
+}
+
+// ============================================================================
 // CONSTANTS - Extract all magic numbers for maintainability
 // ============================================================================
 
@@ -329,6 +342,16 @@ class context {
                 );
             }
 
+            const key = _poolKey('mysql', env);
+            if (_pools.has(key)) {
+                const cached = _pools.get(key);
+                cached.refCount++;
+                this._SQLEngine = cached.engine;
+                this.isMySQL = true;
+                console.log(`[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                return cached.client;
+            }
+
             console.log('[MySQL] Initializing async connection pool...');
             const client = new MySQLAsyncClient(env);
             await client.connect();
@@ -339,6 +362,7 @@ class context {
             this._SQLEngine.__name = sqlName;
             this.isMySQL = true;
 
+            _pools.set(key, { client, engine: this._SQLEngine, refCount: 1, dbType: 'mysql' });
             console.log('[MySQL] Connection pool ready');
             return client;
         } catch (error) {
@@ -401,12 +425,24 @@ class context {
                 );
             }
 
+            const key = _poolKey('postgres', env);
+            if (_pools.has(key)) {
+                const cached = _pools.get(key);
+                cached.refCount++;
+                this._SQLEngine = cached.engine;
+                this._SQLEngine.__name = sqlName;
+                console.log(`[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                return cached.pool;
+            }
+
             const connection = new PostgresClient();
             await connection.connect(env);
             this._SQLEngine = connection.getEngine();
             this._SQLEngine.__name = sqlName;
 
-            return connection.getPool();
+            const pool = connection.getPool();
+            _pools.set(key, { pool, engine: this._SQLEngine, client: connection, refCount: 1, dbType: 'postgres' });
+            return pool;
         } catch (error) {
             // Preserve original error if it's already a ContextError
             if (error instanceof ContextError) {
@@ -700,8 +736,20 @@ class context {
                 }
 
                 const sqliteOptions = { ...options, completeConnection: dbPath };
+
+                const sqliteKey = _poolKey('sqlite', sqliteOptions);
+                if (_pools.has(sqliteKey)) {
+                    const cached = _pools.get(sqliteKey);
+                    cached.refCount++;
+                    this.db = cached.db;
+                    this._SQLEngine = cached.engine;
+                    return this;
+                }
+
                 this.db = this.__SQLiteInit(sqliteOptions, 'better-sqlite3');
                 this._SQLEngine.setDB(this.db, 'better-sqlite3');
+
+                _pools.set(sqliteKey, { db: this.db, engine: this._SQLEngine, refCount: 1, dbType: 'sqlite' });
                 return this;
             }
 
@@ -843,8 +891,19 @@ class context {
                 fs.mkdirSync(dbDirectory, { recursive: true });
             }
 
+            const sqliteKey = _poolKey('sqlite', options);
+            if (_pools.has(sqliteKey)) {
+                const cached = _pools.get(sqliteKey);
+                cached.refCount++;
+                this.db = cached.db;
+                this._SQLEngine = cached.engine;
+                return this;
+            }
+
             this.db = this.__SQLiteInit(options, 'better-sqlite3');
             this._SQLEngine.setDB(this.db, 'better-sqlite3');
+
+            _pools.set(sqliteKey, { db: this.db, engine: this._SQLEngine, refCount: 1, dbType: 'sqlite' });
             return this;
         } catch (error) {
             // Preserve original error if it's already a ContextError
@@ -1927,9 +1986,70 @@ class context {
      * db.close();  // Close connections
      */
     async close() {
+        // Find this instance's pool in the registry and decrement
+        for (const [key, entry] of _pools) {
+            if (entry.engine === this._SQLEngine) {
+                entry.refCount--;
+                if (entry.refCount <= 0) {
+                    _pools.delete(key);
+                    if (this._SQLEngine && typeof this._SQLEngine.close === 'function') {
+                        await this._SQLEngine.close();
+                    }
+                }
+                this._SQLEngine = null;
+                this.db = null;
+                return;
+            }
+        }
+
+        // Fallback (not in registry)
         if (this._SQLEngine && typeof this._SQLEngine.close === 'function') {
             return await this._SQLEngine.close();
         }
+    }
+
+    /**
+     * Close all shared connection pools, regardless of reference count.
+     * Useful for graceful shutdown or test cleanup.
+     *
+     * @static
+     * @async
+     * @returns {Promise<void>}
+     *
+     * @example
+     * // Graceful shutdown
+     * process.on('SIGTERM', async () => {
+     *     await context.closeAll();
+     *     process.exit(0);
+     * });
+     */
+    static async closeAll() {
+        for (const [key, entry] of _pools) {
+            try {
+                if (entry.engine && typeof entry.engine.close === 'function') {
+                    await entry.engine.close();
+                }
+            } catch (err) {
+                console.error('[MasterRecord] Error closing pool:', err.message);
+            }
+        }
+        _pools.clear();
+    }
+
+    /**
+     * Get statistics about active connection pools.
+     *
+     * @static
+     * @returns {Array<{key: string, dbType: string, refCount: number}>}
+     *
+     * @example
+     * console.log(context.getPoolStats());
+     * // [{ key: 'mysql:root@localhost:3306/mydb', dbType: 'mysql', refCount: 3 }]
+     */
+    static getPoolStats() {
+        return Array.from(_pools.entries()).map(([key, entry]) => ({
+            key, dbType: entry.dbType, refCount: entry.refCount
+        }));
     }
 
     /**
