@@ -171,6 +171,8 @@ class queryMethods{
             this.__queryObject.count(str, this.__entity.__name);
         }
 
+        await this.__context._ensureReady();
+
         if(this.__context.isSQLite){
             // trying to match string select and relace with select Count(*);
             var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
@@ -178,21 +180,23 @@ class queryMethods{
             this.__reset();
             return val;
         }
-
-        if(this.__context.isMySQL){
+        else if(this.__context.isMySQL){
             // trying to match string select and relace with select Count(*);
             var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
         }
-
-        if(this.__context.isPostgres){
+        else if(this.__context.isPostgres){
             // trying to match string select and relace with select Count(*);
             var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
+        }
+        else {
+            this.__reset();
+            throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
     }
 
@@ -315,7 +319,7 @@ class queryMethods{
         // Get database type from context
         const dbType = this.__context.isSQLite ? 'sqlite' :
                       this.__context.isMySQL ? 'mysql' :
-                      this.__context.isPostgres ? 'postgres' : 'sqlite';
+                      this.__context.isPostgres ? 'postgres' : 'unknown';
 
         // Replace $$ with ? placeholders and collect parameter values
         if(args){
@@ -436,20 +440,23 @@ class queryMethods{
         }
 
         // Cache miss - execute query
+        await this.__context._ensureReady();
         var result = null;
         if(this.__context.isSQLite){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue);
         }
-
-        if(this.__context.isMySQL){
+        else if(this.__context.isMySQL){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue[0]);
         }
-
-        if(this.__context.isPostgres){
+        else if(this.__context.isPostgres){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue[0]);
+        }
+        else {
+            this.__reset();
+            throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
 
         // Store in cache
@@ -486,20 +493,23 @@ class queryMethods{
         }
 
         // Cache miss - execute query
+        await this.__context._ensureReady();
         var result = [];
         if(this.__context.isSQLite){
             var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
         }
-
-        if(this.__context.isMySQL){
+        else if(this.__context.isMySQL){
             var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
         }
-
-        if(this.__context.isPostgres){
+        else if(this.__context.isPostgres){
             var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
+        }
+        else {
+            this.__reset();
+            throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
 
         // Store in cache

@@ -184,6 +184,9 @@ class context {
     isMySQL = false;
     isPostgres = false;
 
+    // Async readiness flag — set by _ensureReady() after _initPromise resolves
+    _ready = false;
+
     // Static shared cache - all context instances share the same cache
     static _sharedQueryCache = null;
 
@@ -231,6 +234,33 @@ class context {
 
         // Reference the shared cache
         this._queryCache = context._sharedQueryCache;
+    }
+
+    /**
+     * Ensure the database engine is initialized and ready for queries.
+     *
+     * If an async init is in flight (_initPromise), awaits it.
+     * If _SQLEngine is still null after that, throws a clear error.
+     * Subsequent calls are a single boolean check (no-op).
+     *
+     * @throws {DatabaseConnectionError} If the engine failed to initialize
+     */
+    async _ensureReady() {
+        if (this._ready) return;
+        if (this._initPromise) {
+            await this._initPromise;
+        }
+        if (!this._SQLEngine) {
+            const dbType = this.isMySQL ? 'MySQL' :
+                           this.isPostgres ? 'PostgreSQL' :
+                           this.isSQLite ? 'SQLite' : 'unknown';
+            throw new DatabaseConnectionError(
+                'Database engine not initialized. Ensure you have awaited env() or the appropriate use*() method before querying.',
+                dbType,
+                { hasInitPromise: !!this._initPromise, isSQLite: this.isSQLite, isMySQL: this.isMySQL, isPostgres: this.isPostgres }
+            );
+        }
+        this._ready = true;
     }
 
     /**
@@ -769,8 +799,10 @@ class context {
                     // Note: engine is already set in __mysqlInit
                     return this;
                 })();
-                // Prevent unhandled rejection crash — _ensureReady() will handle errors
-                this._initPromise.catch(() => {});
+                // Prevent unhandled rejection crash — _ensureReady() will re-throw on query
+                this._initPromise.catch((err) => {
+                    console.error(`[MasterRecord] Database initialization failed: ${err.message || err}`);
+                });
                 return this._initPromise;
             }
 
@@ -790,8 +822,10 @@ class context {
                     // Note: engine is already set in __postgresInit
                     return this;
                 })();
-                // Prevent unhandled rejection crash — _ensureReady() will handle errors
-                this._initPromise.catch(() => {});
+                // Prevent unhandled rejection crash — _ensureReady() will re-throw on query
+                this._initPromise.catch((err) => {
+                    console.error(`[MasterRecord] Database initialization failed: ${err.message || err}`);
+                });
                 return this._initPromise;
             }
 
@@ -879,7 +913,7 @@ class context {
                 );
             }
 
-            this.validateSQLiteOptions(options);
+            this.validateDatabaseOptions(options);
 
             // Resolve database path using extracted method (eliminates duplicate code)
             const dbPath = this._resolveDatabasePath(options.connection, file.rootFolder, contextName);
@@ -931,7 +965,7 @@ class context {
      * @param {object} options - Database configuration options
      * @throws {ConfigurationError} If options are invalid
      */
-    validateSQLiteOptions(options) {
+    validateDatabaseOptions(options) {
         if (!options || typeof options !== 'object') {
             throw new ConfigurationError('Configuration object is missing or invalid');
         }
@@ -1005,6 +1039,11 @@ class context {
         );
     }
 
+    /** @deprecated Use validateDatabaseOptions() */
+    validateSQLiteOptions(options) {
+        return this.validateDatabaseOptions(options);
+    }
+
     /**
      * Initialize MySQL database connection using environment file
      *
@@ -1039,7 +1078,7 @@ class context {
                 );
             }
 
-            this.validateSQLiteOptions(options);
+            this.validateDatabaseOptions(options);
             this.db = await this.__mysqlInit(options, 'mysql2');
             // Note: engine is already set in __mysqlInit
             return this;
@@ -1708,6 +1747,7 @@ class context {
      * db.saveChanges();
      */
     async saveChanges() {
+        await this._ensureReady();
         try {
             const tracked = this.__trackedEntities;
 
@@ -1773,6 +1813,12 @@ class context {
      * context._execute('CREATE INDEX idx_user_email ON User(email)');
      */
     _execute(query) {
+        if (!this._SQLEngine) {
+            throw new DatabaseConnectionError(
+                'Cannot execute query: database engine not initialized. Ensure you have awaited env() before running queries.',
+                this.isMySQL ? 'MySQL' : this.isPostgres ? 'PostgreSQL' : 'SQLite'
+            );
+        }
         return this._SQLEngine._execute(query);
     }
 
