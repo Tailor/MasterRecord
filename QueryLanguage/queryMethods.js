@@ -448,11 +448,11 @@ class queryMethods{
         }
         else if(this.__context.isMySQL){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            result = this.__singleEntityBuilder(entityValue[0]);
+            result = this.__singleEntityBuilder(entityValue);
         }
         else if(this.__context.isPostgres){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
-            result = this.__singleEntityBuilder(entityValue[0]);
+            result = this.__singleEntityBuilder(entityValue);
         }
         else {
             this.__reset();
