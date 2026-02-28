@@ -664,7 +664,10 @@ class context {
     env(rootFolderLocationOrConfig) {
         try {
             // Determine environment: prefer explicit 'master' env var, then NODE_ENV
-            const envType = this.__environment || process.env.NODE_ENV;
+            // Schema-only CLI commands (add-migration, enable-migrations) may run without
+            // an environment set — allow fallback to 'development' for those.
+            const envType = this.__environment || process.env.NODE_ENV
+                || (process.env.MASTERRECORD_SCHEMA_ONLY === '1' ? 'development' : null);
             if (!envType) {
                 throw new ConfigurationError(
                     "No environment specified. Set the 'master' or 'NODE_ENV' environment variable (e.g., master=production or NODE_ENV=development)."
