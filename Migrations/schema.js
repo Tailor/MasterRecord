@@ -154,6 +154,7 @@ class schema{
         await this._ensureReady();
         if(table){
             this.fullTable = table.___table;
+            this._tableObj = table;
         }
     }
     
@@ -490,7 +491,8 @@ class schema{
                 if(this.context.isSQLite){
                     var sqliteQuery = require("./migrationSQLiteQuery");
                     var queryBuilder = new sqliteQuery();
-                    var queryObj = queryBuilder.alterColumn(this.fullTable.new, table);
+                    var tableSchema = (this._tableObj && this._tableObj[table.tableName]) || this.fullTable.new;
+                    var queryObj = queryBuilder.alterColumn(tableSchema, table);
                     for (var key in queryObj) {
                         var query = queryObj[key];
                         await this.context._execute(query);
