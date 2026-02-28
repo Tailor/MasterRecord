@@ -663,8 +663,13 @@ class context {
      */
     env(rootFolderLocationOrConfig) {
         try {
-            // Determine environment: prefer explicit, then NODE_ENV, fallback 'development'
-            const envType = this.__environment || process.env.NODE_ENV || 'development';
+            // Determine environment: prefer explicit 'master' env var, then NODE_ENV
+            const envType = this.__environment || process.env.NODE_ENV;
+            if (!envType) {
+                throw new ConfigurationError(
+                    "No environment specified. Set the 'master' or 'NODE_ENV' environment variable (e.g., master=production or NODE_ENV=development)."
+                );
+            }
             const contextName = this.__name;
 
             // Try multiple base roots for robustness
@@ -897,7 +902,12 @@ class context {
             this.isPostgres = false;
 
             const root = process.cwd();
-            const envType = this.__environment || 'development';
+            const envType = this.__environment || process.env.NODE_ENV;
+            if (!envType) {
+                throw new ConfigurationError(
+                    "No environment specified. Set the 'master' or 'NODE_ENV' environment variable (e.g., master=production or NODE_ENV=development)."
+                );
+            }
             const contextName = this.__name;
             const file = this.__findSettings(root, rootFolderLocation, envType);
             const settings = require(file.file);
@@ -970,19 +980,13 @@ class context {
             throw new ConfigurationError('Configuration object is missing or invalid');
         }
 
-        // Normalize type
+        // Normalize type — require explicit type, no silent inference
         let type = (options.type || '').toString().toLowerCase();
         if (!type) {
-            // Infer type when not provided
-            if (typeof options.connection === 'string') {
-                type = DB_TYPES.SQLITE;
-                options.type = DB_TYPES.SQLITE;
-            } else if (options.host || options.user || options.database) {
-                type = DB_TYPES.MYSQL;
-                options.type = DB_TYPES.MYSQL;
-            } else {
-                throw new ConfigurationError('Cannot infer database type from configuration. Please specify type: "sqlite", "mysql", or "postgres".');
-            }
+            throw new ConfigurationError(
+                'Database type is required. Please specify type: "sqlite", "mysql", or "postgres" in your configuration.',
+                { providedOptions: Object.keys(options) }
+            );
         }
 
         // SQLite validation
@@ -1061,7 +1065,12 @@ class context {
             this.isSQLite = false;
             this.isPostgres = false;
 
-            const envType = this.__environment || 'development';
+            const envType = this.__environment || process.env.NODE_ENV;
+            if (!envType) {
+                throw new ConfigurationError(
+                    "No environment specified. Set the 'master' or 'NODE_ENV' environment variable (e.g., master=production or NODE_ENV=development)."
+                );
+            }
             const contextName = this.__name;
             const root = appRoot.path;
             const file = this.__findSettings(root, rootFolderLocation, envType);

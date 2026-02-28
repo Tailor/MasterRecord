@@ -59,6 +59,11 @@ class EntityModel {
         return this;
     }
 
+    text(){
+        this.obj.type = "text";
+        return this;
+    }
+
     integer(){
         this.obj.type = "integer";
         return this;
