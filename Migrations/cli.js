@@ -119,7 +119,12 @@ program.option('-V', 'output the version');
       }
       const snapDir = path.dirname(file);
       const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
-      const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+      let migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+      if (!fs.existsSync(migBase)) {
+        console.warn(`⚠️  Resolved migration path does not exist: ${migBase}`);
+        console.warn(`   Falling back to snapshot directory: ${snapDir}`);
+        migBase = snapDir;
+      }
       // Find latest migration file (so we can use its class which extends schema)
       var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
@@ -242,7 +247,12 @@ program.option('-V', 'output the version');
         // Resolve relative paths from the snapshot directory (portable snapshots)
         const snapDir = path.dirname(file);
         const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
-        const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+        let migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+        if (!fs.existsSync(migBase)) {
+          console.warn(`⚠️  Resolved migration path does not exist: ${migBase}`);
+          console.warn(`   Falling back to snapshot directory: ${snapDir}`);
+          migBase = snapDir;
+        }
 
         let ContextCtor;
         try{
@@ -345,7 +355,12 @@ program.option('-V', 'output the version');
 
          const snapDir = path.dirname(file);
          const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
-         const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+         let migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+         if (!fs.existsSync(migBase)) {
+           console.warn(`⚠️  Resolved migration path does not exist: ${migBase}`);
+           console.warn(`   Falling back to snapshot directory: ${snapDir}`);
+           migBase = snapDir;
+         }
 
          console.log(`\n🔍 Searching for migration files in: ${migBase}`);
          var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });

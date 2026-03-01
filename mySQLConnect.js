@@ -11,6 +11,8 @@ class MySQLAsyncClient {
             database: config.database,
             waitForConnections: true,
             connectionLimit: config.connectionLimit || 10,
+            maxIdle: config.maxIdle ?? 2,
+            idleTimeout: config.idleTimeout ?? 30000,
             queueLimit: 0
         };
 
