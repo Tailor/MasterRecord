@@ -342,6 +342,36 @@ class InsertManager {
                 continue;
             }
 
+            // Detect non-primitive values (Promise, Array, plain Object) on scalar columns
+            const isRelationship = currentEntity.type === RELATIONSHIP_TYPES.BELONGS_TO ||
+                currentEntity.type === RELATIONSHIP_TYPES.HAS_MANY ||
+                currentEntity.type === RELATIONSHIP_TYPES.HAS_MANY_THROUGH ||
+                currentEntity.type === RELATIONSHIP_TYPES.HAS_ONE ||
+                currentEntity.relationshipType === RELATIONSHIP_TYPES.BELONGS_TO;
+
+            if (!isRelationship) {
+                const val = currentRealModel[entity];
+                if (val != null && typeof val === 'object') {
+                    const entityName = entityModel.__name || 'unknown';
+                    if (typeof val.then === 'function') {
+                        this._errorModel.isValid = false;
+                        this._errorModel.errors.push(
+                            `Property '${entity}' on entity '${entityName}' contains a Promise. Did you forget to await an async call?`
+                        );
+                    } else if (Array.isArray(val)) {
+                        this._errorModel.isValid = false;
+                        this._errorModel.errors.push(
+                            `Property '${entity}' on entity '${entityName}' contains an Array, expected a scalar value`
+                        );
+                    } else if (!(val instanceof Date)) {
+                        this._errorModel.isValid = false;
+                        this._errorModel.errors.push(
+                            `Property '${entity}' on entity '${entityName}' contains an Object, expected a scalar value`
+                        );
+                    }
+                }
+            }
+
             // check if there is a default value
             if (currentEntity.default) {
                 if (currentRealModel[entity] === undefined || currentRealModel[entity] === null) {
