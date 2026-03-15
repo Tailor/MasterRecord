@@ -1614,6 +1614,13 @@ class context {
                 await entity.afterSave.call(entity);
             }
         }
+
+        // Transition inserted entities to tracked state so subsequent
+        // property changes trigger UPDATE instead of a second INSERT
+        for (const entity of entities) {
+            entity.__state = 'track';
+            entity.__dirtyFields = [];
+        }
     }
 
     /**

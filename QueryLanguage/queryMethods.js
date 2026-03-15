@@ -613,6 +613,14 @@ class queryMethods{
                                 if(!this.__dirtyFields.includes(fname)){
                                     this.__dirtyFields.push(fname);
                                 }
+                                // After INSERT (state transitions to "track"), behave like
+                                // query-loaded entities: mark modified and re-register with tracker
+                                if (this.__state === 'track') {
+                                    this.__state = 'modified';
+                                }
+                                if (this.__context && typeof this.__context.__track === 'function') {
+                                    this.__context.__track(this);
+                                }
                             },
                             get: function(){
                                 // Apply get function if defined
