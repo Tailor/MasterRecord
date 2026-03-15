@@ -219,6 +219,67 @@ console.log("──────────────────────�
     assert(err.errors.length === 3, 'Three errors (Promise + Array + Object)');
 }
 
+// -----------------------------------------------------------
+// Test 9: Array allowed when field has a custom set() transform
+// -----------------------------------------------------------
+console.log("\nTest 9: Array allowed with custom set() transform");
+console.log("──────────────────────────────────────────────────");
+{
+    const entityWithSetter = {
+        __name: 'BatchJob',
+        id:        { type: 'integer', primary: true, auto: true, nullable: true },
+        name:      { type: 'string', nullable: false },
+        error_log: { type: 'string', nullable: true, set: function(value) {
+            if (Array.isArray(value)) return JSON.stringify(value);
+            return value;
+        }},
+        config_snapshot: { type: 'string', nullable: true, set: function(value) {
+            if (typeof value === 'object' && value !== null) return JSON.stringify(value);
+            return value;
+        }},
+    };
+    const { mgr, err } = makeManager();
+    const realModel = {
+        name: 'job1',
+        error_log: ['err1', 'err2'],
+        config_snapshot: { retries: 3 },
+        __entity: entityWithSetter,
+    };
+    const cleanModel = { ...realModel };
+
+    mgr.validateEntity(cleanModel, realModel, entityWithSetter);
+
+    assert(err.isValid, 'Array with set() passes validation');
+    assert(err.errors.length === 0, 'No errors when set() is defined');
+}
+
+// -----------------------------------------------------------
+// Test 10: Promise still rejected even when field has set()
+// -----------------------------------------------------------
+console.log("\nTest 10: Promise rejected even with custom set()");
+console.log("──────────────────────────────────────────────────");
+{
+    const entityWithSetter = {
+        __name: 'BatchJob',
+        id:        { type: 'integer', primary: true, auto: true, nullable: true },
+        error_log: { type: 'string', nullable: true, set: function(value) {
+            if (Array.isArray(value)) return JSON.stringify(value);
+            return value;
+        }},
+    };
+    const { mgr, err } = makeManager();
+    const realModel = {
+        error_log: Promise.resolve(['err1']),
+        __entity: entityWithSetter,
+    };
+    const cleanModel = { ...realModel };
+
+    mgr.validateEntity(cleanModel, realModel, entityWithSetter);
+
+    assert(!err.isValid, 'Promise still rejected with set()');
+    assert(err.errors[0].includes('Promise'), 'Error mentions Promise');
+}
+
 // Summary
 console.log("\n" + "=".repeat(64));
 console.log(`Test Results: ${passed} passed, ${failed} failed`);

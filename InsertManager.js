@@ -352,22 +352,28 @@ class InsertManager {
             if (!isRelationship) {
                 const val = currentRealModel[entity];
                 if (val != null && typeof val === 'object') {
-                    const entityName = entityModel.__name || 'unknown';
+                    // Always reject Promises — a set() transform cannot meaningfully handle them
                     if (typeof val.then === 'function') {
+                        const entityName = entityModel.__name || 'unknown';
                         this._errorModel.isValid = false;
                         this._errorModel.errors.push(
                             `Property '${entity}' on entity '${entityName}' contains a Promise. Did you forget to await an async call?`
                         );
-                    } else if (Array.isArray(val)) {
-                        this._errorModel.isValid = false;
-                        this._errorModel.errors.push(
-                            `Property '${entity}' on entity '${entityName}' contains an Array, expected a scalar value`
-                        );
-                    } else if (!(val instanceof Date)) {
-                        this._errorModel.isValid = false;
-                        this._errorModel.errors.push(
-                            `Property '${entity}' on entity '${entityName}' contains an Object, expected a scalar value`
-                        );
+                    } else if (!currentEntity.set) {
+                        // Only flag Array/Object when there is no custom set() transform,
+                        // since the setter may serialize them to a scalar (e.g. JSON.stringify)
+                        const entityName = entityModel.__name || 'unknown';
+                        if (Array.isArray(val)) {
+                            this._errorModel.isValid = false;
+                            this._errorModel.errors.push(
+                                `Property '${entity}' on entity '${entityName}' contains an Array, expected a scalar value`
+                            );
+                        } else if (!(val instanceof Date)) {
+                            this._errorModel.isValid = false;
+                            this._errorModel.errors.push(
+                                `Property '${entity}' on entity '${entityName}' contains an Object, expected a scalar value`
+                            );
+                        }
                     }
                 }
             }
