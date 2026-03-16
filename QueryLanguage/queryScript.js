@@ -4,6 +4,12 @@ const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
 var tools =  require('../Tools');
 const QueryParameters = require('./queryParameters');
 
+// Escape special regex characters so user-supplied names can be safely
+// interpolated into RegExp constructors (prevents "Unmatched ')'" etc.)
+function escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 class queryScript{
 
     constructor(){
@@ -216,12 +222,12 @@ class queryScript{
     }
 
     MATCH_ENTITY_REGEXP(entityName) {
-      return new RegExp("(^|[^\\w\\d])" + entityName + "[ \\.\\)]");
+      return new RegExp("(^|[^\\w\\d])" + escapeRegExp(entityName) + "[ \\.\\)]");
     }
 
     OPERATORS_REGEX(entityName){
         // Prefer longest operators first to avoid partially matching '>' in '>=' and leaving '=' in the argument
-        return  new RegExp("(?:^|[^\\w\\d])" + entityName
+        return  new RegExp("(?:^|[^\\w\\d])" + escapeRegExp(entityName)
         + "\\.((?:\\.?[\\w\\d_\\$]+)+)(?:\\((.*?)\\))?(?:\\s*((?:===)|(?:!==)|(?:<=)|(?:>=)|(?:==)|(?:!=)|(?:in)|>|<|(?:=))\\s*(.*))?")
     }
 
