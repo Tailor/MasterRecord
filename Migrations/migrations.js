@@ -58,7 +58,7 @@ class Migrations{
 
                     var table = {
                         name: tableName,
-                        old: null,
+                        old: {},
                         new :item,
                         newColumns : [],
                         newTables : [],
@@ -75,9 +75,9 @@ class Migrations{
                         var oldItemName = oldItem["__name"];
                         if(table.name === oldItemName){
                             table.old = oldItem;
-                            tables.push(table);
                         }
                     });
+                    tables.push(table);
 
                 });
             }
