@@ -1224,7 +1224,10 @@ class SQLLiteEngine {
         return mainString;;
     }
 
-    _execute(query){
+    _execute(query, params){
+        if (params && params.length > 0) {
+            return this._executeWithParams(query, params);
+        }
         if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
             console.debug("[SQL]", query);
         }

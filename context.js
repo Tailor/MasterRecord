@@ -1824,19 +1824,24 @@ class context {
 
 
     /**
-     * Execute a raw SQL query
+     * Execute a raw SQL query, optionally with parameterized values
      *
      * @param {string} query - SQL query to execute
+     * @param {Array} [params] - Optional array of parameter values for placeholders
      *
      * @example
      * context._execute('CREATE INDEX idx_user_email ON User(email)');
+     * context._execute('UPDATE User SET name = ? WHERE id = ?', ['Alice', 1]);
      */
-    _execute(query) {
+    _execute(query, params) {
         if (!this._SQLEngine) {
             throw new DatabaseConnectionError(
                 'Cannot execute query: database engine not initialized. Ensure you have awaited env() before running queries.',
                 this.isMySQL ? 'MySQL' : this.isPostgres ? 'PostgreSQL' : 'SQLite'
             );
+        }
+        if (params && params.length > 0) {
+            return this._SQLEngine._execute(query, params);
         }
         return this._SQLEngine._execute(query);
     }
