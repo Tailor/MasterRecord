@@ -797,17 +797,11 @@ class SQLLiteEngine {
             var fieldName = dirtyFields[column];
             var entityDef = model.__entity[fieldName];
             if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
-                // Determine the value that will actually be persisted for this field
-                var persistedValue;
-                switch(entityDef.type){
-                    case "integer":
-                        persistedValue = model["_" + fieldName];
-                    break;
-                    case "belongsTo":
-                        persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
-                    break;
-                    default:
-                        persistedValue = model[fieldName];
+                // Read the raw backing field to get the set()-transformed value,
+                // bypassing get() which may change the type (e.g. parseFloat)
+                var persistedValue = model["_" + fieldName];
+                if(persistedValue === undefined){
+                    persistedValue = model[fieldName];
                 }
                 var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
                 if(persistedValue === undefined || persistedValue === null || isEmptyString){
@@ -862,7 +856,7 @@ class SQLLiteEngine {
                     params.push(intValue);
                 break;
                 case "string":
-                    var strValue = model[dirtyFields[column]];
+                    var strValue = model["_" + dirtyFields[column]];
 
                     // 🔥 Apply toDatabase transformer before validation
                     try {
@@ -880,7 +874,7 @@ class SQLLiteEngine {
                     params.push(strValue);
                 break;
                 case "boolean":
-                    var boolValue = model[dirtyFields[column]];
+                    var boolValue = model["_" + dirtyFields[column]];
 
                     // 🔥 Apply toDatabase transformer before validation
                     try {
@@ -902,7 +896,7 @@ class SQLLiteEngine {
                     params.push(boolValue);
                 break;
                 case "time":
-                    var timeValue = model[dirtyFields[column]];
+                    var timeValue = model["_" + dirtyFields[column]];
 
                     // 🔥 Apply toDatabase transformer before validation
                     try {
@@ -925,7 +919,7 @@ class SQLLiteEngine {
                 break;
                 default:
                     sqlParts.push(`[${dirtyFields[column]}] = ?`);
-                    params.push(model[dirtyFields[column]]);
+                    params.push(model["_" + dirtyFields[column]]);
             }
         }
 

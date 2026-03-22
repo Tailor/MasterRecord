@@ -457,16 +457,11 @@ class postgresEngine {
 
             // Check for required fields
             if (entityDef && entityDef.nullable === false && entityDef.primary !== true) {
-                let persistedValue;
-                switch (entityDef.type) {
-                    case "integer":
-                        persistedValue = model["_" + fieldName];
-                        break;
-                    case "belongsTo":
-                        persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
-                        break;
-                    default:
-                        persistedValue = model[fieldName];
+                // Read the raw backing field to get the set()-transformed value,
+                // bypassing get() which may change the type (e.g. parseFloat)
+                let persistedValue = model["_" + fieldName];
+                if (persistedValue === undefined) {
+                    persistedValue = model[fieldName];
                 }
                 const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
                 if (persistedValue === undefined || persistedValue === null || isEmptyString) {
@@ -519,7 +514,7 @@ class postgresEngine {
                     break;
 
                 case "string":
-                    let strValue = model[dirtyFields[column]];
+                    let strValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
                         strValue = FieldTransformer.toDatabase(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -537,7 +532,7 @@ class postgresEngine {
                     break;
 
                 case "boolean":
-                    let boolValue = model[dirtyFields[column]];
+                    let boolValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
                         boolValue = FieldTransformer.toDatabase(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -555,7 +550,7 @@ class postgresEngine {
                     break;
 
                 case "time":
-                    let timeValue = model[dirtyFields[column]];
+                    let timeValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
                         timeValue = FieldTransformer.toDatabase(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -574,12 +569,12 @@ class postgresEngine {
 
                 case "hasMany":
                     sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
-                    params.push(model[dirtyFields[column]]);
+                    params.push(model["_" + dirtyFields[column]]);
                     break;
 
                 default:
                     sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
-                    params.push(model[dirtyFields[column]]);
+                    params.push(model["_" + dirtyFields[column]]);
             }
         }
 
