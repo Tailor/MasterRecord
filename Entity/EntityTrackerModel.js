@@ -44,6 +44,7 @@ class EntityTrackerModel {
                 modelClass["__proto__"]["_" + modelField] = transformedValue;
 
                 Object.defineProperty(modelClass,modelField, {
+                    enumerable: true,
                     set: function(value) {
                         // Run validators before setting value
                         const fieldDef = currentEntity[modelField];
