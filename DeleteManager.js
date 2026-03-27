@@ -77,19 +77,26 @@ class DeleteManager {
 
             // Check if this is a relationship that needs cascade deletion
             if (this._isRelationshipType(propertyConfig.type)) {
-                const relatedModel = entity[property];
+                // Read the backing field directly to avoid triggering lazy-loading
+                // getters, which can return Promises or error strings
+                const relatedModel = entity.__proto__
+                    ? entity.__proto__["_" + property]
+                    : entity["_" + property];
 
                 if (relatedModel === null || relatedModel === undefined) {
-                    // Check if relationship is required (not nullable)
-                    if (!propertyConfig.nullable) {
-                        throw new Error(
-                            `Cannot delete ${entity.__entity.__name}: ` +
-                            `required relationship '${property}' is null. ` +
-                            `Set nullable: true if this is intentional.`
-                        );
+                    // Unloaded relationships are safe to skip — the database
+                    // handles FK constraints; only cascade explicitly loaded data
+                    continue;
+                }
+
+                // Only cascade into values that are actual tracked entities
+                if (Array.isArray(relatedModel)) {
+                    for (const item of relatedModel) {
+                        if (item && item.__entity) {
+                            await this.cascadeDelete(item);
+                        }
                     }
-                } else {
-                    // Recursively delete related entities
+                } else if (relatedModel && relatedModel.__entity) {
                     await this.cascadeDelete(relatedModel);
                 }
             }
@@ -129,9 +136,23 @@ class DeleteManager {
                 const propertyConfig = entity.__entity[property];
 
                 if (this._isRelationshipType(propertyConfig.type)) {
-                    const relatedModel = entity[property];
+                    // Read backing field directly to avoid triggering lazy-loading getters
+                    const relatedModel = entity.__proto__
+                        ? entity.__proto__["_" + property]
+                        : entity["_" + property];
 
-                    if (relatedModel !== null && relatedModel !== undefined) {
+                    if (relatedModel === null || relatedModel === undefined) {
+                        continue;
+                    }
+
+                    // Only cascade into actual tracked entities
+                    if (Array.isArray(relatedModel)) {
+                        for (const item of relatedModel) {
+                            if (item && item.__entity) {
+                                await this.cascadeDelete(item);
+                            }
+                        }
+                    } else if (relatedModel && relatedModel.__entity) {
                         await this.cascadeDelete(relatedModel);
                     }
                 }
