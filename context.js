@@ -2403,3 +2403,6 @@ module.exports.ContextError = ContextError;
 module.exports.ConfigurationError = ConfigurationError;
 module.exports.DatabaseConnectionError = DatabaseConnectionError;
 module.exports.EntityValidationError = EntityValidationError;
+
+// Export pool key generator for use by schema.js (single source of truth)
+module.exports._poolKey = _poolKey;

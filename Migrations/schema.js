@@ -1,15 +1,11 @@
 // version 0.0.6
+const { _poolKey } = require('masterrecord/context');
+
 class schema{
 
     constructor(context){
         this.context = new context();
         this._dbEnsured = false;
-    }
-
-    _poolKey(type, cfg) {
-        const host = cfg.host || 'localhost';
-        const port = cfg.port || (type === 'mysql' ? 3306 : 5432);
-        return `${type}:${cfg.user}@${host}:${port}/${cfg.database}`;
     }
 
     /**
@@ -93,9 +89,9 @@ class schema{
 
         // Check global pool cache first -- another context may have already retried
         const _pools = global.__MR_POOLS__;
-        const key = _pools ? this._poolKey('mysql', config) : null;
+        const key = _poolKey('mysql', config);
 
-        if (_pools && key && _pools.has(key)) {
+        if (_pools.has(key)) {
             const cached = _pools.get(key);
             cached.refCount++;
             if (cached.promise) {
@@ -120,9 +116,7 @@ class schema{
         this.context.db = client;
 
         // Register in global pool cache so other contexts can reuse
-        if (_pools && key) {
-            _pools.set(key, { client, engine: this.context._SQLEngine, refCount: 1, dbType: 'mysql' });
-        }
+        _pools.set(key, { client, engine: this.context._SQLEngine, refCount: 1, dbType: 'mysql' });
         console.log('[MySQL] Connection pool ready');
     }
 
@@ -174,9 +168,9 @@ class schema{
 
         // Check global pool cache first -- another context may have already retried
         const _pools = global.__MR_POOLS__;
-        const key = _pools ? this._poolKey('postgres', config) : null;
+        const key = _poolKey('postgres', config);
 
-        if (_pools && key && _pools.has(key)) {
+        if (_pools.has(key)) {
             const cached = _pools.get(key);
             cached.refCount++;
             if (cached.promise) {
@@ -202,9 +196,7 @@ class schema{
         this.context.db = pool;
 
         // Register in global pool cache so other contexts can reuse
-        if (_pools && key) {
-            _pools.set(key, { pool, engine: this.context._SQLEngine, client: connection, refCount: 1, dbType: 'postgres' });
-        }
+        _pools.set(key, { pool, engine: this.context._SQLEngine, client: connection, refCount: 1, dbType: 'postgres' });
         console.log('[PostgreSQL] Connection pool ready');
     }
 
