@@ -376,6 +376,15 @@ class context {
             if (_pools.has(key)) {
                 const cached = _pools.get(key);
                 cached.refCount++;
+                if (cached.promise) {
+                    // Another caller is initializing -- await the same promise
+                    const result = await cached.promise;
+                    this._SQLEngine = result.engine;
+                    this.isMySQL = true;
+                    console.log(`[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                    return result.client;
+                }
+                // Already resolved
                 this._SQLEngine = cached.engine;
                 this.isMySQL = true;
                 console.log(`[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
@@ -383,18 +392,38 @@ class context {
             }
 
             console.log('[MySQL] Initializing async connection pool...');
-            const client = new MySQLAsyncClient(env);
-            await client.connect();
 
-            const pool = client.getPool();
-            this._SQLEngine = new MySQLEngine();
-            this._SQLEngine.setDB(pool);
-            this._SQLEngine.__name = sqlName;
+            // Store promise IMMEDIATELY to prevent race condition with concurrent callers
+            const initPromise = (async () => {
+                const client = new MySQLAsyncClient(env);
+                await client.connect();
+                const pool = client.getPool();
+                const engine = new MySQLEngine();
+                engine.setDB(pool);
+                engine.__name = sqlName;
+                return { client, engine };
+            })();
+
+            _pools.set(key, { promise: initPromise, refCount: 1, dbType: 'mysql' });
+
+            let result;
+            try {
+                result = await initPromise;
+            } catch (err) {
+                // Remove failed entry so future callers can retry
+                _pools.delete(key);
+                throw err;
+            }
+
+            // Replace pending entry with resolved entry, preserving refCount from concurrent joiners
+            const pending = _pools.get(key);
+            const currentRefCount = pending ? pending.refCount : 1;
+            _pools.set(key, { client: result.client, engine: result.engine, refCount: currentRefCount, dbType: 'mysql' });
+
+            this._SQLEngine = result.engine;
             this.isMySQL = true;
-
-            _pools.set(key, { client, engine: this._SQLEngine, refCount: 1, dbType: 'mysql' });
             console.log('[MySQL] Connection pool ready');
-            return client;
+            return result.client;
         } catch (error) {
             // Preserve original error if it's already a ContextError
             if (error instanceof ContextError) {
@@ -459,20 +488,49 @@ class context {
             if (_pools.has(key)) {
                 const cached = _pools.get(key);
                 cached.refCount++;
+                if (cached.promise) {
+                    // Another caller is initializing -- await the same promise
+                    const result = await cached.promise;
+                    this._SQLEngine = result.engine;
+                    this._SQLEngine.__name = sqlName;
+                    console.log(`[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                    return result.pool;
+                }
+                // Already resolved
                 this._SQLEngine = cached.engine;
                 this._SQLEngine.__name = sqlName;
                 console.log(`[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
                 return cached.pool;
             }
 
-            const connection = new PostgresClient();
-            await connection.connect(env);
-            this._SQLEngine = connection.getEngine();
-            this._SQLEngine.__name = sqlName;
+            // Store promise IMMEDIATELY to prevent race condition with concurrent callers
+            const initPromise = (async () => {
+                const connection = new PostgresClient();
+                await connection.connect(env);
+                const engine = connection.getEngine();
+                engine.__name = sqlName;
+                const pool = connection.getPool();
+                return { pool, engine, client: connection };
+            })();
 
-            const pool = connection.getPool();
-            _pools.set(key, { pool, engine: this._SQLEngine, client: connection, refCount: 1, dbType: 'postgres' });
-            return pool;
+            _pools.set(key, { promise: initPromise, refCount: 1, dbType: 'postgres' });
+
+            let result;
+            try {
+                result = await initPromise;
+            } catch (err) {
+                // Remove failed entry so future callers can retry
+                _pools.delete(key);
+                throw err;
+            }
+
+            // Replace pending entry with resolved entry, preserving refCount from concurrent joiners
+            const pending = _pools.get(key);
+            const currentRefCount = pending ? pending.refCount : 1;
+            _pools.set(key, { pool: result.pool, engine: result.engine, client: result.client, refCount: currentRefCount, dbType: 'postgres' });
+
+            this._SQLEngine = result.engine;
+            return result.pool;
         } catch (error) {
             // Preserve original error if it's already a ContextError
             if (error instanceof ContextError) {
@@ -2058,6 +2116,8 @@ class context {
     async close() {
         // Find this instance's pool in the registry and decrement
         for (const [key, entry] of _pools) {
+            // Skip pending entries -- they have no engine yet
+            if (entry.promise) continue;
             if (entry.engine === this._SQLEngine) {
                 entry.refCount--;
                 if (entry.refCount <= 0) {
@@ -2096,7 +2156,17 @@ class context {
     static async closeAll() {
         for (const [key, entry] of _pools) {
             try {
-                if (entry.engine && typeof entry.engine.close === 'function') {
+                if (entry.promise) {
+                    // Wait for pending init to complete, then close it
+                    try {
+                        const result = await entry.promise;
+                        if (result.engine && typeof result.engine.close === 'function') {
+                            await result.engine.close();
+                        }
+                    } catch (_initErr) {
+                        // Init failed -- nothing to close
+                    }
+                } else if (entry.engine && typeof entry.engine.close === 'function') {
                     await entry.engine.close();
                 }
             } catch (err) {
@@ -2118,7 +2188,8 @@ class context {
      */
     static getPoolStats() {
         return Array.from(_pools.entries()).map(([key, entry]) => ({
-            key, dbType: entry.dbType, refCount: entry.refCount
+            key, dbType: entry.dbType, refCount: entry.refCount,
+            status: entry.promise ? 'pending' : 'ready'
         }));
     }
 

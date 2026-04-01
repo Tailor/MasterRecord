@@ -6,6 +6,12 @@ class schema{
         this._dbEnsured = false;
     }
 
+    _poolKey(type, cfg) {
+        const host = cfg.host || 'localhost';
+        const port = cfg.port || (type === 'mysql' ? 3306 : 5432);
+        return `${type}:${cfg.user}@${host}:${port}/${cfg.database}`;
+    }
+
     /**
      * Wait for async database initialization (MySQL/PostgreSQL) to complete.
      * The context constructor fires off an async pool init that may not have
@@ -84,6 +90,26 @@ class schema{
         if(!config){ throw new Error('No MySQL config available for retry'); }
         const MySQLEngine = require('masterrecord/mySQLEngine');
         const MySQLAsyncClient = require('masterrecord/mySQLConnect');
+
+        // Check global pool cache first -- another context may have already retried
+        const _pools = global.__MR_POOLS__;
+        const key = _pools ? this._poolKey('mysql', config) : null;
+
+        if (_pools && key && _pools.has(key)) {
+            const cached = _pools.get(key);
+            cached.refCount++;
+            if (cached.promise) {
+                const result = await cached.promise;
+                this.context._SQLEngine = result.engine;
+                this.context.db = result.client;
+            } else {
+                this.context._SQLEngine = cached.engine;
+                this.context.db = cached.client;
+            }
+            console.log('[MySQL] Reusing existing pool after database creation');
+            return;
+        }
+
         console.log('[MySQL] Retrying connection after database creation...');
         const client = new MySQLAsyncClient(config);
         await client.connect();
@@ -92,6 +118,11 @@ class schema{
         this.context._SQLEngine.setDB(pool);
         this.context._SQLEngine.__name = 'mysql2';
         this.context.db = client;
+
+        // Register in global pool cache so other contexts can reuse
+        if (_pools && key) {
+            _pools.set(key, { client, engine: this.context._SQLEngine, refCount: 1, dbType: 'mysql' });
+        }
         console.log('[MySQL] Connection pool ready');
     }
 
@@ -140,12 +171,40 @@ class schema{
         const config = this.context._dbConfig;
         if(!config){ throw new Error('No PostgreSQL config available for retry'); }
         const PostgresClient = require('masterrecord/postgresSyncConnect');
+
+        // Check global pool cache first -- another context may have already retried
+        const _pools = global.__MR_POOLS__;
+        const key = _pools ? this._poolKey('postgres', config) : null;
+
+        if (_pools && key && _pools.has(key)) {
+            const cached = _pools.get(key);
+            cached.refCount++;
+            if (cached.promise) {
+                const result = await cached.promise;
+                this.context._SQLEngine = result.engine;
+                this.context._SQLEngine.__name = 'pg';
+                this.context.db = result.pool;
+            } else {
+                this.context._SQLEngine = cached.engine;
+                this.context._SQLEngine.__name = 'pg';
+                this.context.db = cached.pool;
+            }
+            console.log('[PostgreSQL] Reusing existing pool after database creation');
+            return;
+        }
+
         console.log('[PostgreSQL] Retrying connection after database creation...');
         const connection = new PostgresClient();
         await connection.connect(config);
         this.context._SQLEngine = connection.getEngine();
         this.context._SQLEngine.__name = 'pg';
-        this.context.db = connection.getPool();
+        const pool = connection.getPool();
+        this.context.db = pool;
+
+        // Register in global pool cache so other contexts can reuse
+        if (_pools && key) {
+            _pools.set(key, { pool, engine: this.context._SQLEngine, client: connection, refCount: 1, dbType: 'postgres' });
+        }
         console.log('[PostgreSQL] Connection pool ready');
     }
 
