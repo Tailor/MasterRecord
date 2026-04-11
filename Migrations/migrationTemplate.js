@@ -13,7 +13,38 @@ class MigrationTemplate {
     #up = ''
     #down = ''
 
-    get(){
+    /**
+     * Render the migration file source.
+     *
+     * @param {'esm'|'cjs'} [moduleType='cjs'] - Module type of the host project.
+     *   When 'esm' the file is emitted with ESM syntax so it can be loaded in
+     *   a `"type": "module"` project. When 'cjs' (default) it's emitted with
+     *   CJS syntax for backward compatibility with existing projects.
+     */
+    get(moduleType = 'cjs'){
+        if (moduleType === 'esm') {
+            return `
+import masterrecord from 'masterrecord';
+
+class ${this.name} extends masterrecord.schema {
+    constructor(context){
+        super(context);
+    }
+
+    async up(table){
+        await this.init(table);
+        ${this.#up}
+    }
+
+    async down(table){
+        await this.init(table);
+        ${this.#down}
+    }
+}
+export default ${this.name};
+        `;
+        }
+
         return `
 
 var masterrecord = require('masterrecord');

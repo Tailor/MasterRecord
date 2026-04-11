@@ -7,8 +7,60 @@
 const { program } = require('commander');
 let fs = require('fs');
 let path = require('path');
+const { pathToFileURL } = require('node:url');
 const Module = require('module');
 const { resolveMigrationsDirectory } = require('./pathUtils');
+
+/**
+ * Load a user module (context, migration) via dynamic import.
+ *
+ * Handles both CJS and ESM targets. Required because:
+ *  - CJS require() of an ESM file throws on older Node, or returns a Module
+ *    namespace on newer Node (22.12+) — neither shape matches the
+ *    `new ContextCtor()` pattern downstream.
+ *  - await import() works in both directions and is consistent across Node
+ *    versions.
+ *
+ * The returned value is unwrapped: ESM `export default X` -> X;
+ * CJS `module.exports = X` -> X; mixed shapes are handled via `.default ?? mod`.
+ *
+ * @param {string} filePath - Absolute path to the user file
+ * @returns {Promise<*>} The default export (or whole module if no default)
+ */
+async function __loadUserModule(filePath) {
+  const mod = await import(pathToFileURL(filePath).href);
+  return (mod && mod.default !== undefined) ? mod.default : mod;
+}
+
+/**
+ * Walk up from a given directory looking for the host project's package.json
+ * and return whether it declares ESM (`"type": "module"`) or CJS.
+ * Used when generating migration files so the emitted syntax matches the
+ * host project's module type. Masterrecord's own package.json is skipped.
+ *
+ * @param {string} startDir - Directory to walk up from
+ * @returns {'esm' | 'cjs'}
+ */
+function __detectHostModuleType(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 12; i++) {
+    const pkgPath = path.join(dir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg && pkg.name === 'masterrecord') {
+          // Skip our own package.json — keep walking up to the host project
+        } else {
+          return (pkg && pkg.type === 'module') ? 'esm' : 'cjs';
+        }
+      } catch (_) { /* keep walking */ }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return 'cjs';
+}
 // Alias require('masterrecord') to this global package so project files don't need a local install
 const __MASTERRECORD_ROOT__ = path.join(__dirname, '..');
 const __ORIGINAL_REQUIRE__ = Module.prototype.require;
@@ -139,7 +191,7 @@ program.option('-V', 'output the version');
 
       let ContextCtor;
       try{
-        ContextCtor = require(contextAbs);
+        ContextCtor = await __loadUserModule(contextAbs);
       }catch(err){
         console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
         console.error(`\nDetails:`);
@@ -152,7 +204,7 @@ program.option('-V', 'output the version');
       }
 
       // Use the migration class (extends schema) so createdatabase is available
-      var MigrationCtor = require(mFile);
+      var MigrationCtor = await __loadUserModule(mFile);
       var mig = new MigrationCtor(ContextCtor);
       contextInstance = mig._context || mig.context || null;
 
@@ -256,7 +308,7 @@ program.option('-V', 'output the version');
 
         let ContextCtor;
         try{
-          ContextCtor = require(contextAbs);
+          ContextCtor = await __loadUserModule(contextAbs);
         }catch(err){
           console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
           console.error(`\nDetails:`);
@@ -298,7 +350,10 @@ program.option('-V', 'output the version');
           return;
         }
 
-        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig);
+        // Emit the migration file in whatever module format the host project uses,
+        // so the generated .js file parses correctly when loaded by update-database.
+        var moduleType = __detectHostModuleType(path.dirname(contextAbs));
+        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig, null, moduleType);
         if(!fs.existsSync(migBase)){
           try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
         }
@@ -384,8 +439,8 @@ program.option('-V', 'output the version');
          var migrationProjectFile;
          var ContextCtor;
          try{
-           migrationProjectFile = require(mFile);
-           ContextCtor = require(contextAbs);
+           migrationProjectFile = await __loadUserModule(mFile);
+           ContextCtor = await __loadUserModule(contextAbs);
          }catch(err){
            console.error(`\n❌ Error - Cannot load Context or migration file`);
            console.error(`\nContext file: ${contextAbs}`);
@@ -547,7 +602,7 @@ program.option('-V', 'output the version');
        // Prepare context and table object
        let ContextCtor;
        try{
-         ContextCtor = require(contextAbs);
+         ContextCtor = await __loadUserModule(contextAbs);
        }catch(err){
          console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
          console.error(`\nDetails:`);
@@ -578,7 +633,7 @@ program.option('-V', 'output the version');
        var cleanEntities = migration.cleanEntities(contextInstance.__entities);
        var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
-       var MigCtor = require(latestFile);
+       var MigCtor = await __loadUserModule(latestFile);
        var migInstance = new MigCtor(ContextCtor);
        if(typeof migInstance.down === 'function'){
          await migInstance.down(tableObj);
@@ -646,7 +701,7 @@ program.option('-V', 'output the version');
          });
          let ContextCtor;
          try{
-           ContextCtor = require(contextAbs);
+           ContextCtor = await __loadUserModule(contextAbs);
          }catch(err){
            console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
            console.error(`\nDetails:`);
@@ -677,7 +732,7 @@ program.option('-V', 'output the version');
          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
          for (let i = 0; i < mFiles.length; i++) {
             var migFile = mFiles[i];
-            var migrationProjectFile = require(migFile);
+            var migrationProjectFile = await __loadUserModule(migFile);
             var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
             var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
             await newMigrationProjectInstance.up(tableObj);
@@ -795,7 +850,7 @@ program.option('-V', 'output the version');
       // Prepare context and table object
       let ContextCtor;
       try{
-        ContextCtor = require(contextAbs);
+        ContextCtor = await __loadUserModule(contextAbs);
       }catch(err){
         console.error(`\n❌ Error - Cannot load Context file at '${contextAbs}'`);
         console.error(`\nDetails:`);
@@ -829,7 +884,7 @@ program.option('-V', 'output the version');
       // Roll back (down) all migrations newer than the target (i.e., strictly after targetIndex)
       for (var i = sorted.length - 1; i > targetIndex; i--) {
         var migFile = path.resolve(migrationFolder, sorted[i]);
-        var MigCtor = require(migFile);
+        var MigCtor = await __loadUserModule(migFile);
         var migInstance = new MigCtor(ContextCtor);
         if(typeof migInstance.down === 'function'){
           await migInstance.down(tableObj);
@@ -884,7 +939,7 @@ program.option('-V', 'output the version');
           // Load context
           let ContextCtor;
           try{
-            ContextCtor = require(contextAbs);
+            ContextCtor = await __loadUserModule(contextAbs);
           }catch(err){
             console.error(`⚠️  Skipping ${path.basename(contextAbs)}: cannot load Context file`);
             console.error(`   Details: ${err.message}`);
@@ -909,7 +964,8 @@ program.option('-V', 'output the version');
             console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
             continue;
           }
-          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig);
+          var moduleType = __detectHostModuleType(path.dirname(contextAbs));
+          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig, null, moduleType);
           if(!fs.existsSync(migBase)){
             try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
           }
@@ -1001,7 +1057,7 @@ program.option('-V', 'output the version');
 
           var ContextCtor;
           try{
-            ContextCtor = require(entry.contextAbs);
+            ContextCtor = await __loadUserModule(entry.contextAbs);
           }catch(err){
             console.error(`⚠️  Skipping ${entry.ctxName}: cannot load Context file`);
             console.error(`   Details: ${err.message}`);
@@ -1016,7 +1072,7 @@ program.option('-V', 'output the version');
             console.error(`   Details: ${err.message}`);
             continue;
           }
-          var migrationProjectFile = require(mFile);
+          var migrationProjectFile = await __loadUserModule(mFile);
           var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
           var cleanEntities = migration.cleanEntities(contextInstance.__entities);
           var tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);

@@ -511,7 +511,7 @@ class Migrations{
         return false;
     }
 
-    template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null){
+    template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null, moduleType = 'cjs'){
         var MT = new MigrationTemplate(name);
         // Determine current environment if not provided
         if (!currentEnv) {
@@ -578,7 +578,7 @@ class Migrations{
 
         });
 
-       return MT.get();
+       return MT.get(moduleType);
     }
 
 }
