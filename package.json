@@ -1,14 +1,42 @@
 {
   "name": "masterrecord",
-  "version": "0.3.68",
+  "version": "1.0.000",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
-  "main": "MasterRecord.js",
+  "type": "module",
+  "main": "./MasterRecord.js",
+  "exports": {
+    ".": "./MasterRecord.js",
+    "./context": "./context.js",
+    "./Tools": "./Tools.js",
+    "./SQLLiteEngine": "./SQLLiteEngine.js",
+    "./mySQLEngine": "./mySQLEngine.js",
+    "./postgresEngine": "./postgresEngine.js",
+    "./mySQLConnect": "./mySQLConnect.js",
+    "./postgresSyncConnect": "./postgresSyncConnect.js",
+    "./insertManager": "./insertManager.js",
+    "./deleteManager": "./deleteManager.js",
+    "./Cache/QueryCache": "./Cache/QueryCache.js",
+    "./Cache/RedisQueryCache": "./Cache/RedisQueryCache.js",
+    "./Entity/entityModel": "./Entity/entityModel.js",
+    "./Entity/entityModelBuilder": "./Entity/entityModelBuilder.js",
+    "./Entity/entityTrackerModel": "./Entity/entityTrackerModel.js",
+    "./Entity/fieldTransformer": "./Entity/fieldTransformer.js",
+    "./QueryLanguage/queryMethods": "./QueryLanguage/queryMethods.js",
+    "./QueryLanguage/queryParameters": "./QueryLanguage/queryParameters.js",
+    "./QueryLanguage/queryScript": "./QueryLanguage/queryScript.js",
+    "./Migrations/schema": "./Migrations/schema.js",
+    "./Migrations/migrations": "./Migrations/migrations.js",
+    "./Migrations/migrationTemplate": "./Migrations/migrationTemplate.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
-    "masterrecord": "Migrations/cli.js"
+    "masterrecord": "./Migrations/cli.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "preinstall": "node -e \"try { require.resolve('masterrecord'); } catch(e) { if (!process.env.npm_config_global) { console.log('\\n\\u001b[36m📦 MasterRecord Installation\\u001b[0m'); console.log('\\u001b[33mℹ For best experience, install globally first:\\u001b[0m'); console.log('  npm install -g masterrecord\\n'); } }\""
+    "test": "node --test test/ Migrations/pathUtils.test.js"
   },
   "author": "Alexandr Rich",
   "license": "MIT",
@@ -24,6 +52,7 @@
     "mysql",
     "sqlite",
     "postgres",
+    "esm",
     "masterrecord"
   ],
   "dependencies": {

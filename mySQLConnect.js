@@ -1,5 +1,5 @@
 // Version 1.0.0 - MySQL async connection manager using mysql2/promise
-const mysql = require('mysql2/promise');
+import mysql from 'mysql2/promise';
 
 class MySQLAsyncClient {
     constructor(config) {
@@ -48,4 +48,4 @@ class MySQLAsyncClient {
     }
 }
 
-module.exports = MySQLAsyncClient;
+export default MySQLAsyncClient;

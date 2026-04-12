@@ -1,7 +1,7 @@
 
 // version : 0.0.9
-var tools =  require('../Tools');
-var FieldTransformer = require('./fieldTransformer');
+import tools from '../Tools.js';
+import FieldTransformer from './fieldTransformer.js';
 
 class EntityTrackerModel {
 
@@ -523,4 +523,4 @@ class EntityTrackerModel {
 
 }
 
-module.exports = EntityTrackerModel;
+export default EntityTrackerModel;

@@ -3,7 +3,7 @@
  * Handles path resolution to prevent duplicate db/migrations in paths
  */
 
-const path = require('path');
+import path from 'node:path';
 
 /**
  * Resolve migrations directory, avoiding duplicate db/migrations paths
@@ -70,7 +70,4 @@ function isInMigrationsDirectory(filePath) {
     return normalized.includes('/db/migrations') || normalized.includes('\\db\\migrations');
 }
 
-module.exports = {
-    resolveMigrationsDirectory,
-    isInMigrationsDirectory
-};
+export { resolveMigrationsDirectory, isInMigrationsDirectory };

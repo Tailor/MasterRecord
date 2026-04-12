@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 /**
  * Production-Grade Query Result Cache
  * Similar to EF Core's EFCoreSecondLevelCacheInterceptor
@@ -20,7 +22,6 @@ class QueryCache {
      * Like Hibernate's query cache regions
      */
     generateKey(query, params, tableName) {
-        const crypto = require('crypto');
         const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, ' ');
         const keyData = {
             query: normalizedQuery,
@@ -154,7 +155,10 @@ class QueryCache {
      * Background cleanup of expired entries
      */
     _startCleanupTimer() {
-        setInterval(() => {
+        // .unref() so the interval does not keep the Node process alive
+        // after user code finishes — callers should not have to explicitly
+        // stop the cleanup timer to let their script exit.
+        const timer = setInterval(() => {
             const now = Date.now();
             let cleaned = 0;
 
@@ -168,8 +172,10 @@ class QueryCache {
             if (cleaned > 0 && process.env.NODE_ENV !== 'production') {
                 console.debug(`[QueryCache CLEANUP] Removed ${cleaned} expired entries`);
             }
-        }, 60000); // Run every minute
+        }, 60000);
+        if (typeof timer.unref === 'function') timer.unref();
+        this._cleanupTimer = timer;
     }
 }
 
-module.exports = QueryCache;
+export default QueryCache;

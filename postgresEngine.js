@@ -1,7 +1,9 @@
 // Version 0.1.0 - Complete PostgreSQL implementation with pg 8.16.3
-const tools = require('./Tools');
-const FieldTransformer = require('./Entity/fieldTransformer');
-const { Pool } = require('pg');
+import tools from './Tools.js';
+import FieldTransformer from './Entity/fieldTransformer.js';
+import pg from 'pg';
+
+const { Pool } = pg;
 
 class postgresEngine {
 
@@ -572,9 +574,23 @@ class postgresEngine {
                     params.push(model["_" + dirtyFields[column]]);
                     break;
 
-                default:
+                default: {
+                    // Covers `text` and any other column type without a dedicated
+                    // case above. Run the toDatabase transformer here too so that
+                    // fields with a serializer (e.g. JSONB/text columns) get their
+                    // object values turned into scalars before they reach pg.
+                    let rawValue = model["_" + dirtyFields[column]];
+                    if (rawValue === undefined) {
+                        rawValue = model[dirtyFields[column]];
+                    }
+                    try {
+                        rawValue = FieldTransformer.toDatabase(rawValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
                     sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
-                    params.push(model["_" + dirtyFields[column]]);
+                    params.push(rawValue);
+                }
             }
         }
 
@@ -603,14 +619,19 @@ class postgresEngine {
                     fieldColumn = fields[modelEntity[column].foreignKey];
                 }
 
-                if ((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object") {
-                    // Apply toDatabase transformer
+                if (fieldColumn !== undefined && fieldColumn !== null) {
+                    // 🔥 Apply toDatabase transformer FIRST — transformers may turn
+                    // objects into scalars (e.g. JSON.stringify) so running them
+                    // before the type check is essential for fields that use a
+                    // custom serializer on top of a text/json column.
                     try {
                         fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column);
                     } catch (transformError) {
                         throw new Error(`INSERT failed: ${transformError.message}`);
                     }
+                }
 
+                if ((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object") {
                     // Validate and coerce type
                     try {
                         fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column);
@@ -804,4 +825,4 @@ class postgresEngine {
     }
 }
 
-module.exports = postgresEngine;
+export default postgresEngine;

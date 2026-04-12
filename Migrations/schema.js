@@ -1,5 +1,14 @@
 // version 0.0.6
-const { _poolKey } = require('masterrecord/context');
+import pg from 'pg';
+import MySQLAsyncClient from '../mySQLConnect.js';
+import MySQLEngine from '../mySQLEngine.js';
+import PostgresClient from '../postgresSyncConnect.js';
+import sqliteQuery from './migrationSQLiteQuery.js';
+import sqlquery from './migrationMySQLQuery.js';
+import postgresQuery from './migrationPostgresQuery.js';
+import { _poolKey } from '../context.js';
+
+const { Pool } = pg;
 
 class schema{
 
@@ -54,7 +63,6 @@ class schema{
             if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
                 throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
             }
-            const MySQLAsyncClient = require('masterrecord/mySQLConnect');
             // Connect without specifying database
             const adminConfig = { ...config };
             delete adminConfig.database;
@@ -84,8 +92,6 @@ class schema{
     async _retryMySQLInit(){
         const config = this.context._dbConfig;
         if(!config){ throw new Error('No MySQL config available for retry'); }
-        const MySQLEngine = require('masterrecord/mySQLEngine');
-        const MySQLAsyncClient = require('masterrecord/mySQLConnect');
 
         // Check global pool cache first -- another context may have already retried
         const _pools = global.__MR_POOLS__;
@@ -133,7 +139,6 @@ class schema{
             if(!/^[a-zA-Z0-9_-]+$/.test(dbName)){
                 throw new Error(`Invalid database name: ${dbName}. Only alphanumeric characters, underscores, and hyphens are allowed.`);
             }
-            const { Pool } = require('pg');
             // Connect to default 'postgres' database to run CREATE DATABASE
             const adminConfig = {
                 host: config.host || 'localhost',
@@ -164,7 +169,6 @@ class schema{
     async _retryPostgresInit(){
         const config = this.context._dbConfig;
         if(!config){ throw new Error('No PostgreSQL config available for retry'); }
-        const PostgresClient = require('masterrecord/postgresSyncConnect');
 
         // Check global pool cache first -- another context may have already retried
         const _pools = global.__MR_POOLS__;
@@ -214,8 +218,7 @@ class schema{
         // todo need to work on add column for mysql
         if(table){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 // Fixed: Use addColum (consistent with MySQL/PostgreSQL) instead of alterColumn
                 // This allows explicit column definitions to work, not just CLI-generated migrations
                 // Note: No need to set table.realDataType - columnMapping handles type conversion internally
@@ -224,16 +227,14 @@ class schema{
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 await this.context._execute(query);
@@ -248,22 +249,19 @@ class schema{
             if(this.fullTable){
                 // drop column
                 if(this.context.isSQLite){
-                    var sqliteQuery = require("./migrationSQLiteQuery");
-                    var queryBuilder = new sqliteQuery();
+                                        var queryBuilder = new sqliteQuery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isMySQL){
-                    var sqlquery = require("./migrationMySQLQuery");
-                    var queryBuilder = new sqlquery();
+                                        var queryBuilder = new sqlquery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isPostgres){
-                    var postgresQuery = require("./migrationPostgresQuery");
-                    var queryBuilder = new postgresQuery();
+                                        var queryBuilder = new postgresQuery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }
@@ -286,22 +284,19 @@ class schema{
                 await this.syncTable(table);
             } else {
                 if(this.context.isSQLite){
-                    var sqliteQuery = require("./migrationSQLiteQuery");
-                    var queryBuilder = new sqliteQuery();
+                                        var queryBuilder = new sqliteQuery();
                     var query = queryBuilder.createTable(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isMySQL){
-                    var sqlquery = require("./migrationMySQLQuery");
-                    var queryBuilder = new sqlquery();
+                                        var queryBuilder = new sqlquery();
                     var query = queryBuilder.createTable(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isPostgres){
-                    var postgresQuery = require("./migrationPostgresQuery");
-                    var queryBuilder = new postgresQuery();
+                                        var queryBuilder = new postgresQuery();
                     var query = queryBuilder.createTable(table);
                     await this.context._execute(query);
                 }
@@ -366,22 +361,19 @@ class schema{
                     };
                     // MySQL path uses addColum with realDataType
                     if(this.context.isSQLite){
-                        var sqliteQuery = require("./migrationSQLiteQuery");
-                        var queryBuilder = new sqliteQuery();
+                                                var queryBuilder = new sqliteQuery();
                         // Build a conservative column add (no NOT NULL without default)
                         const add = queryBuilder.addColum({ tableName, name: colName });
                         await this.context._execute(add);
                     }
                     if(this.context.isMySQL){
-                        var sqlquery = require("./migrationMySQLQuery");
-                        var queryBuilder = new sqlquery();
+                                                var queryBuilder = new sqlquery();
                         newCol.realDataType = queryBuilder.typeManager(col.type);
                         const query = queryBuilder.addColum(newCol);
                         await this.context._execute(query);
                     }
                     if(this.context.isPostgres){
-                        var postgresQuery = require("./migrationPostgresQuery");
-                        var queryBuilder = new postgresQuery();
+                                                var queryBuilder = new postgresQuery();
                         newCol.realDataType = queryBuilder.typeManager(col.type);
                         const query = queryBuilder.addColum(newCol);
                         await this.context._execute(query);
@@ -434,8 +426,7 @@ class schema{
 
         if(this.context.isMySQL){
             // Apply MODIFY for defaults/nullability
-            var sqlquery = require("./migrationMySQLQuery");
-            var queryBuilder = new sqlquery();
+                        var queryBuilder = new sqlquery();
             const byName = {};
             for(const row of existing){ byName[row.name || row.COLUMN_NAME] = row; }
             for(const d of desiredCols){
@@ -474,8 +465,7 @@ class schema{
         }
 
         if(needRebuildSQLite()){
-            var sqliteQuery = require("./migrationSQLiteQuery");
-            var queryBuilder = new sqliteQuery();
+                        var queryBuilder = new sqliteQuery();
             // rename old table
             const rename = queryBuilder.renameTable({ tableName, newName: "_temp_alter_column_update" });
             await this.context._execute(rename);
@@ -501,22 +491,19 @@ class schema{
     async dropTable(table){
         if(table){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.dropTable(table.__name);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.dropTable(table.__name);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.dropTable(table.__name);
                 await this.context._execute(query);
             }
@@ -540,8 +527,7 @@ class schema{
         if(table){
             if(this.fullTable){
                 if(this.context.isSQLite){
-                    var sqliteQuery = require("./migrationSQLiteQuery");
-                    var queryBuilder = new sqliteQuery();
+                                        var queryBuilder = new sqliteQuery();
                     var tableSchema = (this._tableObj && this._tableObj[table.tableName]) || this.fullTable.new;
                     var queryObj = queryBuilder.alterColumn(tableSchema, table);
                     for (var key in queryObj) {
@@ -551,15 +537,13 @@ class schema{
                 }
 
                 if(this.context.isMySQL){
-                    var sqlquery = require("./migrationMySQLQuery");
-                    var queryBuilder = new sqlquery();
+                                        var queryBuilder = new sqlquery();
                     var query = queryBuilder.alterColumn(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isPostgres){
-                    var postgresQuery = require("./migrationPostgresQuery");
-                    var queryBuilder = new postgresQuery();
+                                        var queryBuilder = new postgresQuery();
                     var query = queryBuilder.alterColumn(table);
                     await this.context._execute(query);
                 }
@@ -573,22 +557,19 @@ class schema{
     async renameColumn(table){
         if(table){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.renameColumn(table);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.renameColumn(table);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.renameColumn(table);
                 await this.context._execute(query);
             }
@@ -598,22 +579,19 @@ class schema{
     async createIndex(indexInfo){
         if(indexInfo){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.createIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.createIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.createIndex(indexInfo);
                 await this.context._execute(query);
             }
@@ -623,22 +601,19 @@ class schema{
     async dropIndex(indexInfo){
         if(indexInfo){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.dropIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.dropIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.dropIndex(indexInfo);
                 await this.context._execute(query);
             }
@@ -648,22 +623,19 @@ class schema{
     async createCompositeIndex(indexInfo){
         if(indexInfo){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.createCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.createCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.createCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
@@ -673,22 +645,19 @@ class schema{
     async dropCompositeIndex(indexInfo){
         if(indexInfo){
             if(this.context.isSQLite){
-                var sqliteQuery = require("./migrationSQLiteQuery");
-                var queryBuilder = new sqliteQuery();
+                                var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.dropCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
-                var sqlquery = require("./migrationMySQLQuery");
-                var queryBuilder = new sqlquery();
+                                var queryBuilder = new sqlquery();
                 var query = queryBuilder.dropCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
-                var postgresQuery = require("./migrationPostgresQuery");
-                var queryBuilder = new postgresQuery();
+                                var queryBuilder = new postgresQuery();
                 var query = queryBuilder.dropCompositeIndex(indexInfo);
                 await this.context._execute(query);
             }
@@ -701,8 +670,7 @@ class schema{
 
         // Use query builders for consistent seed data handling
         if(this.context.isSQLite){
-            var sqliteQuery = require("./migrationSQLiteQuery");
-            var queryBuilder = new sqliteQuery();
+                        var queryBuilder = new sqliteQuery();
             for(const row of items){
                 // SQLite: Use INSERT OR IGNORE for idempotency
                 const query = queryBuilder.insertSeedData(tableName, row);
@@ -712,8 +680,7 @@ class schema{
         }
 
         if(this.context.isMySQL){
-            var sqlquery = require("./migrationMySQLQuery");
-            var queryBuilder = new sqlquery();
+                        var queryBuilder = new sqlquery();
             for(const row of items){
                 // MySQL: Use INSERT IGNORE for idempotency
                 const query = queryBuilder.insertSeedData(tableName, row);
@@ -723,8 +690,7 @@ class schema{
         }
 
         if(this.context.isPostgres){
-            var postgresQuery = require("./migrationPostgresQuery");
-            var queryBuilder = new postgresQuery();
+                        var queryBuilder = new postgresQuery();
             for(const row of items){
                 // PostgreSQL: Use INSERT ... ON CONFLICT DO NOTHING for idempotency
                 // Note: This requires a unique constraint or primary key
@@ -744,8 +710,7 @@ class schema{
         if(!tableName || !rows || rows.length === 0){ return; }
 
         if(this.context.isSQLite){
-            var sqliteQuery = require("./migrationSQLiteQuery");
-            var queryBuilder = new sqliteQuery();
+                        var queryBuilder = new sqliteQuery();
             const query = queryBuilder.bulkInsertSeedData(tableName, rows);
             if(query){
                 const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT OR IGNORE INTO');
@@ -754,8 +719,7 @@ class schema{
         }
 
         if(this.context.isMySQL){
-            var sqlquery = require("./migrationMySQLQuery");
-            var queryBuilder = new sqlquery();
+                        var queryBuilder = new sqlquery();
             const query = queryBuilder.bulkInsertSeedData(tableName, rows);
             if(query){
                 const idempotentQuery = query.replace(/^INSERT INTO/, 'INSERT IGNORE INTO');
@@ -764,8 +728,7 @@ class schema{
         }
 
         if(this.context.isPostgres){
-            var postgresQuery = require("./migrationPostgresQuery");
-            var queryBuilder = new postgresQuery();
+                        var queryBuilder = new postgresQuery();
             const query = queryBuilder.bulkInsertSeedData(tableName, rows);
             if(query){
                 const idempotentQuery = query + ' ON CONFLICT DO NOTHING';
@@ -777,4 +740,4 @@ class schema{
 }
 
 
-module.exports = schema;
+export default schema;

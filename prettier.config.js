@@ -1,0 +1,22 @@
+export default {
+    printWidth: 100,
+    tabWidth: 4,
+    useTabs: false,
+    semi: true,
+    singleQuote: true,
+    quoteProps: 'as-needed',
+    trailingComma: 'es5',
+    bracketSpacing: true,
+    bracketSameLine: false,
+    arrowParens: 'avoid',
+    endOfLine: 'lf',
+    proseWrap: 'preserve',
+    htmlWhitespaceSensitivity: 'css',
+    singleAttributePerLine: false,
+    overrides: [
+        { files: '*.md', options: { printWidth: 80, proseWrap: 'always' } },
+        { files: '*.json', options: { tabWidth: 2 } },
+        { files: ['*.yml', '*.yaml'], options: { tabWidth: 2 } },
+        { files: 'package.json', options: { tabWidth: 2 } },
+    ],
+};

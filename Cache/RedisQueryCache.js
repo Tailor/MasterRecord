@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 /**
  * Distributed Query Cache using Redis
  * For multi-process/clustered deployments
@@ -15,7 +17,6 @@ class RedisQueryCache {
     }
 
     generateKey(query, params, tableName) {
-        const crypto = require('crypto');
         const hash = crypto.createHash('sha256')
             .update(JSON.stringify({query, params}))
             .digest('hex');
@@ -152,4 +153,4 @@ class RedisQueryCache {
     }
 }
 
-module.exports = RedisQueryCache;
+export default RedisQueryCache;

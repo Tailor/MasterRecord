@@ -3,6 +3,8 @@
 [![npm version](https://img.shields.io/npm/v/masterrecord.svg)](https://www.npmjs.com/package/masterrecord)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+> **ESM only.** As of v1.0, MasterRecord is a pure ESM package. Requires **Node.js 20+** and a host project with `"type": "module"` in `package.json`. There is no CommonJS build.
+
 **MasterRecord** is a lightweight, code-first ORM for Node.js with a fluent query API, comprehensive migrations, and multi-database support. Build type-safe queries with lambda expressions, manage schema changes with CLI-driven migrations, and work seamlessly across MySQL, PostgreSQL, and SQLite.
 
 ## Key Features
@@ -231,9 +233,9 @@ await db.saveChanges();  // ✅ Batch save
 
 ```javascript
 // app/models/context.js
-const context = require('masterrecord/context');
-const User = require('./User');
-const Post = require('./Post');
+import context from 'masterrecord/context';
+import User from './User.js';
+import Post from './Post.js';
 
 class AppContext extends context {
     constructor() {
@@ -255,7 +257,7 @@ class AppContext extends context {
     }
 }
 
-module.exports = AppContext;
+export default AppContext;
 ```
 
 ### 2. Define Entities
@@ -272,7 +274,7 @@ class User {
     }
 }
 
-module.exports = User;
+export default User;
 ```
 
 ### 3. Run Migrations
@@ -291,7 +293,7 @@ masterrecord update-database AppContext
 ### 4. Query Your Data
 
 ```javascript
-const AppContext = require('./app/models/context');
+import AppContext from './app/models/context.js';
 const db = new AppContext();
 
 // Create (Active Record style)
@@ -731,7 +733,7 @@ masterrecord update-database-all            # Apply all pending migrations
 
 ```javascript
 // db/migrations/20250111_143052_CreateUser.js
-const masterrecord = require('masterrecord');
+import masterrecord from 'masterrecord';
 
 class CreateUser extends masterrecord.schema {
     constructor(context) {
@@ -740,9 +742,9 @@ class CreateUser extends masterrecord.schema {
 
     // IMPORTANT: Migrations must be async
     async up(table) {
-        this.init(table);
+        await this.init(table);
 
-        // Create table (requires await)
+        // Create table
         await this.createTable(table.User);
 
         // Seed initial data
@@ -754,14 +756,14 @@ class CreateUser extends masterrecord.schema {
     }
 
     async down(table) {
-        this.init(table);
+        await this.init(table);
 
         // Rollback
-        this.dropTable(table.User);
+        await this.dropTable(table.User);
     }
 }
 
-module.exports = CreateUser;
+export default CreateUser;
 ```
 
 ### Migration Operations
@@ -818,28 +820,34 @@ class MyMigration extends masterrecord.schema {
 ### Seed Data
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.User);
+import masterrecord from 'masterrecord';
+
+class SeedUsers extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.User);
 
         // Single record
-        schema.seed('User', {
+        this.seed('User', {
             name: 'Admin',
             email: 'admin@example.com'
         });
 
         // Multiple records (efficient bulk insert)
-        schema.bulkSeed('User', [
+        this.bulkSeed('User', [
             { name: 'Alice', email: 'alice@example.com', age: 25 },
             { name: 'Bob', email: 'bob@example.com', age: 30 },
             { name: 'Charlie', email: 'charlie@example.com', age: 35 }
         ]);
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.User);
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.User);
+    }
+}
+
+export default SeedUsers;
 ```
 
 **Seed data is idempotent** - re-running migrations won't create duplicates:
@@ -913,7 +921,7 @@ class AppContext extends context {
 ### Transactions (PostgreSQL)
 
 ```javascript
-const { PostgresSyncConnect } = require('masterrecord/postgresSyncConnect');
+import PostgresSyncConnect from 'masterrecord/postgresSyncConnect';
 
 const connection = new PostgresSyncConnect();
 await connection.connect(config);
@@ -1082,8 +1090,8 @@ db.setQueryCacheEnabled(true);
 For multi-process or clustered deployments, use Redis:
 
 ```javascript
-const redis = require('redis');
-const RedisQueryCache = require('masterrecord/Cache/RedisQueryCache');
+import { createClient } from 'redis';
+import RedisQueryCache from 'masterrecord/Cache/RedisQueryCache';
 
 class AppContext extends context {
     constructor() {
@@ -1689,7 +1697,7 @@ Add lifecycle hooks to your entity definitions to execute logic before/after dat
 **Example:**
 
 ```javascript
-const bcrypt = require('bcrypt');
+import bcrypt from 'bcrypt';
 
 class User {
     constructor() {
@@ -2512,7 +2520,7 @@ for (const record of factoryRecords) {
 
 **Faker Integration (Optional):**
 ```javascript
-const { faker } = require('@faker-js/faker');
+import { faker } from '@faker-js/faker';
 
 this.dbset(User).seedFactory(100, i => ({
     name: faker.person.fullName(),
@@ -3027,7 +3035,7 @@ schema.bulkSeed(tableName, dataArray)
 ### Complete CRUD Example
 
 ```javascript
-const AppContext = require('./app/models/context');
+import AppContext from './app/models/context.js';
 
 async function demo() {
     const db = new AppContext();

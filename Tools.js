@@ -102,12 +102,14 @@ class Tools{
                         if(typeof value === "function"){
                             continue;
                         }
-                        if(typeof value === "object" && value !== null){
-                            // Recursively clone nested objects without altering the source
-                            newproto[key] = this.clearAllProto(value);
-                        } else {
-                            newproto[key] = value;
-                        }
+                        // Copy the value by reference. Do NOT recurse into nested
+                        // objects/arrays — clearAllProto's job is to strip tracker
+                        // metadata from a tracked entity, not to deep-clone user
+                        // data. Recursing here used to turn Arrays into array-like
+                        // plain objects (losing the Array shape), and to walk into
+                        // nested plain objects (e.g. JSON values with a custom
+                        // transformer) and discard keys starting with "_".
+                        newproto[key] = value;
                     }catch(_){ /* ignore getter errors */ }
                 }
             }
@@ -118,7 +120,7 @@ class Tools{
          newproto["__entity"] = proto["__entity"];
          newproto["__context"] = proto["__context"];
          newproto["__dirtyFields"] = proto["__dirtyFields"];
-         
+
          newproto.__proto__ = null;
         return newproto;
 
@@ -212,4 +214,4 @@ class Tools{
    }
 }
 
-module.exports = Tools;
+export default Tools;

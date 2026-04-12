@@ -13,24 +13,28 @@
  * @license MIT
  */
 
-'use strict';
-
 // Core dependencies
-const modelBuilder = require('./Entity/entityModelBuilder');
-const query = require('masterrecord/QueryLanguage/queryMethods');
-const tools = require('./Tools');
-const SQLLiteEngine = require('masterrecord/SQLLiteEngine');
-const MySQLEngine = require('masterrecord/mySQLEngine');
-const PostgresEngine = require('masterrecord/postgresEngine');
-const insertManager = require('./insertManager');
-const deleteManager = require('./deleteManager');
-const globSearch = require('glob');
-const fs = require('fs');
-const path = require('path');
-const appRoot = require('app-root-path');
-const MySQLAsyncClient = require('masterrecord/mySQLConnect');
-const PostgresClient = require('masterrecord/postgresSyncConnect');
-const QueryCache = require('./Cache/QueryCache');
+import modelBuilder from './Entity/entityModelBuilder.js';
+import query from './QueryLanguage/queryMethods.js';
+import tools from './Tools.js';
+import SQLLiteEngine from './SQLLiteEngine.js';
+import MySQLEngine from './mySQLEngine.js';
+import PostgresEngine from './postgresEngine.js';
+import insertManager from './insertManager.js';
+import deleteManager from './deleteManager.js';
+import { globSync } from 'glob';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import appRoot from 'app-root-path';
+import Database from 'better-sqlite3';
+import MySQLAsyncClient from './mySQLConnect.js';
+import PostgresClient from './postgresSyncConnect.js';
+import QueryCache from './Cache/QueryCache.js';
+import DependencyGraph from './Migrations/dependencyGraph.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ============================================================================
 // GLOBAL POOL REGISTRY - One pool per database, shared across all contexts
@@ -298,7 +302,6 @@ class context {
      */
     __SQLiteInit(env, sqlName) {
         try {
-            const sqlite3 = require(sqlName);
             const dbAddress = env.completeConnection;
 
             // Validate database path
@@ -311,7 +314,7 @@ class context {
             }
 
             // Create database connection with validated path
-            const db = new sqlite3(dbAddress, env);
+            const db = new Database(dbAddress, env);
             db.__name = sqlName;
             this._SQLEngine = new SQLLiteEngine();
 
@@ -599,7 +602,7 @@ class context {
 
             let files = [];
             for (const pattern of patterns) {
-                files = globSearch.sync(pattern, {
+                files = globSync(pattern, {
                     cwd: currentRoot,
                     dot: true,
                     nocase: true,
@@ -611,7 +614,6 @@ class context {
             // Return first match
             if (files && files.length > 0) {
                 const rel = files[0];
-                // Ensure absolute path for require()
                 const abs = path.isAbsolute(rel) ? rel : path.resolve(currentRoot, rel);
 
                 // Find actual project root by looking for package.json or .git
@@ -678,12 +680,14 @@ class context {
             throw new ConfigurationError('Database connection path is required for SQLite');
         }
 
-        // Treat leading project-style paths ('/components/...') as project-root relative
-        const looksProjectRootRelative = dbPath.startsWith('/') || dbPath.startsWith('\\');
-        const isAbsoluteFsPath = path.isAbsolute(dbPath);
-
-        if (looksProjectRootRelative || !isAbsoluteFsPath) {
-            // Normalize leading separators to avoid duplicating separators on Windows
+        // If the path is already an absolute filesystem path, use it as-is.
+        // On Windows, `path.isAbsolute('C:\\foo')` → true; on POSIX,
+        // `path.isAbsolute('/foo')` → true. Do NOT treat POSIX-absolute paths
+        // as "project-root relative" — that used to cause the root folder to
+        // be prepended to an already-absolute path, producing a doubled-up
+        // path like "/Users/x/project/Users/x/project/db/...".
+        if (!path.isAbsolute(dbPath)) {
+            // Normalize any leading separators so `path.join` doesn't duplicate them
             const trimmed = dbPath.replace(/^[/\\]+/, '');
             dbPath = path.join(rootFolder, trimmed);
         }
@@ -790,9 +794,9 @@ class context {
                 );
             }
 
-            // Always require absolute file path to avoid module root ambiguity on global installs/Windows
+            // Always use absolute file path to avoid module root ambiguity on global installs/Windows
             const settingsPath = path.isAbsolute(file.file) ? file.file : path.resolve(file.rootFolder, file.file);
-            const settings = require(settingsPath);
+            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
             const options = settings[contextName];
 
             if (!options || typeof options !== 'object') {
@@ -971,7 +975,7 @@ class context {
             }
             const contextName = this.__name;
             const file = this.__findSettings(root, rootFolderLocation, envType);
-            const settings = require(file.file);
+            const settings = JSON.parse(fs.readFileSync(file.file, 'utf8'));
             const options = settings[contextName];
 
             if (!options || typeof options !== 'object') {
@@ -1135,7 +1139,7 @@ class context {
             const contextName = this.__name;
             const root = appRoot.path;
             const file = this.__findSettings(root, rootFolderLocation, envType);
-            const settings = require(file.file);
+            const settings = JSON.parse(fs.readFileSync(file.file, 'utf8'));
             const options = settings[contextName];
 
             if (!options || typeof options !== 'object') {
@@ -1534,7 +1538,6 @@ class context {
             return {};
         }
 
-        const DependencyGraph = require('./Migrations/dependencyGraph');
         const graph = new DependencyGraph(this.__entities);
         graph.buildFromEntities();
 
@@ -2396,13 +2399,11 @@ class context {
 // EXPORTS
 // ============================================================================
 
-module.exports = context;
-
-// Export custom error classes for advanced error handling
-module.exports.ContextError = ContextError;
-module.exports.ConfigurationError = ConfigurationError;
-module.exports.DatabaseConnectionError = DatabaseConnectionError;
-module.exports.EntityValidationError = EntityValidationError;
-
-// Export pool key generator for use by schema.js (single source of truth)
-module.exports._poolKey = _poolKey;
+export {
+    ContextError,
+    ConfigurationError,
+    DatabaseConnectionError,
+    EntityValidationError,
+    _poolKey
+};
+export default context;

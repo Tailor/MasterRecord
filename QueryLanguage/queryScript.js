@@ -1,8 +1,9 @@
 // version 0.0.9
 
+import tools from '../Tools.js';
+import QueryParameters from './queryParameters.js';
+
 const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
-var tools =  require('../Tools');
-const QueryParameters = require('./queryParameters');
 
 // Escape special regex characters so user-supplied names can be safely
 // interpolated into RegExp constructors (prevents "Unmatched ')'" etc.)
@@ -520,4 +521,4 @@ class queryScript{
 
 }
 
-module.exports = queryScript;
+export default queryScript;

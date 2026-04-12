@@ -1,5 +1,5 @@
 // version 1.0.0 - FAANG-Level Refactored
-const tools = require('./Tools');
+import tools from './Tools.js';
 
 // Constants for relationship types
 const RELATIONSHIP_TYPES = {
@@ -176,4 +176,4 @@ class DeleteManager {
     }
 }
 
-module.exports = DeleteManager;
+export default DeleteManager;

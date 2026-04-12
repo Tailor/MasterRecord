@@ -243,8 +243,8 @@ This bug was reported by Bookbag.ai Engineering Team and affects any application
 To verify the fix works with your code:
 
 ```javascript
-const UserOrganizationRole = require('./models/userOrganizationRole');
-const userContext = require('./models/userContext');
+import UserOrganizationRole from './models/userOrganizationRole.js';
+import userContext from './models/userContext.js';
 
 async function testFix() {
     const ctx = new userContext();

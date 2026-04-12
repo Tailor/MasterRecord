@@ -1,6 +1,8 @@
 # MasterRecord Migrations Guide
 
-Complete guide for database migrations and seed data with support for MySQL, SQLite, and PostgreSQL.
+Complete guide for database migrations and seed data with MySQL, SQLite, and PostgreSQL.
+
+> **ESM only.** MasterRecord v1.0+ is a pure ESM package. Every example below uses `import`/`export default` syntax. Your host project must have `"type": "module"` in its `package.json`.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -13,687 +15,390 @@ Complete guide for database migrations and seed data with support for MySQL, SQL
 
 ## Overview
 
-MasterRecord migrations allow you to:
-- Create and modify database tables
-- Track schema changes over time
-- Seed initial or test data
+MasterRecord migrations let you:
+- Create and modify database tables from code-first entity definitions
+- Track schema changes over time with automatic snapshots
+- Seed initial or test data with idempotent inserts
 - Roll back changes when needed
 - Work consistently across MySQL, SQLite, and PostgreSQL
 
 ## Quick Start
 
-### 1. Setup Your Context
+### 1. Set up your context
 
 ```javascript
 // app/models/context.js
-const context = require('masterrecord/context');
+import context from 'masterrecord/context';
+import User from './User.js';
+import Post from './Post.js';
 
 class AppContext extends context {
     constructor() {
         super();
+        this.env('config/environments');
+        this.dbset(User);
+        this.dbset(Post);
     }
 }
 
-module.exports = AppContext;
+export default AppContext;
 ```
 
-### 2. Create Your First Migration
+### 2. Enable migrations (one-time)
 
 ```bash
-# Run from your project root
-masterrecord add-migration InitialCreate context
+masterrecord enable-migrations AppContext
 ```
 
-This creates a new migration file in `app/models/db/migrations/`
+This creates a snapshot file at `app/models/db/migrations/appcontext_contextSnapShot.json`.
 
-### 3. Define Your Schema
+### 3. Generate a migration
+
+```bash
+masterrecord add-migration InitialCreate AppContext
+```
+
+MasterRecord diffs the current entity definitions against the snapshot and emits a migration file at `app/models/db/migrations/<timestamp>_InitialCreate_migration.js`.
+
+### 4. Review the generated migration
 
 ```javascript
-// migrations/20250111_InitialCreate.js
-module.exports = {
-    up: function(table, schema) {
-        // Create Users table
-        schema.createTable(table.User);
+// app/models/db/migrations/1700000000000_InitialCreate_migration.js
+import masterrecord from 'masterrecord';
 
-        // Create Posts table
-        schema.createTable(table.Post);
-
-        // Add seed data
-        schema.seed('User', [
-            { name: 'Admin', email: 'admin@example.com', role: 'admin' },
-            { name: 'User', email: 'user@example.com', role: 'user' }
-        ]);
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.Post);
-        schema.dropTable(table.User);
+class InitialCreate extends masterrecord.schema {
+    constructor(context) {
+        super(context);
     }
-};
+
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.User);
+        await this.createTable(table.Post);
+    }
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.Post);
+        await this.dropTable(table.User);
+    }
+}
+
+export default InitialCreate;
 ```
 
-### 4. Run Migrations
+### 5. Apply migrations
 
 ```bash
-masterrecord migrate context
+masterrecord update-database AppContext
 ```
 
 ## Database Support
 
-### PostgreSQL (NEW!)
-Full PostgreSQL support with:
-- SERIAL/BIGSERIAL for auto-increment
-- Native BOOLEAN type
-- JSON and JSONB support
-- UUID support
-- Parameterized queries ($1, $2, $3...)
-- ON CONFLICT DO NOTHING for idempotent seeds
+### PostgreSQL
+- SERIAL / BIGSERIAL auto-increment
+- Native BOOLEAN, UUID, JSONB
+- Parameterized queries (`$1`, `$2`, …)
+- `ON CONFLICT DO NOTHING` for idempotent seeds
 
 ### MySQL
-Complete MySQL support with:
-- AUTO_INCREMENT
+- `AUTO_INCREMENT` primary keys
 - TINYINT for booleans (0/1)
-- JSON support
-- INSERT IGNORE for idempotent seeds
+- JSON column type
+- `INSERT IGNORE` for idempotent seeds
 
 ### SQLite
-Full SQLite support with:
-- AUTOINCREMENT
+- `AUTOINCREMENT` primary keys
 - INTEGER for booleans (0/1)
-- INSERT OR IGNORE for idempotent seeds
+- `INSERT OR IGNORE` for idempotent seeds
 
 ## Creating Migrations
 
-### Basic Table Creation
+Migration files are classes that extend `masterrecord.schema`. They must implement `async up(table)` and `async down(table)` methods. Always call `await this.init(table)` first inside each method.
+
+### Creating a table
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        // table.TableName contains the entity definition
-        schema.createTable(table.User);
-    },
+import masterrecord from 'masterrecord';
 
-    down: function(table, schema) {
-        schema.dropTable(table.User);
+class CreateUsers extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.User);
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.User);
+    }
+}
+
+export default CreateUsers;
 ```
 
-### Adding Columns
+### Adding columns
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.addColumn({
+import masterrecord from 'masterrecord';
+
+class AddPhoneToUser extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.addColumn({
             tableName: 'User',
             name: 'phone_number',
-            type: 'string'
-        });
-    },
-
-    down: function(table, schema) {
-        schema.dropColumn({
-            tableName: 'User',
-            name: 'phone_number'
+            type: 'string',
         });
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropColumn({ tableName: 'User', name: 'phone_number' });
+    }
+}
+
+export default AddPhoneToUser;
 ```
 
-### Modifying Columns
+### Modifying columns
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.alterColumn({
-            tableName: 'User',
-            table: {
-                name: 'age',
-                type: 'integer',
-                nullable: false,
-                default: 0
-            }
-        });
-    },
+import masterrecord from 'masterrecord';
 
-    down: function(table, schema) {
-        schema.alterColumn({
+class MakeAgeRequired extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.alterColumn({
             tableName: 'User',
-            table: {
-                name: 'age',
-                type: 'integer',
-                nullable: true
-            }
+            table: { name: 'age', type: 'integer', nullable: false, default: 0 },
         });
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.alterColumn({
+            tableName: 'User',
+            table: { name: 'age', type: 'integer', nullable: true },
+        });
+    }
+}
+
+export default MakeAgeRequired;
 ```
 
-### Renaming Columns
+### Renaming columns
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.renameColumn({
-            tableName: 'User',
-            name: 'username',
-            newName: 'user_name'
-        });
-    },
+import masterrecord from 'masterrecord';
 
-    down: function(table, schema) {
-        schema.renameColumn({
-            tableName: 'User',
-            name: 'user_name',
-            newName: 'username'
-        });
+class RenameUsernameColumn extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.renameColumn({ tableName: 'User', name: 'username', newName: 'user_name' });
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.renameColumn({ tableName: 'User', name: 'user_name', newName: 'username' });
+    }
+}
+
+export default RenameUsernameColumn;
 ```
 
 ## Seed Data
 
-### Simple Seeding
+### Single-row seeding
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.Role);
+import masterrecord from 'masterrecord';
 
-        // Seed individual records
-        schema.seed('Role', {
-            name: 'Admin',
-            description: 'Administrator role'
-        });
+class SeedRoles extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.Role);
 
-        schema.seed('Role', {
-            name: 'User',
-            description: 'Regular user role'
-        });
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.Role);
+        this.seed('Role', { name: 'Admin', description: 'Administrator role' });
+        this.seed('Role', { name: 'User', description: 'Regular user role' });
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.Role);
+    }
+}
+
+export default SeedRoles;
 ```
 
-### Bulk Seeding (More Efficient)
+### Bulk seeding (preferred)
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.User);
+import masterrecord from 'masterrecord';
 
-        // Bulk insert multiple records at once
-        schema.bulkSeed('User', [
+class SeedUsers extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.User);
+
+        this.bulkSeed('User', [
             { name: 'Alice', email: 'alice@example.com', age: 25 },
             { name: 'Bob', email: 'bob@example.com', age: 30 },
             { name: 'Charlie', email: 'charlie@example.com', age: 35 },
-            { name: 'Diana', email: 'diana@example.com', age: 28 }
         ]);
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.User);
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.User);
+    }
+}
+
+export default SeedUsers;
 ```
 
-### Idempotent Seeds
+Seeds are idempotent — re-running a migration won't create duplicate rows, because MasterRecord emits the database-native "insert or ignore" form (`INSERT OR IGNORE`, `INSERT IGNORE`, or `ON CONFLICT DO NOTHING`). This requires a unique constraint or primary key on the target table.
 
-Seeds are automatically idempotent (can run multiple times safely):
-
-**SQLite**: Uses `INSERT OR IGNORE`
-**MySQL**: Uses `INSERT IGNORE`
-**PostgreSQL**: Uses `INSERT ... ON CONFLICT DO NOTHING`
-
-**Note**: Idempotent seeding requires a unique constraint or primary key.
-
-### Conditional Seeding
+### Conditional seeding by database
 
 ```javascript
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.Setting);
+import masterrecord from 'masterrecord';
 
-        // Only seed if running on specific database
-        if(schema.context.isPostgres){
-            schema.seed('Setting', {
-                key: 'postgres_feature',
-                value: 'enabled'
-            });
+class SeedSettings extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.Setting);
+
+        if (this.context.isPostgres) {
+            this.seed('Setting', { key: 'postgres_feature', value: 'enabled' });
         }
-
-        if(schema.context.isMySQL){
-            schema.seed('Setting', {
-                key: 'mysql_feature',
-                value: 'enabled'
-            });
+        if (this.context.isMySQL) {
+            this.seed('Setting', { key: 'mysql_feature', value: 'enabled' });
         }
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.Setting);
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.Setting);
+    }
+}
+
+export default SeedSettings;
 ```
 
 ## Migration Commands
 
-### Create a New Migration
-
 ```bash
+# Enable migrations for a context (creates snapshot)
+masterrecord enable-migrations <ContextName>
+
+# Generate a new migration from a diff of current entities vs snapshot
 masterrecord add-migration <MigrationName> <ContextName>
+
+# Apply all pending migrations
+masterrecord update-database <ContextName>
+
+# Operate on every context in the project at once
+masterrecord enable-migrations-all
+masterrecord add-migration-all <MigrationName>
+masterrecord update-database-all
 ```
 
-Example:
-```bash
-masterrecord add-migration AddUserProfile context
-```
-
-### Run Migrations
-
-```bash
-masterrecord migrate <ContextName>
-```
-
-### Check Migration Status
-
-Migrations are tracked in the snapshot file:
-```
-app/models/db/migrations/context_contextSnapShot.json
-```
+Migration state is tracked in `<contextname>_contextSnapShot.json` alongside the migration files.
 
 ## Examples
 
-### Example 1: E-Commerce Database
+### Example: E-commerce schema
 
 ```javascript
-// migrations/20250111_CreateECommerce.js
-module.exports = {
-    up: function(table, schema) {
-        // Create tables
-        schema.createTable(table.User);
-        schema.createTable(table.Product);
-        schema.createTable(table.Order);
-        schema.createTable(table.OrderItem);
+// app/models/db/migrations/1700000000000_CreateECommerce_migration.js
+import masterrecord from 'masterrecord';
 
-        // Seed categories
-        schema.bulkSeed('Category', [
+class CreateECommerce extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+
+        await this.createTable(table.User);
+        await this.createTable(table.Category);
+        await this.createTable(table.Product);
+        await this.createTable(table.Order);
+        await this.createTable(table.OrderItem);
+
+        this.bulkSeed('Category', [
             { name: 'Electronics', slug: 'electronics' },
             { name: 'Clothing', slug: 'clothing' },
-            { name: 'Books', slug: 'books' }
+            { name: 'Books', slug: 'books' },
         ]);
 
-        // Seed admin user
-        schema.seed('User', {
+        this.seed('User', {
             name: 'Admin',
             email: 'admin@shop.com',
             role: 'admin',
-            created_at: new Date()
         });
 
-        // Seed sample products
-        schema.bulkSeed('Product', [
-            {
-                name: 'Laptop',
-                price: 999.99,
-                category_id: 1,
-                stock: 50
-            },
-            {
-                name: 'T-Shirt',
-                price: 19.99,
-                category_id: 2,
-                stock: 200
-            }
+        this.bulkSeed('Product', [
+            { name: 'Laptop', price: 999.99, category_id: 1, stock: 50 },
+            { name: 'T-Shirt', price: 19.99, category_id: 2, stock: 200 },
         ]);
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.OrderItem);
-        schema.dropTable(table.Order);
-        schema.dropTable(table.Product);
-        schema.dropTable(table.Category);
-        schema.dropTable(table.User);
     }
-};
+
+    async down(table) {
+        await this.init(table);
+        await this.dropTable(table.OrderItem);
+        await this.dropTable(table.Order);
+        await this.dropTable(table.Product);
+        await this.dropTable(table.Category);
+        await this.dropTable(table.User);
+    }
+}
+
+export default CreateECommerce;
 ```
 
-### Example 2: Blog with PostgreSQL-Specific Features
+### Example: Multi-database-aware migration
 
 ```javascript
-// migrations/20250111_CreateBlog.js
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.Author);
-        schema.createTable(table.Post);
-        schema.createTable(table.Comment);
+import masterrecord from 'masterrecord';
 
-        // PostgreSQL-specific: JSON metadata
-        if(schema.context.isPostgres){
-            schema.addColumn({
-                tableName: 'Post',
-                name: 'metadata',
-                type: 'jsonb'  // PostgreSQL binary JSON
-            });
+class AddUserPreferences extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
 
-            schema.addColumn({
-                tableName: 'Post',
-                name: 'post_id',
-                type: 'uuid'   // PostgreSQL native UUID
-            });
-        }
-
-        // Seed authors
-        schema.bulkSeed('Author', [
-            { name: 'John Doe', email: 'john@blog.com', bio: 'Tech blogger' },
-            { name: 'Jane Smith', email: 'jane@blog.com', bio: 'Travel writer' }
-        ]);
-
-        // Seed initial posts
-        schema.seed('Post', {
-            title: 'Welcome to Our Blog',
-            content: 'This is our first post!',
-            author_id: 1,
-            published: true,
-            created_at: new Date()
-        });
-    },
-
-    down: function(table, schema) {
-        schema.dropTable(table.Comment);
-        schema.dropTable(table.Post);
-        schema.dropTable(table.Author);
-    }
-};
-```
-
-### Example 3: Multi-Database Migration
-
-```javascript
-// migrations/20250111_AddUserPreferences.js
-module.exports = {
-    up: function(table, schema) {
         // Works across all databases
-        schema.addColumn({
+        await this.addColumn({
             tableName: 'User',
             name: 'preferences',
-            type: 'text'  // JSON stored as text for compatibility
+            type: 'text',
         });
 
-        // Database-specific optimizations
-        if(schema.context.isPostgres){
-            // PostgreSQL: Use native JSONB for better performance
-            schema.alterColumn({
+        // PostgreSQL: upgrade to native JSONB
+        if (this.context.isPostgres) {
+            await this.alterColumn({
                 tableName: 'User',
-                table: {
-                    name: 'preferences',
-                    type: 'jsonb'
-                }
+                table: { name: 'preferences', type: 'jsonb' },
             });
         }
 
-        // Seed default preferences
-        const defaultPrefs = JSON.stringify({
-            theme: 'light',
-            notifications: true,
-            language: 'en'
-        });
-
-        schema.seed('User', {
+        this.seed('User', {
             name: 'Demo User',
             email: 'demo@example.com',
-            preferences: defaultPrefs
-        });
-    },
-
-    down: function(table, schema) {
-        schema.dropColumn({
-            tableName: 'User',
-            name: 'preferences'
+            preferences: JSON.stringify({ theme: 'light', notifications: true, language: 'en' }),
         });
     }
-};
-```
 
-## Database-Specific Features
-
-### PostgreSQL Features
-
-```javascript
-module.exports = {
-    up: function(table, schema) {
-        if(schema.context.isPostgres){
-            // JSONB for better JSON performance
-            schema.addColumn({
-                tableName: 'User',
-                name: 'settings',
-                type: 'jsonb'
-            });
-
-            // Native UUID support
-            schema.addColumn({
-                tableName: 'User',
-                name: 'uuid',
-                type: 'uuid'
-            });
-
-            // Native BOOLEAN type
-            schema.addColumn({
-                tableName: 'User',
-                name: 'active',
-                type: 'boolean',
-                default: true
-            });
-
-            // BYTEA for binary data
-            schema.addColumn({
-                tableName: 'User',
-                name: 'avatar',
-                type: 'binary'  // Maps to BYTEA in PostgreSQL
-            });
-        }
-    },
-
-    down: function(table, schema) {
-        // Cleanup
+    async down(table) {
+        await this.init(table);
+        await this.dropColumn({ tableName: 'User', name: 'preferences' });
     }
-};
+}
+
+export default AddUserPreferences;
 ```
 
-### MySQL Features
+## Best practices
 
-```javascript
-module.exports = {
-    up: function(table, schema) {
-        if(schema.context.isMySQL){
-            // JSON type
-            schema.addColumn({
-                tableName: 'User',
-                name: 'settings',
-                type: 'json'
-            });
-
-            // TINYINT for booleans (0/1)
-            schema.addColumn({
-                tableName: 'User',
-                name: 'active',
-                type: 'boolean'  // Maps to TINYINT
-            });
-
-            // AUTO_INCREMENT
-            // (handled automatically for primary keys)
-        }
-    },
-
-    down: function(table, schema) {
-        // Cleanup
-    }
-};
-```
-
-### SQLite Features
-
-```javascript
-module.exports = {
-    up: function(table, schema) {
-        if(schema.context.isSQLite){
-            // TEXT for everything
-            // INTEGER for booleans (0/1)
-            // AUTOINCREMENT for primary keys
-
-            // SQLite requires table rebuild for certain alterations
-            // MasterRecord handles this automatically
-        }
-    },
-
-    down: function(table, schema) {
-        // Cleanup
-    }
-};
-```
-
-## Best Practices
-
-### 1. Always Provide Down Migrations
-
-```javascript
-// ✅ GOOD
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.User);
-    },
-    down: function(table, schema) {
-        schema.dropTable(table.User);
-    }
-};
-
-// ❌ BAD
-module.exports = {
-    up: function(table, schema) {
-        schema.createTable(table.User);
-    },
-    down: function(table, schema) {
-        // Empty - can't rollback!
-    }
-};
-```
-
-### 2. Use Bulk Seeding for Multiple Records
-
-```javascript
-// ✅ GOOD - Single query
-schema.bulkSeed('User', [
-    { name: 'Alice', email: 'alice@example.com' },
-    { name: 'Bob', email: 'bob@example.com' }
-]);
-
-// ❌ BAD - Multiple queries
-schema.seed('User', { name: 'Alice', email: 'alice@example.com' });
-schema.seed('User', { name: 'Bob', email: 'bob@example.com' });
-```
-
-### 3. Test Migrations on All Databases
-
-If your app supports multiple databases, test migrations on each:
-
-```bash
-# Test on SQLite
-DATABASE_TYPE=sqlite masterrecord migrate context
-
-# Test on MySQL
-DATABASE_TYPE=mysql masterrecord migrate context
-
-# Test on PostgreSQL
-DATABASE_TYPE=postgres masterrecord migrate context
-```
-
-### 4. Keep Migrations Small and Focused
-
-```javascript
-// ✅ GOOD - One logical change
-// Migration: AddUserPhoneNumber
-schema.addColumn({
-    tableName: 'User',
-    name: 'phone',
-    type: 'string'
-});
-
-// ❌ BAD - Too many unrelated changes
-schema.addColumn({ tableName: 'User', name: 'phone', type: 'string' });
-schema.addColumn({ tableName: 'Post', name: 'views', type: 'integer' });
-schema.createTable(table.Comment);
-schema.seed('Setting', { key: 'version', value: '2.0' });
-```
-
-### 5. Use Timestamps for Migration Names
-
-MasterRecord automatically adds timestamps to migration files:
-```
-20250111_143052_CreateUserTable.js
-20250111_150023_AddUserEmail.js
-```
-
-This ensures migrations run in the correct order.
-
-## Troubleshooting
-
-### Migration Not Found
-
-**Error**: "Cannot find migration file"
-
-**Solution**: Ensure migration is in the correct directory:
-```
-app/models/db/migrations/
-```
-
-### Context Not Found
-
-**Error**: "Cannot find context"
-
-**Solution**: Provide full path or context name:
-```bash
-masterrecord migrate context
-# or
-masterrecord migrate ./app/models/context.js
-```
-
-### Seed Data Not Idempotent
-
-**Error**: Duplicate key violations on repeated migrations
-
-**Solution**: Ensure tables have primary keys or unique constraints:
-```javascript
-schema.createTable(table.User); // User entity must have primary key
-schema.seed('User', { id: 1, name: 'Admin' }); // Include PK in seed
-```
-
-### PostgreSQL Permission Errors
-
-**Error**: "permission denied for table"
-
-**Solution**: Ensure your PostgreSQL user has appropriate permissions:
-```sql
-GRANT ALL PRIVILEGES ON DATABASE mydb TO myuser;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO myuser;
-```
-
-## Version Compatibility
-
-- **MasterRecord**: 0.3.0+
-- **PostgreSQL**: 9.6+ (tested with 12+, 13+, 14+, 15+, 16+)
-- **MySQL**: 5.7+ (tested with 8.0+)
-- **SQLite**: 3.x (any recent version)
-- **Node.js**: 14+ (async/await support required)
-
-## Additional Resources
-
-- [PostgreSQL Setup Guide](./POSTGRESQL_SETUP.md)
-- [Entity Definitions](./ENTITIES.md)
-- [MasterRecord API Reference](./API_REFERENCE.md)
-
-## License
-
-MIT License - see LICENSE file for details
+1. **Always provide a `down` migration.** Even if it just reverses `createTable` with `dropTable`. It pays off the first time a migration needs to be rolled back.
+2. **Prefer `bulkSeed` over multiple `seed` calls.** It's one INSERT instead of N.
+3. **Test migrations on every target database.** If your app supports MySQL and Postgres, run both sets of migrations in CI.
+4. **Keep migrations small and focused.** One logical change per migration file.
+5. **Never edit an already-applied migration.** Create a new migration that corrects or rolls back the earlier one.

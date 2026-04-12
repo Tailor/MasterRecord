@@ -1,6 +1,8 @@
 // Version 1.0.0 - PostgreSQL connection helper for pg 8.16.3
-const { Pool } = require('pg');
-const postgresEngine = require('./postgresEngine');
+import pg from 'pg';
+import postgresEngine from './postgresEngine.js';
+
+const { Pool } = pg;
 
 /**
  * PostgreSQL connection manager for MasterRecord
@@ -206,4 +208,4 @@ class PostgresSyncConnect {
     }
 }
 
-module.exports = PostgresSyncConnect;
+export default PostgresSyncConnect;

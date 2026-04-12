@@ -1,6 +1,6 @@
 // Version 0.0.23
-var tools =  require('masterrecord/Tools');
-var FieldTransformer = require('masterrecord/Entity/fieldTransformer');
+import tools from './Tools.js';
+import FieldTransformer from './Entity/fieldTransformer.js';
 
 class SQLLiteEngine {
 
@@ -917,9 +917,23 @@ class SQLLiteEngine {
                     sqlParts.push(`[${dirtyFields[column]}] = ?`);
                     params.push(model[dirtyFields[column]]);
                 break;
-                default:
+                default: {
+                    // Covers `text` and any other column type without a dedicated
+                    // case above. Run the toDatabase transformer here too so that
+                    // fields with a serializer (e.g. JSON text columns) get their
+                    // object values turned into scalars before they reach better-sqlite3.
+                    var rawValue = model["_" + dirtyFields[column]];
+                    if (rawValue === undefined) {
+                        rawValue = model[dirtyFields[column]];
+                    }
+                    try {
+                        rawValue = FieldTransformer.toDatabase(rawValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
+                    } catch (transformError) {
+                        throw new Error(`UPDATE failed: ${transformError.message}`);
+                    }
                     sqlParts.push(`[${dirtyFields[column]}] = ?`);
-                    params.push(model["_" + dirtyFields[column]]);
+                    params.push(rawValue);
+                }
             }
         }
 
@@ -1128,14 +1142,19 @@ class SQLLiteEngine {
                     fieldColumn = fields[modelEntity[column].foreignKey];
                 }
 
-                if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
-                    // 🔥 Apply toDatabase transformer before validation
+                if (fieldColumn !== undefined && fieldColumn !== null) {
+                    // 🔥 Apply toDatabase transformer FIRST — transformers may turn
+                    // objects into scalars (e.g. JSON.stringify), so running them
+                    // before the type check is essential for fields that use a
+                    // custom serializer on top of a text/json column.
                     try {
                         fieldColumn = FieldTransformer.toDatabase(fieldColumn, modelEntity[column], modelEntity.__name, column);
                     } catch(transformError) {
                         throw new Error(`INSERT failed: ${transformError.message}`);
                     }
+                }
 
+                if((fieldColumn !== undefined && fieldColumn !== null) && typeof(fieldColumn) !== "object"){
                     // Validate and coerce field type before processing
                     try {
                         fieldColumn = $that._validateAndCoerceFieldType(fieldColumn, modelEntity[column], modelEntity.__name, column);
@@ -1267,4 +1286,4 @@ class SQLLiteEngine {
     }
 }
 
-module.exports = SQLLiteEngine;
+export default SQLLiteEngine;

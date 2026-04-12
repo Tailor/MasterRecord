@@ -401,7 +401,7 @@ class migrationPostgresQuery {
     }
 }
 
-module.exports = migrationPostgresQuery;
+export default migrationPostgresQuery;
 
 /**
  * PostgreSQL Data Types Reference:

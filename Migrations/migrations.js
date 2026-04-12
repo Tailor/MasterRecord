@@ -1,12 +1,13 @@
-// version 0.0.10
+// version 0.0.11
 // learn more about seeding info -  https://www.pauric.blog/Database-Updates-and-Migrations-with-Entity-Framework/
 
-var fs = require('fs');
-var diff = require("deep-object-diff");
-var MigrationTemplate = require("./migrationTemplate");
-var globSearch = require("glob");
-var path = require('path');
-var { resolveMigrationsDirectory } = require('./pathUtils');
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import * as diff from 'deep-object-diff';
+import { globSync } from 'glob';
+import MigrationTemplate from './migrationTemplate.js';
+import { resolveMigrationsDirectory } from './pathUtils.js';
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
@@ -357,7 +358,7 @@ class Migrations{
 
 
     findContextFile(executedLocation, contextFileName){
-        var files = globSearch.sync(`**/*${contextFileName}.js`, {
+        var files = globSync(`**/*${contextFileName}.js`, {
             cwd: executedLocation,
             dot: true,
             windowsPathsNoEscape: true
@@ -366,8 +367,8 @@ class Migrations{
         return file;
     }
 
-    findContext(executedLocation, contextFileName){
-        var files = globSearch.sync(`**/*${contextFileName}.js`, {
+    async findContext(executedLocation, contextFileName){
+        var files = globSync(`**/*${contextFileName}.js`, {
             cwd: executedLocation,
             dot: true,
             windowsPathsNoEscape: true
@@ -376,7 +377,8 @@ class Migrations{
         if(!file){
             return null;
         }
-        var context = require(file);
+        const mod = await import(pathToFileURL(file).href);
+        const context = (mod && mod.default !== undefined) ? mod.default : mod;
         return {
             context : context,
             fileLocation : file
@@ -511,7 +513,7 @@ class Migrations{
         return false;
     }
 
-    template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null, moduleType = 'cjs'){
+    template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null){
         var MT = new MigrationTemplate(name);
         // Determine current environment if not provided
         if (!currentEnv) {
@@ -578,9 +580,9 @@ class Migrations{
 
         });
 
-       return MT.get(moduleType);
+       return MT.get();
     }
 
 }
 
-module.exports = Migrations;
+export default Migrations;

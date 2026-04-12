@@ -384,4 +384,4 @@ class EntityModel {
         return this;
     }
 }
-module.exports = EntityModel;
+export default EntityModel;

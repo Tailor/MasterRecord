@@ -263,4 +263,4 @@ class FieldTransformer {
     }
 }
 
-module.exports = FieldTransformer;
+export default FieldTransformer;

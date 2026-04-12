@@ -1,28 +1,23 @@
 #!/usr/bin/env node
 
-// version 0.0.8
+// version 0.1.0 - ESM only
 // https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
-const { program } = require('commander');
-let fs = require('fs');
-let path = require('path');
-const { pathToFileURL } = require('node:url');
-const Module = require('module');
-const { resolveMigrationsDirectory } = require('./pathUtils');
+import { program } from 'commander';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { globSync } from 'glob';
+import { resolveMigrationsDirectory } from './pathUtils.js';
+import Migration from './migrations.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Load a user module (context, migration) via dynamic import.
- *
- * Handles both CJS and ESM targets. Required because:
- *  - CJS require() of an ESM file throws on older Node, or returns a Module
- *    namespace on newer Node (22.12+) — neither shape matches the
- *    `new ContextCtor()` pattern downstream.
- *  - await import() works in both directions and is consistent across Node
- *    versions.
- *
- * The returned value is unwrapped: ESM `export default X` -> X;
- * CJS `module.exports = X` -> X; mixed shapes are handled via `.default ?? mod`.
+ * Unwraps `export default X` -> X; returns whole namespace if no default.
  *
  * @param {string} filePath - Absolute path to the user file
  * @returns {Promise<*>} The default export (or whole module if no default)
@@ -32,47 +27,7 @@ async function __loadUserModule(filePath) {
   return (mod && mod.default !== undefined) ? mod.default : mod;
 }
 
-/**
- * Walk up from a given directory looking for the host project's package.json
- * and return whether it declares ESM (`"type": "module"`) or CJS.
- * Used when generating migration files so the emitted syntax matches the
- * host project's module type. Masterrecord's own package.json is skipped.
- *
- * @param {string} startDir - Directory to walk up from
- * @returns {'esm' | 'cjs'}
- */
-function __detectHostModuleType(startDir) {
-  let dir = startDir;
-  for (let i = 0; i < 12; i++) {
-    const pkgPath = path.join(dir, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        if (pkg && pkg.name === 'masterrecord') {
-          // Skip our own package.json — keep walking up to the host project
-        } else {
-          return (pkg && pkg.type === 'module') ? 'esm' : 'cjs';
-        }
-      } catch (_) { /* keep walking */ }
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return 'cjs';
-}
-// Alias require('masterrecord') to this global package so project files don't need a local install
-const __MASTERRECORD_ROOT__ = path.join(__dirname, '..');
-const __ORIGINAL_REQUIRE__ = Module.prototype.require;
-Module.prototype.require = function(request) {
-  if (request === 'masterrecord') {
-    return __ORIGINAL_REQUIRE__.call(this, __MASTERRECORD_ROOT__);
-  }
-  return __ORIGINAL_REQUIRE__.call(this, request);
-};
-var Migration = require('./migrations');
-var globSearch = require("glob");
-const pkg = require(path.join(__dirname, '..', 'package.json'));
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 
 // Extract numeric timestamp from migration filename (e.g., 1737999999999_name_migration.js)
 function __getMigrationTimestamp(file){
@@ -156,7 +111,7 @@ program.option('-V', 'output the version');
     var migration = new Migration();
     var contextInstance = null;
     try{
-      var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
@@ -164,7 +119,7 @@ program.option('-V', 'output the version');
       }
       var contextSnapshot;
       try{
-        contextSnapshot = require(file);
+        contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
@@ -178,7 +133,7 @@ program.option('-V', 'output the version');
         migBase = snapDir;
       }
       // Find latest migration file (so we can use its class which extends schema)
-      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
       if(!(migrationFiles && migrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
@@ -247,26 +202,6 @@ program.option('-V', 'output the version');
   //     contextFileName = contextFileName.toLowerCase();
           
   //     try{
-  //        // find context file from main folder location
-  //        // find context file from main folder location
-  //        var search = `${executedLocation}/**/*${contextFileName}_contextSnapShot.json`;
-  //        var files = globSearch.sync(search, executedLocation);
-  //        var file = files[0];
-
-  //        if(file){
-  //           var contextSnapshot = require(file);
-  //           var context = require(contextSnapshot.contextLocation);
-  //           var newSchema = new schema(context);
-  //           newSchema.createDatabase(dbName);
-  //        }
-  //        else{
-  //          console.log("Error - Cannot read or find Context file");
-  //         }
-
-
-  //       }catch (e){
-  //         console.log("Error - Cannot read or find file ", e);
-  //       }
   //       console.log("Database Created");
 
   // });
@@ -282,7 +217,7 @@ program.option('-V', 'output the version');
     var migration = new Migration();
       try{
           // find context file from main folder location
-        var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+        var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
         var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
         if(!file){
           console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'. Run 'masterrecord enable-migrations ${contextFileName}'.`);
@@ -290,7 +225,7 @@ program.option('-V', 'output the version');
         }
         var contextSnapshot = null;
         try{
-          contextSnapshot = require(file);
+          contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
         }catch(_){
           console.log(`Error - Cannot read context snapshot at '${file}'.`);
           return;
@@ -350,10 +285,7 @@ program.option('-V', 'output the version');
           return;
         }
 
-        // Emit the migration file in whatever module format the host project uses,
-        // so the generated .js file parses correctly when loaded by update-database.
-        var moduleType = __detectHostModuleType(path.dirname(contextAbs));
-        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig, null, moduleType);
+        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig, null);
         if(!fs.existsSync(migBase)){
           try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
         }
@@ -385,7 +317,7 @@ program.option('-V', 'output the version');
       try{
          console.log(`\n🔍 Searching for context snapshot '${contextFileName}_contextSnapShot.json'...`);
          // find context snapshot (cwd-based glob)
-         var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
          var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
 
          if(!file){
@@ -400,7 +332,7 @@ program.option('-V', 'output the version');
 
          var contextSnapshot;
          try{
-           contextSnapshot = require(file);
+           contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
          }catch(err){
            console.error(`\n❌ Error - Cannot load context snapshot`);
            console.error(`\nFile: ${file}`);
@@ -418,7 +350,7 @@ program.option('-V', 'output the version');
          }
 
          console.log(`\n🔍 Searching for migration files in: ${migBase}`);
-         var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+         var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
          migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
 
          if(!(migrationFiles && migrationFiles.length)){
@@ -571,7 +503,7 @@ program.option('-V', 'output the version');
     var migration = new Migration();
     var contextInstance = null;
     try{
-       var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+       var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
        if(!file){
          console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
@@ -579,7 +511,7 @@ program.option('-V', 'output the version');
        }
        var contextSnapshot;
        try{
-         contextSnapshot = require(file);
+         contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
        }catch(_){
          console.log(`Error - Cannot read context snapshot at '${file}'.`);
          return;
@@ -587,7 +519,7 @@ program.option('-V', 'output the version');
        const snapDir = path.dirname(file);
        const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
        const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
-       var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+       var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
        migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
        if(!(migrationFiles && migrationFiles.length)){
          console.log("Error - Cannot read or find migration file");
@@ -673,7 +605,7 @@ program.option('-V', 'output the version');
     var contextInstance = null;
       try{
          // find context snapshot (cwd-based glob)
-         var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
          var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
          if(!file){
            console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
@@ -681,7 +613,7 @@ program.option('-V', 'output the version');
          }
       var contextSnapshot;
          try{
-           contextSnapshot = require(file);
+           contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
          }catch(_){
            console.log(`Error - Cannot read context snapshot at '${file}'.`);
            return;
@@ -689,7 +621,7 @@ program.option('-V', 'output the version');
       const snapDir = path.dirname(file);
       const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
       const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
-      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
          if(!(migrationFiles && migrationFiles.length)){
            console.log("Error - Cannot read or find migration file");
@@ -764,7 +696,7 @@ program.option('-V', 'output the version');
  .action(function(contextFileName){
       var executedLocation = process.cwd();
       contextFileName = contextFileName.toLowerCase();
-      var files = globSearch.sync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
@@ -772,12 +704,12 @@ program.option('-V', 'output the version');
       }
       var contextSnapshot;
       try{
-        contextSnapshot = require(file);
+        contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
       }
-      var migrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+      var migrationFiles = globSync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(migrationFiles && migrationFiles.length)){
         console.log("No migration files found.");
         return;
@@ -804,7 +736,7 @@ program.option('-V', 'output the version');
       var targetName = path.basename(migrationFileName);
 
       // Locate the target migration file anywhere under the current folder
-      var targetMatches = globSearch.sync(`**/${targetName}`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
+      var targetMatches = globSync(`**/${targetName}`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
       if(!(targetMatches && targetMatches.length)){
         console.log(`Error - Cannot read or find migration file '${targetName}' in '${executedLocation}'.`);
         return;
@@ -813,7 +745,7 @@ program.option('-V', 'output the version');
       var migrationFolder = path.dirname(targetFilePath);
 
       // Find the context snapshot within the same migrations folder
-      var snapshotMatches = globSearch.sync(`**/*_contextSnapShot.json`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
+      var snapshotMatches = globSync(`**/*_contextSnapShot.json`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
       var snapshotFile = snapshotMatches && snapshotMatches[0] ? path.resolve(migrationFolder, snapshotMatches[0]) : null;
       if(!snapshotFile){
         console.log("Error - Cannot read or find Context snapshot in migration folder.");
@@ -822,14 +754,14 @@ program.option('-V', 'output the version');
 
       var contextSnapshot;
       try{
-        contextSnapshot = require(snapshotFile);
+        contextSnapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${snapshotFile}'.`);
         return;
       }
 
       // Get all migration files in this folder
-      var allMigrationFiles = globSearch.sync(`**/*_migration.js`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
+      var allMigrationFiles = globSync(`**/*_migration.js`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(allMigrationFiles && allMigrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         return;
@@ -922,7 +854,7 @@ program.option('-V', 'output the version');
     var executedLocation = process.cwd();
     var contextInstances = [];
     try{
-      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations-all first.');
         return;
@@ -932,7 +864,7 @@ program.option('-V', 'output the version');
         try{
           const snapFile = path.resolve(executedLocation, snapRel);
           let cs;
-          try{ cs = require(snapFile); }catch(_){ continue; }
+          try{ cs = JSON.parse(fs.readFileSync(snapFile, 'utf8')); }catch(_){ continue; }
           const snapDir = path.dirname(snapFile);
           const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
           const migBase = path.resolve(snapDir, cs.migrationFolder || '.');
@@ -964,8 +896,7 @@ program.option('-V', 'output the version');
             console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
             continue;
           }
-          var moduleType = __detectHostModuleType(path.dirname(contextAbs));
-          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig, null, moduleType);
+          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig, null);
           if(!fs.existsSync(migBase)){
             try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
           }
@@ -1009,7 +940,7 @@ program.option('-V', 'output the version');
     var contextInstances = [];
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
-      var snapshotFiles = globSearch.sync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      var snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
@@ -1019,18 +950,18 @@ program.option('-V', 'output the version');
       for(const snapRel of snapshotFiles){
         const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
-        try{ cs = require(snapFile); }catch(_){ continue; }
+        try{ cs = JSON.parse(fs.readFileSync(snapFile, 'utf8')); }catch(_){ continue; }
         const snapDir = path.dirname(snapFile);
         const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
         let migBase = path.resolve(snapDir, cs.migrationFolder || '.');
         const nameFromPath = path.basename(snapFile).replace(/_contextSnapShot\.json$/i, '').toLowerCase();
         const ctxName = contextAbs ? path.basename(contextAbs).replace(/\.js$/i, '').toLowerCase() : nameFromPath;
         // Find migrations in snapshot's migrationFolder; fallback to <ContextDir>/db/migrations
-        let migRel = globSearch.sync('**/*_migration.js', { cwd: migBase, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+        let migRel = globSync('**/*_migration.js', { cwd: migBase, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
         if(!(migRel && migRel.length)){
           // Fallback: find migrations directory using shared utility (prevents duplicate paths)
           const defaultFolder = resolveMigrationsDirectory(contextAbs || snapFile);
-          migRel = globSearch.sync('**/*_migration.js', { cwd: defaultFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+          migRel = globSync('**/*_migration.js', { cwd: defaultFolder, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
           if(migRel && migRel.length){ migBase = defaultFolder; }
         }
         const migs = migRel.map(f => path.resolve(migBase, f));
@@ -1119,7 +1050,7 @@ program.option('-V', 'output the version');
     var executedLocation = process.cwd();
     try{
       // Find candidate Context files
-      var candidates = globSearch.sync('**/*Context.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+      var candidates = globSync('**/*Context.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
       if(!(candidates && candidates.length)){
         console.log('No Context files found.');
         return;
@@ -1135,7 +1066,7 @@ program.option('-V', 'output the version');
           // Heuristic filter: file must look like a MasterRecord context
           let text = '';
           try{ text = fs.readFileSync(abs, 'utf8'); }catch(_){ continue; }
-          const looksLikeContext = /extends\s+masterrecord\.context/i.test(text) || /require\(['"]masterrecord['"]\)/i.test(text);
+          const looksLikeContext = /extends\s+masterrecord\.context/i.test(text) || /import\s+masterrecord\s+from\s+['"]masterrecord['"]/i.test(text);
           if(!looksLikeContext){ continue; }
           const ctxName = path.basename(abs).replace(/\.js$/i,'');
           const key = ctxName.toLowerCase();

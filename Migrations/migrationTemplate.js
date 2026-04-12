@@ -1,9 +1,8 @@
-
-
 // https://channel9.msdn.com/Blogs/EF/Migrations-Under-the-Hood
-// version 0.0.3
+// version 0.0.4
 
-const os = require('os');
+import os from 'node:os';
+
 class MigrationTemplate {
 
     constructor(name) {
@@ -14,17 +13,10 @@ class MigrationTemplate {
     #down = ''
 
     /**
-     * Render the migration file source.
-     *
-     * @param {'esm'|'cjs'} [moduleType='cjs'] - Module type of the host project.
-     *   When 'esm' the file is emitted with ESM syntax so it can be loaded in
-     *   a `"type": "module"` project. When 'cjs' (default) it's emitted with
-     *   CJS syntax for backward compatibility with existing projects.
+     * Render the migration file source (ESM only).
      */
-    get(moduleType = 'cjs'){
-        if (moduleType === 'esm') {
-            return `
-import masterrecord from 'masterrecord';
+    get(){
+        return `import masterrecord from 'masterrecord';
 
 class ${this.name} extends masterrecord.schema {
     constructor(context){
@@ -42,30 +34,7 @@ class ${this.name} extends masterrecord.schema {
     }
 }
 export default ${this.name};
-        `;
-        }
-
-        return `
-
-var masterrecord = require('masterrecord');
-
-class ${this.name} extends masterrecord.schema {
-    constructor(context){
-        super(context);
-    }
-
-    async up(table){
-        await this.init(table);
-        ${this.#up}
-    }
-
-    async down(table){
-        await this.init(table);
-        ${this.#down}
-    }
-}
-module.exports = ${this.name};
-        `
+`;
     }
 
     alterColumn(type, name, parent){
@@ -329,5 +298,5 @@ module.exports = ${this.name};
 
 }
 
-module.exports = MigrationTemplate;
+export default MigrationTemplate;
 

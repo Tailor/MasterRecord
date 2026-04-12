@@ -13,7 +13,7 @@ npm install pg@^8.16.3
 ### 1. Initialize PostgreSQL Connection
 
 ```javascript
-const context = require('masterrecord/context');
+import context from 'masterrecord/context';
 
 // Create a new context
 const db = new context();
@@ -105,7 +105,7 @@ await db.saveChanges();
 ### Transactions
 
 ```javascript
-const PostgresSyncConnect = require('masterrecord/postgresSyncConnect');
+import PostgresSyncConnect from 'masterrecord/postgresSyncConnect';
 
 const connection = new PostgresSyncConnect();
 await connection.connect(config);
@@ -347,12 +347,12 @@ node test/postgresIntegrationTest.js
 - **MasterRecord**: 0.3.0+
 - **pg (node-postgres)**: 8.16.3+
 - **PostgreSQL Server**: 9.6+ (tested with 12+, 13+, 14+)
-- **Node.js**: 14+ (async/await support required)
+- **Node.js**: 20+ (ESM-only package)
 
 ## Complete Example
 
 ```javascript
-const context = require('masterrecord/context');
+import context from 'masterrecord/context';
 
 async function main() {
     // Initialize

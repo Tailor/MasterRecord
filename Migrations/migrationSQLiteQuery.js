@@ -371,7 +371,7 @@ class migrationSQLiteQuery {
 }
 
 
-module.exports = migrationSQLiteQuery; 
+export default migrationSQLiteQuery;
 
 
 /*

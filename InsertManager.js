@@ -1,8 +1,7 @@
-'use strict';
-
 // version 1.0.0 - FAANG-level refactor
-const tools = require('./Tools');
-const queryScript = require('masterrecord/QueryLanguage/queryScript');
+import tools from './Tools.js';
+import queryScript from './QueryLanguage/queryScript.js';
+import FieldTransformer from './Entity/fieldTransformer.js';
 
 // Constants
 const TIMESTAMP_FIELDS = {
@@ -352,27 +351,36 @@ class InsertManager {
             if (!isRelationship) {
                 const val = currentRealModel[entity];
                 if (val != null && typeof val === 'object') {
-                    // Always reject Promises — a set() transform cannot meaningfully handle them
+                    // Always reject Promises — no transform/set can meaningfully handle them
                     if (typeof val.then === 'function') {
                         const entityName = entityModel.__name || 'unknown';
                         this._errorModel.isValid = false;
                         this._errorModel.errors.push(
                             `Property '${entity}' on entity '${entityName}' contains a Promise. Did you forget to await an async call?`
                         );
-                    } else if (!currentEntity.set) {
-                        // Only flag Array/Object when there is no custom set() transform,
-                        // since the setter may serialize them to a scalar (e.g. JSON.stringify)
-                        const entityName = entityModel.__name || 'unknown';
-                        if (Array.isArray(val)) {
-                            this._errorModel.isValid = false;
-                            this._errorModel.errors.push(
-                                `Property '${entity}' on entity '${entityName}' contains an Array, expected a scalar value`
-                            );
-                        } else if (!(val instanceof Date)) {
-                            this._errorModel.isValid = false;
-                            this._errorModel.errors.push(
-                                `Property '${entity}' on entity '${entityName}' contains an Object, expected a scalar value`
-                            );
+                    } else {
+                        // Allow Array/Object if the field has any serializer that can
+                        // turn it into a scalar before the SQL insert runs:
+                        //   - legacy set() transform (currentEntity.set)
+                        //   - field transformer (currentEntity.transform.toDatabase)
+                        const hasLegacySet = typeof currentEntity.set === 'function';
+                        const hasTransformer = FieldTransformer.hasTransformer(currentEntity)
+                            && typeof currentEntity.transform.toDatabase === 'function';
+                        const canSerialize = hasLegacySet || hasTransformer;
+
+                        if (!canSerialize && !(val instanceof Date)) {
+                            const entityName = entityModel.__name || 'unknown';
+                            if (Array.isArray(val)) {
+                                this._errorModel.isValid = false;
+                                this._errorModel.errors.push(
+                                    `Property '${entity}' on entity '${entityName}' contains an Array, expected a scalar value`
+                                );
+                            } else {
+                                this._errorModel.isValid = false;
+                                this._errorModel.errors.push(
+                                    `Property '${entity}' on entity '${entityName}' contains an Object, expected a scalar value`
+                                );
+                            }
                         }
                     }
                 }
@@ -441,4 +449,4 @@ class InsertManager {
     }
 }
 
-module.exports = InsertManager;
+export default InsertManager;

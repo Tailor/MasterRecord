@@ -105,4 +105,4 @@ class DependencyGraph {
     }
 }
 
-module.exports = DependencyGraph;
+export default DependencyGraph;

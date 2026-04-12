@@ -1,6 +1,35 @@
-# MasterRecord v1.0.0 - FAANG-Level Improvements
+# MasterRecord Changelog
 
-## Summary
+## v1.0.0 — ESM-only
+
+**BREAKING:** MasterRecord is now a pure ECMAScript Modules (ESM) package.
+
+- `package.json` declares `"type": "module"` and publishes an `exports` map.
+- Requires **Node.js 20 or newer**.
+- All sources converted from `require` / `module.exports` to `import` / `export default`.
+- `context.js` imports the SQLite driver (`better-sqlite3`) statically at the top of the module instead of `require(sqlName)` at runtime.
+- Environment config files (`env.*.json`) and migration snapshot files (`*_contextSnapShot.json`) are now loaded with `fs.readFileSync` + `JSON.parse` instead of `require()`, keeping `context.env()` synchronous.
+- User-authored migration files are loaded via `await import(pathToFileURL(file).href)` — `Migrations/cli.js` has always had this path; the CJS `Module.prototype.require` hook that aliased `require('masterrecord')` to the globally installed package has been removed. Host projects must install masterrecord as a local dependency.
+- `Migrations/migrationTemplate.js` always emits ESM migrations (`import masterrecord from 'masterrecord'; … export default <Name>;`). The CJS branch and `moduleType` parameter are gone.
+- `context.js` exports the default class plus named error classes (`ContextError`, `ConfigurationError`, `DatabaseConnectionError`, `EntityValidationError`) and the internal `_poolKey` helper.
+- `Cache/QueryCache.js` background cleanup timer is now `.unref()`'d so it no longer keeps the Node event loop alive after user code finishes.
+- `.eslintrc.js` / `.prettierrc.js` replaced with flat ESM configs (`eslint.config.js`, `prettier.config.js`).
+- Test suite rewritten on top of Node's built-in `node --test` runner (`npm test`).
+- Documentation (`readme.md`, `docs/MIGRATIONS_GUIDE.md`, `docs/POSTGRESQL_SETUP.md`, `docs/QUERY_CACHING_GUIDE.md`, `FOREIGN_KEY_STRING_FIX.md`) updated to ESM syntax throughout.
+
+### Migration guide for consumers
+
+1. Bump your Node.js runtime to 20+.
+2. Add `"type": "module"` to your application's `package.json`.
+3. Replace `const X = require('masterrecord/…')` with `import X from 'masterrecord/…'`.
+4. Replace `module.exports = MyContext` with `export default MyContext`.
+5. Add `.js` extensions to all relative import paths (ESM requires explicit extensions).
+6. Regenerate any existing migration files (or rewrite the top/bottom: `import masterrecord from 'masterrecord';` … `export default <Name>;`).
+
+---
+
+## Previous: v0.x — FAANG-Level Improvements
+
 Updated `context.js` and `deleteManager.js` to meet Google/Meta/Amazon engineering standards with critical bug fixes, input validation, and performance improvements.
 
 ## Critical Fixes Applied

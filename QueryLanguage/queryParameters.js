@@ -133,4 +133,4 @@ class QueryParameters {
     }
 }
 
-module.exports = QueryParameters;
+export default QueryParameters;

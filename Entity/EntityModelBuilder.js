@@ -1,6 +1,6 @@
 // version 0.0.3
 
-var modelDB  = require('./entityModel');
+import modelDB from './entityModel.js';
 
 // creates new instance if entity model and calls inner functions to build out a valid entity
 class EntityModelBuilder {
@@ -102,4 +102,4 @@ class EntityModelBuilder {
 
 }
 
-module.exports = EntityModelBuilder;
+export default EntityModelBuilder;

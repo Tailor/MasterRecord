@@ -1,8 +1,8 @@
 
 // version 0.0.16
-var entityTrackerModel = require('masterrecord/Entity/entityTrackerModel');
-var tools = require('masterrecord/Tools');
-var queryScript = require('masterrecord/QueryLanguage/queryScript');
+import entityTrackerModel from '../Entity/entityTrackerModel.js';
+import tools from '../Tools.js';
+import queryScript from './queryScript.js';
 
 class queryMethods{
 
@@ -881,5 +881,5 @@ class queryMethods{
     }
 }
 
-module.exports = queryMethods;
+export default queryMethods;
 

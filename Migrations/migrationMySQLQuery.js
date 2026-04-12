@@ -416,7 +416,7 @@ class migrationMySQLQuery {
 }
 
 
-module.exports = migrationMySQLQuery; 
+export default migrationMySQLQuery;
 
 /**
  * 

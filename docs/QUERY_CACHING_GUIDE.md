@@ -12,8 +12,8 @@ MasterRecord's query caching works like **Active Record** in Rails:
 ### 1. Express Middleware (Recommended)
 
 ```javascript
-const express = require('express');
-const AppContext = require('./models/AppContext');
+import express from 'express';
+import AppContext from './models/AppContext.js';
 
 const app = express();
 
@@ -30,9 +30,9 @@ app.use((req, res, next) => {
 });
 
 // Routes
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
     // Opt-in caching with .cache()
-    const categories = req.db.Categories.cache().toList();
+    const categories = await req.db.Categories.cache().toList();
     res.json(categories);
     // Cache auto-cleared after response
 });
@@ -130,8 +130,8 @@ const transactions = db.Transactions
 ### Example 1: E-Commerce API
 
 ```javascript
-const express = require('express');
-const AppContext = require('./models/AppContext');
+import express from 'express';
+import AppContext from './models/AppContext.js';
 
 const app = express();
 
@@ -322,7 +322,8 @@ const cats = db.Categories.cache().toList();
 ### Unit Tests
 
 ```javascript
-const AppContext = require('../models/AppContext');
+import { describe, test, beforeEach, afterEach } from 'node:test';
+import AppContext from '../models/AppContext.js';
 
 describe('Category API', () => {
     let db;
