@@ -198,8 +198,10 @@ class postgresEngine {
                     query.count = "none";
                 }
                 const entityAlias = this.getEntity(entity.__name, query.entityMap);
+                // Include buildAnd so chained .and() calls survive into the
+                // COUNT SQL. Without this they were silently dropped.
                 queryString = {
-                    query: `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)}`,
+                    query: `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`,
                     params: query.parameters ? query.parameters.getParams() : []
                 };
             }
@@ -260,7 +262,9 @@ class postgresEngine {
         const entityStr = this.getEntity(entity.__name, query.entityMap);
         const params = query.parameters ? query.parameters.getParams() : [];
 
-        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)} ${this.buildOrderBy(query, entity)}`;
+        // Standard SQL clause order: SELECT ... FROM ... WHERE ... AND ... ORDER BY ... LIMIT ... OFFSET ...
+        // The previous order placed LIMIT/OFFSET before ORDER BY, which Postgres rejects as a syntax error.
+        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildOrderBy(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)}`;
 
         return {
             query: sql,
@@ -268,9 +272,16 @@ class postgresEngine {
         };
     }
 
+    /**
+     * Build the column list after SELECT. If the user called `.select()`,
+     * `query.select` is a cachedExpr object with `selectFields` (not a string)
+     * — the previous implementation returned the object directly, which
+     * stringified to "[object Object]" and broke the query.
+     */
     buildSelectString(query, entity) {
-        if (query.select) {
-            return query.select;
+        if (query.select && query.select.selectFields && query.select.selectFields.length > 0) {
+            const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
+            return query.select.selectFields.map(f => `${alias}.${f}`).join(', ');
         }
         return `${tools.convertEntityToSelectParameterString(entity)}`;
     }
@@ -414,23 +425,39 @@ class postgresEngine {
         return "";
     }
 
+    /**
+     * Build ORDER BY clause from query.orderBy or query.orderByDesc.
+     * Both are objects shaped like `{ selectFields: ['col1', 'col2'], ... }`
+     * (see QueryLanguage/queryScript.js buildScript()). The previous
+     * implementation treated `query.orderBy` as a plain string and silently
+     * dropped the clause because the fluent API never produces that shape.
+     */
     buildOrderBy(query, entity) {
-        if (query.orderBy) {
-            // Security: Validate field exists in entity
-            if (entity && !entity[query.orderBy]) {
-                throw new Error(`Invalid ORDER BY field: ${query.orderBy} not found in ${entity.__name || 'entity'}`);
-            }
-            const entityStr = this.getEntity(query.parentName, query.entityMap);
-            return `ORDER BY ${entityStr}.${query.orderBy} ASC`;
-        } else if (query.orderByDescending) {
-            // Security: Validate field exists in entity
-            if (entity && !entity[query.orderByDescending]) {
-                throw new Error(`Invalid ORDER BY field: ${query.orderByDescending} not found in ${entity.__name || 'entity'}`);
-            }
-            const entityStr = this.getEntity(query.parentName, query.entityMap);
-            return `ORDER BY ${entityStr}.${query.orderByDescending} DESC`;
+        let orderByType = "ASC";
+        let orderByEntity = query.orderBy;
+        if (orderByEntity === false || orderByEntity === undefined) {
+            orderByType = "DESC";
+            orderByEntity = query.orderByDesc;
         }
-        return "";
+        if (!orderByEntity) return "";
+
+        // Security: Validate field exists in entity before interpolating into SQL.
+        if (entity && orderByEntity.selectFields) {
+            for (const item in orderByEntity.selectFields) {
+                const field = orderByEntity.selectFields[item];
+                if (!entity[field]) {
+                    throw new Error(`Invalid ORDER BY field: ${field} not found in ${entity.__name || 'entity'}`);
+                }
+            }
+        }
+
+        const entityStr = this.getEntity(query.parentName, query.entityMap);
+        const fieldList = [];
+        for (const item in orderByEntity.selectFields) {
+            fieldList.push(`${entityStr}.${orderByEntity.selectFields[item]}`);
+        }
+        if (fieldList.length === 0) return "";
+        return `ORDER BY ${fieldList.join(', ')} ${orderByType}`;
     }
 
     getEntity(name, list) {

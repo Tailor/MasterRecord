@@ -180,7 +180,10 @@ class SQLLiteEngine {
                     query.count = "none";
                 }
                 queryString.entity = this.getEntity(entity.__name, query.entityMap);
-                queryString.query = `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)}`
+                // Include buildAnd so chained .and() calls (separate from
+                // .where()) survive into the COUNT SQL. Without this they
+                // were silently dropped.
+                queryString.query = `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`
             }
             if(queryString.query){
                 var queryCount = queryString.query

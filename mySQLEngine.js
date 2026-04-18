@@ -156,26 +156,32 @@ class MySQLEngine {
     }
 
     /**
-     * SELECT COUNT
+     * SELECT COUNT. Builds the SQL inline (like SQLite/Postgres do) instead
+     * of trying to regex-wrap the full SELECT from buildQuery — the old code
+     * called `queryObject.count(sqlString)` which is a queryScript builder
+     * method (expects a lambda), not a SQL wrapper; the return value was the
+     * queryScript object and running it as SQL produced "[object Object]".
      */
     async getCount(queryObject, entity, context) {
         const query = queryObject.script;
         try {
-            let queryString;
+            let sql;
             if (query.raw) {
-                queryString = { query: query.raw };
+                sql = query.raw;
             } else {
-                queryString = this.buildQuery(query, entity, context);
+                if (query.count === undefined) {
+                    query.count = "none";
+                }
+                sql = `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`;
             }
 
-            if (queryString.query) {
-                const queryCount = queryObject.count(queryString.query);
+            if (sql) {
                 const params = query.parameters ? query.parameters.getParams() : [];
                 if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryCount);
+                    console.debug("[SQL]", sql);
                     console.debug("[Params]", params);
                 }
-                const result = await this._runWithParams(queryCount, params);
+                const result = await this._runWithParams(sql, params);
                 return result[0] || null;
             }
             return null;
@@ -183,6 +189,20 @@ class MySQLEngine {
             console.error('MySQL getCount error:', err);
             return null;
         }
+    }
+
+    /**
+     * Build COUNT(...) fragment for SELECT ... COUNT(...) FROM ...
+     * Matches the SQLite/Postgres engine contract.
+     */
+    buildCount(query, entity) {
+        const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
+        if (!query.count) return "";
+        if (query.count === "none") return `COUNT(*)`;
+        // query.count is a cachedExpr with selectFields when set via `.count(l => l.field)`.
+        const field = query.count.selectFields && query.count.selectFields[0];
+        if (!field) return `COUNT(*)`;
+        return `COUNT(${alias}.\`${field}\`)`;
     }
 
     /**
@@ -260,14 +280,119 @@ class MySQLEngine {
             select: this.buildSelect(query, entity),
             from: this.buildFrom(query, entity),
             include: this.buildInclude(query, entity, context, {}),
-            where: this.buildWhere(query, entity)
+            where: this.buildWhere(query, entity),
+            and: this.buildAnd(query, entity),
+            orderBy: this.buildOrderBy(query, entity),
+            take: this.buildTake(query),
+            skip: this.buildSkip(query)
         };
 
-        const queryString = `${queryObject.select} ${queryObject.from} ${queryObject.include} ${queryObject.where}`;
+        const queryString = `${queryObject.select} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
         return {
             query: queryString,
             entity: this.getEntity(entity.__name, query.entityMap)
         };
+    }
+
+    /**
+     * Build ORDER BY clause from query.orderBy or query.orderByDesc.
+     * Both are objects shaped like `{ selectFields: ['col1', 'col2'], ... }`
+     * (see QueryLanguage/queryScript.js buildScript()).
+     */
+    buildOrderBy(query, entity) {
+        let orderByType = "ASC";
+        let orderByEntity = query.orderBy;
+        if (orderByEntity === false || orderByEntity === undefined) {
+            orderByType = "DESC";
+            orderByEntity = query.orderByDesc;
+        }
+        if (!orderByEntity) return "";
+
+        // Security: Validate field exists in entity before interpolating into SQL.
+        if (entity && orderByEntity.selectFields) {
+            for (const item in orderByEntity.selectFields) {
+                const field = orderByEntity.selectFields[item];
+                if (!entity[field]) {
+                    throw new Error(`Invalid ORDER BY field: ${field} not found in ${entity.__name || 'entity'}`);
+                }
+            }
+        }
+
+        const entityAlias = this.getEntity(query.parentName, query.entityMap);
+        const fieldList = [];
+        for (const item in orderByEntity.selectFields) {
+            fieldList.push(`${entityAlias}.\`${orderByEntity.selectFields[item]}\``);
+        }
+        if (fieldList.length === 0) return "";
+        return `ORDER BY ${fieldList.join(', ')} ${orderByType}`;
+    }
+
+    buildTake(query) {
+        if (query.take) {
+            return `LIMIT ${Number(query.take)}`;
+        }
+        return "";
+    }
+
+    buildSkip(query) {
+        if (query.skip) {
+            return `OFFSET ${Number(query.skip)}`;
+        }
+        return "";
+    }
+
+    /**
+     * Build chained AND clause from query.and (array of cachedExpr objects).
+     * Produces "AND <expr> AND <expr>" that appends to the WHERE clause.
+     */
+    buildAnd(query, mainQuery) {
+        const andEntity = query.and;
+        const $that = this;
+        if (!andEntity) return "";
+
+        let entity = this.getEntity(query.parentName, query.entityMap);
+        const andList = [];
+
+        for (const entityPart in andEntity) {
+            const itemEntity = andEntity[entityPart];
+            for (const table in itemEntity[query.parentName]) {
+                const item = itemEntity[query.parentName][table];
+                const expressions = [];
+                for (const exp in item.expressions) {
+                    let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                    if (mainQuery[field] && mainQuery[field].isNavigational) {
+                        entity = $that.getEntity(field, query.entityMap);
+                        field = item.fields[1];
+                    }
+
+                    let func = item.expressions[exp].func;
+                    const arg = item.expressions[exp].arg;
+
+                    if (arg === "null") {
+                        if (func === "=") func = "IS";
+                        if (func === "!=") func = "IS NOT";
+                        expressions.push(`${entity}.\`${field}\` ${func} ${arg}`);
+                    } else {
+                        // arg may be a parameterized placeholder (?, $1, (?, ?, ?))
+                        // or a literal value quoted with single quotes.
+                        const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg) || /^\(.*\)$/.test(arg));
+                        if (isPlaceholder || func === "IN") {
+                            expressions.push(`${entity}.\`${field}\` ${func} ${arg}`);
+                        } else {
+                            expressions.push(`${entity}.\`${field}\` ${func} '${arg}'`);
+                        }
+                    }
+                }
+                if (expressions.length > 0) {
+                    andList.push(expressions.join(" AND "));
+                }
+            }
+        }
+
+        if (andList.length > 0) {
+            return `AND ${andList.join(" AND ")}`;
+        }
+        return "";
     }
 
     buildSelect(query, entity) {
