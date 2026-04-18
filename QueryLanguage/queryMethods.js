@@ -609,7 +609,15 @@ class queryMethods{
                                     }
                                 }
 
-                                this.__proto__["_" + fname] = value;
+                                // Apply fieldDef.set transform if the entity defines one — the
+                                // tracker-entity setter (entityTrackerModel.build) already does
+                                // this on UPDATE; we need the same behavior on INSERT so values
+                                // normalize consistently regardless of which path created them.
+                                if (fieldDef && typeof fieldDef.set === 'function') {
+                                    this.__proto__["_" + fname] = fieldDef.set(value);
+                                } else {
+                                    this.__proto__["_" + fname] = value;
+                                }
                                 if(!this.__dirtyFields.includes(fname)){
                                     this.__dirtyFields.push(fname);
                                 }

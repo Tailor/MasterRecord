@@ -1699,9 +1699,14 @@ class context {
         }
 
         if (entities.length === 1) {
-            // Single update - use existing logic
+            // Single update - use existing logic.
+            // NOTE: the second argument must be `__entity` (double underscore).
+            // The previous code used `_entity` which is undefined, so
+            // `removePrimarykeyandVirtual` received `undefined` and stripped
+            // nothing — a latent bug that left primary-key/virtual fields in
+            // the UPDATE SET clause if they ever landed in __dirtyFields.
             const currentModel = entities[0];
-            const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+            const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel.__entity);
             const argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
 
             if (argu !== -1) {
@@ -1721,7 +1726,7 @@ class context {
             const updateQueries = [];
 
             for (const currentModel of entities) {
-                const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel._entity);
+                const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel.__entity);
                 const argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
 
                 if (argu !== -1) {
@@ -1753,6 +1758,18 @@ class context {
             if (typeof entity.afterSave === 'function') {
                 await entity.afterSave.call(entity);
             }
+        }
+
+        // Reset tracker state on the entity itself so a subsequent
+        // saveChanges() doesn't re-emit the same UPDATE for the same fields.
+        // Previously only _processBatchInserts did this, not updates —
+        // leaving __state="modified" and __dirtyFields populated. On the
+        // next modification of a different field, the stale fields would
+        // be re-written, silently overwriting any concurrent external
+        // changes to those columns.
+        for (const entity of entities) {
+            entity.__state = 'track';
+            entity.__dirtyFields = [];
         }
     }
 

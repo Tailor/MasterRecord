@@ -108,7 +108,14 @@ class EntityTrackerModel {
                         }
 
                         modelClass.__state = "modified";
-                        modelClass.__dirtyFields.push(modelField);
+                        // Deduplicate: setting the same field twice used to push
+                        // the name twice, producing duplicate assignments in the
+                        // UPDATE SET clause (`SET col = ?, col = ?`) which is a
+                        // hard error in Postgres and may silently take-last in
+                        // MySQL/SQLite.
+                        if (!modelClass.__dirtyFields.includes(modelField)) {
+                            modelClass.__dirtyFields.push(modelField);
+                        }
                         // ensure this entity is tracked on any modification
                         if(modelClass.__context && typeof modelClass.__context.__track === 'function'){
                             modelClass.__context.__track(modelClass);
