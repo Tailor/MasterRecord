@@ -171,6 +171,14 @@ class queryMethods{
             this.__queryObject.count(str, this.__entity.__name);
         }
 
+        // Bootstrap the entityMap if no prior clause was chained. Without
+        // this, a plain `.count()` produced empty FROM/alias on SQLite and
+        // silently returned 1 (the row count of a no-FROM SELECT). `.single()`
+        // and `.toList()` already do this bootstrap — count() was the gap.
+        if(this.__queryObject.script.entityMap.length === 0){
+            this.__queryObject.skipClause(this.__entity.__name);
+        }
+
         await this.__context._ensureReady();
 
         if(this.__context.isSQLite){

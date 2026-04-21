@@ -577,7 +577,12 @@ class SQLLiteEngine {
                 return map.entity
             }
         }
-        return "";
+        // Fallthrough: return the input name so buildFrom/buildSelect still
+        // produce valid SQL when entityMap has not been populated (e.g. a
+        // `.count()` with no prior `.where()`). Returning "" used to produce
+        // `SELECT COUNT(*)` with no FROM clause, which silently returned 1.
+        // MySQL/Postgres getEntity already have this fallthrough.
+        return name || "";
     }
 
  // return a list of entity names and skip foreign keys and underscore.
