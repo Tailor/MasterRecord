@@ -256,6 +256,21 @@ class postgresEngine {
     }
 
     /**
+     * Introspection: Check if a table exists in the current Postgres schema.
+     * Mirrors the SQLite/MySQL engines so migration code and the CLI's
+     * migration tracker can call it uniformly across all three drivers.
+     */
+    async tableExists(tableName) {
+        try {
+            const sql = `SELECT 1 FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_name = $1 LIMIT 1`;
+            const result = await this._runWithParams(sql, [tableName]);
+            return !!(result && result.rows && result.rows.length > 0);
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
      * Build complete SELECT query with parameters
      */
     buildQuery(query, entity, context) {

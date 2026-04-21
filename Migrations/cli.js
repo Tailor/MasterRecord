@@ -42,6 +42,77 @@ function __getMigrationTimestamp(file){
   }
 }
 
+// ============================================================================
+// Migration tracking — one row per applied migration filename.
+// Without this, update-database cannot tell which files are pending, so it
+// used to run only the last one and silently skip the rest.
+// ============================================================================
+
+const __MIGRATIONS_TABLE__ = '_masterrecord_migrations';
+
+async function __ensureMigrationsTable(ctx){
+  const engine = ctx._SQLEngine;
+  if (ctx.isSQLite) {
+    await ctx._execute(`CREATE TABLE IF NOT EXISTS [${__MIGRATIONS_TABLE__}] (
+      migration_name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )`);
+  } else if (ctx.isMySQL) {
+    await ctx._execute(`CREATE TABLE IF NOT EXISTS \`${__MIGRATIONS_TABLE__}\` (
+      migration_name VARCHAR(255) PRIMARY KEY,
+      applied_at VARCHAR(64) NOT NULL
+    )`);
+  } else if (ctx.isPostgres) {
+    await ctx._execute(`CREATE TABLE IF NOT EXISTS "${__MIGRATIONS_TABLE__}" (
+      migration_name VARCHAR(255) PRIMARY KEY,
+      applied_at VARCHAR(64) NOT NULL
+    )`);
+  }
+}
+
+async function __getAppliedMigrations(ctx){
+  const applied = new Set();
+  const engine = ctx._SQLEngine;
+  let rows;
+  try {
+    if (ctx.isSQLite) {
+      rows = engine.db.prepare(`SELECT migration_name FROM [${__MIGRATIONS_TABLE__}]`).all();
+    } else if (ctx.isMySQL) {
+      rows = await engine._runWithParams(`SELECT migration_name FROM \`${__MIGRATIONS_TABLE__}\``, []);
+    } else if (ctx.isPostgres) {
+      const r = await engine._runWithParams(`SELECT migration_name FROM "${__MIGRATIONS_TABLE__}"`, []);
+      rows = r && r.rows ? r.rows : [];
+    }
+  } catch (_) {
+    rows = [];
+  }
+  for (const r of (rows || [])) {
+    if (r && r.migration_name) applied.add(r.migration_name);
+  }
+  return applied;
+}
+
+async function __recordMigrationApplied(ctx, migrationName){
+  const appliedAt = new Date().toISOString();
+  if (ctx.isSQLite) {
+    await ctx._execute(`INSERT INTO [${__MIGRATIONS_TABLE__}] (migration_name, applied_at) VALUES (?, ?)`, [migrationName, appliedAt]);
+  } else if (ctx.isMySQL) {
+    await ctx._execute(`INSERT INTO \`${__MIGRATIONS_TABLE__}\` (migration_name, applied_at) VALUES (?, ?)`, [migrationName, appliedAt]);
+  } else if (ctx.isPostgres) {
+    await ctx._execute(`INSERT INTO "${__MIGRATIONS_TABLE__}" (migration_name, applied_at) VALUES ($1, $2)`, [migrationName, appliedAt]);
+  }
+}
+
+async function __removeMigrationApplied(ctx, migrationName){
+  if (ctx.isSQLite) {
+    await ctx._execute(`DELETE FROM [${__MIGRATIONS_TABLE__}] WHERE migration_name = ?`, [migrationName]);
+  } else if (ctx.isMySQL) {
+    await ctx._execute(`DELETE FROM \`${__MIGRATIONS_TABLE__}\` WHERE migration_name = ?`, [migrationName]);
+  } else if (ctx.isPostgres) {
+    await ctx._execute(`DELETE FROM "${__MIGRATIONS_TABLE__}" WHERE migration_name = $1`, [migrationName]);
+  }
+}
+
 // Helper to cleanup context and exit
 async function __cleanupAndExit(contextInstance, exitCode = 0) {
   try {
@@ -360,23 +431,22 @@ program.option('-V', 'output the version');
            await __cleanupAndExit(contextInstance, 1);
          }
 
-         // sort by timestamp prefix or file mtime as fallback
+         // Sort by timestamp prefix (filename convention) or file mtime as fallback.
+         // Then run EVERY pending migration in order, not just the last one —
+         // the old behavior silently skipped earlier pending migrations when a
+         // user had stacked multiple add-migration calls before deploying.
          var mFiles = migrationFiles.slice().sort(function(a, b){
            return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
          });
-         var mFile = mFiles[mFiles.length -1];
-         console.log(`✓ Found ${mFiles.length} migration file(s), using latest: ${path.basename(mFile)}`);
+         console.log(`✓ Found ${mFiles.length} migration file(s)`);
 
          console.log(`\n🔍 Loading Context file from: ${contextAbs}`);
-         var migrationProjectFile;
          var ContextCtor;
          try{
-           migrationProjectFile = await __loadUserModule(mFile);
            ContextCtor = await __loadUserModule(contextAbs);
          }catch(err){
-           console.error(`\n❌ Error - Cannot load Context or migration file`);
+           console.error(`\n❌ Error - Cannot load Context file`);
            console.error(`\nContext file: ${contextAbs}`);
-           console.error(`Migration file: ${mFile}`);
            console.error(`\nDetails: ${err.message}`);
            if(err.stack){
              console.error(`\nStack trace:`);
@@ -390,6 +460,11 @@ program.option('-V', 'output the version');
 
          try{
            contextInstance = new ContextCtor();
+           // MySQL/Postgres initialize asynchronously — wait for the pool
+           // before we can run any migration queries against it.
+           if (contextInstance && contextInstance._initPromise) {
+             await contextInstance._initPromise;
+           }
          }catch(err){
            console.error(`\n❌ Error - Failed to instantiate Context`);
            console.error(`\nContext file: ${contextAbs}`);
@@ -425,6 +500,8 @@ program.option('-V', 'output the version');
            }
          }else if(contextInstance.isMySQL){
            console.log(`\n📊 Database Type: MySQL`);
+         }else if(contextInstance.isPostgres){
+           console.log(`\n📊 Database Type: PostgreSQL`);
          }
 
          console.log(`\n🔍 Loading entities from context...`);
@@ -439,20 +516,52 @@ program.option('-V', 'output the version');
            console.error(`  this.dbset(Post, 'Post');`);
          }
 
-         console.log(`\n🚀 Running migration...`);
-         try{
-           var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
-           var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
-           await newMigrationProjectInstance.up(tableObj);
-         }catch(err){
-           console.error(`\n❌ Error - Migration failed during execution`);
-           console.error(`\nMigration file: ${mFile}`);
+         // Build tableObj once from the current entity state. All pending
+         // migrations share this object — the old design assumed a single
+         // migration, so there's no historical per-migration tableObj.
+         // Idempotent helpers (createTable checks tableExists; addColumn
+         // no-ops on undefined `table.col`) make this safe in practice.
+         var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+
+         // Bootstrap the migrations tracking table, then filter out any
+         // migrations already applied so re-running update-database is a
+         // no-op. Must run before any migration's `up()`.
+         try {
+           await __ensureMigrationsTable(contextInstance);
+         } catch (err) {
+           console.error(`\n❌ Error - Could not create migration tracking table`);
            console.error(`\nDetails: ${err.message}`);
-           if(err.stack){
-             console.error(`\nStack trace:`);
-             console.error(err.stack);
-           }
            await __cleanupAndExit(contextInstance, 1);
+         }
+
+         const appliedMigrations = await __getAppliedMigrations(contextInstance);
+         const pending = mFiles.filter(f => !appliedMigrations.has(path.basename(f)));
+
+         if (pending.length === 0) {
+           console.log(`\n✓ All migrations already applied (${appliedMigrations.size} on record). Database is up to date.`);
+         } else {
+           console.log(`\n🚀 Running ${pending.length} pending migration(s)...`);
+         }
+
+         for (const mFile of pending) {
+           const migrationName = path.basename(mFile);
+           console.log(`\n  → ${migrationName}`);
+           try {
+             const MigrationCtor = await __loadUserModule(mFile);
+             const instance = new MigrationCtor(ContextCtor);
+             await instance.up(tableObj);
+             await __recordMigrationApplied(contextInstance, migrationName);
+             console.log(`    ✓ applied`);
+           } catch (err) {
+             console.error(`\n❌ Error - Migration '${migrationName}' failed during execution`);
+             console.error(`\nDetails: ${err.message}`);
+             if (err.stack) {
+               console.error(`\nStack trace:`);
+               console.error(err.stack);
+             }
+             console.error(`\n💡 Earlier migrations (if any) were already applied and recorded. Fix the failing migration and re-run update-database to resume from this point.`);
+             await __cleanupAndExit(contextInstance, 1);
+           }
          }
 
          console.log(`\n💾 Updating snapshot...`);
@@ -525,11 +634,11 @@ program.option('-V', 'output the version');
          console.log("Error - Cannot read or find migration file");
          return;
        }
-       // Sort and select latest
+       // Sort so we can find the latest APPLIED migration (not just the
+       // latest on disk) using the tracking table.
        var mFiles = migrationFiles.slice().sort(function(a, b){
          return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
        });
-       var latestFile = mFiles[mFiles.length - 1];
 
        // Prepare context and table object
        let ContextCtor;
@@ -548,6 +657,9 @@ program.option('-V', 'output the version');
        var contextInstance;
        try{
          contextInstance = new ContextCtor();
+         if (contextInstance && contextInstance._initPromise) {
+           await contextInstance._initPromise;
+         }
        }catch(err){
          console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
          console.error(`\nThis usually happens when:`);
@@ -565,12 +677,32 @@ program.option('-V', 'output the version');
        var cleanEntities = migration.cleanEntities(contextInstance.__entities);
        var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
-       var MigCtor = await __loadUserModule(latestFile);
+       // Roll back the most recently APPLIED migration. Falls back to the
+       // latest migration file on disk if the tracking table is missing or
+       // empty (preserves legacy behavior for users who haven't run
+       // update-database under the tracked system yet).
+       await __ensureMigrationsTable(contextInstance);
+       const applied = await __getAppliedMigrations(contextInstance);
+       let rollbackFile;
+       let rollbackName;
+       if (applied.size > 0) {
+         // Pick the applied file with the latest timestamp prefix.
+         const appliedFiles = mFiles.filter(f => applied.has(path.basename(f)));
+         rollbackFile = appliedFiles[appliedFiles.length - 1];
+         rollbackName = path.basename(rollbackFile || mFiles[mFiles.length - 1]);
+       } else {
+         rollbackFile = mFiles[mFiles.length - 1];
+         rollbackName = path.basename(rollbackFile);
+         console.log(`⚠️  No applied-migration record found; falling back to latest file on disk: ${rollbackName}`);
+       }
+
+       var MigCtor = await __loadUserModule(rollbackFile);
        var migInstance = new MigCtor(ContextCtor);
        if(typeof migInstance.down === 'function'){
          await migInstance.down(tableObj);
+         await __removeMigrationApplied(contextInstance, rollbackName);
        }else{
-         console.log(`Warning - Migration '${path.basename(latestFile)}' has no down method; skipping.`);
+         console.log(`Warning - Migration '${rollbackName}' has no down method; skipping.`);
        }
 
        // Update snapshot
