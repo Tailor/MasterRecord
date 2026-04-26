@@ -93,6 +93,12 @@ class migrationMySQLQuery {
             case "text":
                 return "TEXT"
               break;
+            case "mediumtext":
+                return "MEDIUMTEXT"
+              break;
+            case "longtext":
+                return "LONGTEXT"
+              break;
             case "float":
                 return "fLOAT(24)"
               break;

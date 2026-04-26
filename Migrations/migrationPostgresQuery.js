@@ -85,6 +85,10 @@ class migrationPostgresQuery {
             case "string":
                 return "VARCHAR(255)"
             case "text":
+            case "mediumtext":
+            case "longtext":
+                // PostgreSQL TEXT is unlimited — MySQL's MEDIUMTEXT/LONGTEXT
+                // sizing has no analogue here; collapse to TEXT for portability.
                 return "TEXT"
             case "float":
                 return "REAL"  // PostgreSQL uses REAL for single-precision

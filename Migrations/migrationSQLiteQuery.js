@@ -72,18 +72,29 @@ class migrationSQLiteQuery {
             case "string":
                 return "TEXT"
               break;
+            case "text":
+            case "mediumtext":
+            case "longtext":
+                // SQLite TEXT is unlimited — MEDIUMTEXT/LONGTEXT collapse to TEXT
+                // for cross-engine portability. (Previously "text" had no case
+                // here at all, which produced "<colname> undefined NOT NULL"
+                // SQL — accepted by SQLite's lax type affinity but still wrong.)
+                return "TEXT"
+              break;
             case "time":
                 return "TEXT"
               break;
-              case "boolean":
+            case "boolean":
                 return "INTEGER"
               break;
-              case "integer":
+            case "integer":
                 return "INTEGER"
               break;
-          }
-          
-    }  
+            default:
+                // Fallback for unknown types so we never emit `undefined`.
+                return "TEXT"
+        }
+    }
 
     alterColumn(fullTable, table){
         if(table){

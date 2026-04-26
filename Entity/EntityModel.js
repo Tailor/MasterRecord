@@ -64,6 +64,25 @@ class EntityModel {
         return this;
     }
 
+    /**
+     * Medium-length text. On MySQL emits `MEDIUMTEXT` (up to ~16 MB).
+     * On SQLite and PostgreSQL collapses to `TEXT` (already unlimited there),
+     * so the same entity definition works portably across engines.
+     */
+    mediumtext(){
+        this.obj.type = "mediumtext";
+        return this;
+    }
+
+    /**
+     * Long-form text. On MySQL emits `LONGTEXT` (up to ~4 GB).
+     * On SQLite and PostgreSQL collapses to `TEXT` (already unlimited there).
+     */
+    longtext(){
+        this.obj.type = "longtext";
+        return this;
+    }
+
     integer(){
         this.obj.type = "integer";
         return this;

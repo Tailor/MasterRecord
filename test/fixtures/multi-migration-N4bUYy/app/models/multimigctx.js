@@ -17,7 +17,7 @@ class Review {
 class multimigctx extends context {
     constructor() {
         super();
-        this.env("/Users/alexanderrich/Documents/development/opensourceHQ/MasterRecord/test/fixtures/multi-migration-3Rsgm3/config/environments");
+        this.env("/Users/alexanderrich/Documents/development/opensourceHQ/MasterRecord/test/fixtures/multi-migration-N4bUYy/config/environments");
         this.dbset(Author);
         this.dbset(Book);
         this.dbset(Review);
