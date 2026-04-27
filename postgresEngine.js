@@ -170,10 +170,6 @@ class postgresEngine {
             }
 
             if (queryString.query) {
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryString.query);
-                    console.debug("[Params]", queryString.params || []);
-                }
                 const result = await this._runWithParams(queryString.query, queryString.params || []);
                 return result.rows[0] || null;
             }
@@ -207,10 +203,6 @@ class postgresEngine {
             }
 
             if (queryString.query) {
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryString.query);
-                    console.debug("[Params]", queryString.params);
-                }
                 const result = await this._runWithParams(queryString.query, queryString.params);
                 return result.rows[0] || null;
             }
@@ -234,10 +226,6 @@ class postgresEngine {
             }
 
             if (selectQuery.query) {
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", selectQuery.query);
-                    console.debug("[Params]", selectQuery.params || []);
-                }
                 const result = await this._runWithParams(selectQuery.query, selectQuery.params || []);
                 return result.rows || [];
             }

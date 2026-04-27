@@ -141,10 +141,6 @@ class MySQLEngine {
 
             if (queryString.query) {
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryString.query);
-                    console.debug("[Params]", params);
-                }
                 const result = await this._runWithParams(queryString.query, params);
                 return result[0] || null;
             }
@@ -177,10 +173,6 @@ class MySQLEngine {
 
             if (sql) {
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", sql);
-                    console.debug("[Params]", params);
-                }
                 const result = await this._runWithParams(sql, params);
                 return result[0] || null;
             }
@@ -219,10 +211,6 @@ class MySQLEngine {
 
             if (queryString.query) {
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryString.query);
-                    console.debug("[Params]", params);
-                }
                 const result = await this._runWithParams(queryString.query, params);
                 return result || [];
             }
