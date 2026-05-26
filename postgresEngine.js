@@ -291,6 +291,38 @@ class postgresEngine {
     }
 
     /**
+     * Introspection: Get column information for a table.
+     *
+     * Used by `schema.syncTable()` to diff the existing database schema
+     * against the entity definition so migrations can add only the
+     * missing columns. Without this method on Postgres, syncTable
+     * couldn't detect existing columns and re-ran migrations failed
+     * with `column "X" already exists`.
+     *
+     * Returns rows shaped like the SQLite/MySQL counterparts:
+     *   { name, dflt_value, is_nullable, data_type }
+     */
+    async getTableInfo(tableName) {
+        try {
+            const sql = `
+                SELECT
+                    column_name AS name,
+                    column_default AS dflt_value,
+                    is_nullable AS is_nullable,
+                    data_type AS data_type
+                FROM information_schema.columns
+                WHERE table_schema = ANY(current_schemas(false))
+                  AND table_name = $1
+                ORDER BY ordinal_position
+            `;
+            const result = await this._runWithParams(sql, [tableName]);
+            return (result && result.rows) ? result.rows : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    /**
      * Build complete SELECT query with parameters
      */
     buildQuery(query, entity, context) {

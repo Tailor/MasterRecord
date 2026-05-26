@@ -142,12 +142,13 @@ class migrationSQLiteQuery {
 
     dropColumn(table){
         /*
-        COLUMNS CANNOT BE DROPPED - RULES
-        has unique constraint
-        is indexed
-        appears in a view
+        SQLite added DROP COLUMN in 3.35 (2021). SQLite does NOT support
+        `IF EXISTS` on DROP COLUMN; idempotency is handled one level up
+        in schema.dropColumn() which checks via getTableInfo before
+        emitting this DDL. Square brackets quote the identifiers for
+        consistency with the rest of the SQLite engine output.
         */
-        return `ALTER TABLE ${table.tableName} DROP COLUMN ${table.name}`
+        return `ALTER TABLE [${table.tableName}] DROP COLUMN [${table.name}]`
     }
 
     insertInto(name, table){

@@ -247,21 +247,31 @@ class schema{
     async dropColumn(table){
         if(table){
             if(this.fullTable){
-                // drop column
+                // SQLite doesn't support `IF EXISTS` on DROP COLUMN, so
+                // emulate it here: probe getTableInfo and bail out if the
+                // column is already gone. Postgres + MySQL emit the
+                // `IF EXISTS` clause directly in their DDL.
                 if(this.context.isSQLite){
-                                        var queryBuilder = new sqliteQuery();
+                    if (typeof this.context._SQLEngine.getTableInfo === 'function') {
+                        const cols = await this.context._SQLEngine.getTableInfo(table.tableName);
+                        const exists = Array.isArray(cols) && cols.some(c => c && (c.name === table.name));
+                        if (!exists) {
+                            return;
+                        }
+                    }
+                    var queryBuilder = new sqliteQuery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isMySQL){
-                                        var queryBuilder = new sqlquery();
+                    var queryBuilder = new sqlquery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }
 
                 if(this.context.isPostgres){
-                                        var queryBuilder = new postgresQuery();
+                    var queryBuilder = new postgresQuery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
                 }

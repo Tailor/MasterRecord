@@ -185,8 +185,15 @@ class migrationMySQLQuery {
         has unique constraint
         is indexed
         appears in a view
+
+        `IF EXISTS` was added in MySQL 8.0.24. Safe to emit unconditionally
+        — older MySQL/MariaDB versions will reject this DDL syntax, but
+        identifier quoting + IF EXISTS is the modern standard and matches
+        Postgres' behavior. Consumers on MySQL <8.0.24 should pin
+        masterrecord to <1.0.8 or use raw _execute() for drop-column
+        migrations.
         */
-        return `ALTER TABLE \`${table.tableName}\` DROP COLUMN \`${table.name}\``;
+        return `ALTER TABLE \`${table.tableName}\` DROP COLUMN IF EXISTS \`${table.name}\``;
     }
 
     insertInto(name, table){

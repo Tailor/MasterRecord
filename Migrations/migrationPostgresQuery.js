@@ -186,9 +186,12 @@ class migrationPostgresQuery {
     dropColumn(table){
         /*
         PostgreSQL DROP COLUMN is more flexible than SQLite
-        Can drop columns with constraints if CASCADE is used
+        Can drop columns with constraints if CASCADE is used.
+        `IF EXISTS` makes drop-column migrations idempotent: re-running a
+        migration after a failed/partial earlier run no longer errors with
+        `column "X" does not exist`.
         */
-        return `ALTER TABLE "${table.tableName}" DROP COLUMN "${table.name}"`;
+        return `ALTER TABLE "${table.tableName}" DROP COLUMN IF EXISTS "${table.name}"`;
     }
 
     insertInto(name, table){
