@@ -344,10 +344,10 @@ node test/postgresIntegrationTest.js
 
 ## Version Compatibility
 
-- **MasterRecord**: 0.3.0+
-- **pg (node-postgres)**: 8.16.3+
+- **MasterRecord**: 1.0+ (ESM-only)
+- **pg (node-postgres)**: 8.17+
 - **PostgreSQL Server**: 9.6+ (tested with 12+, 13+, 14+)
-- **Node.js**: 20+ (ESM-only package)
+- **Node.js**: 20+
 
 ## Complete Example
 

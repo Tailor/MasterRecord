@@ -17,6 +17,7 @@
 🔹 **Lifecycle Hooks** - `beforeSave`, `afterSave`, `beforeDelete`, `afterDelete` hooks
 🔹 **Business Validation** - Built-in validators (required, email, length, pattern, custom)
 🔹 **Bulk Operations** - Efficient `bulkCreate`, `bulkUpdate`, `bulkDelete` APIs
+🔹 **Full-Text Search** - Portable `.search()` API on top of SQLite FTS5, Postgres `tsvector`, and MySQL `FULLTEXT`
 🔹 **Query Result Caching** - Production-grade in-memory and Redis caching with automatic invalidation
 🔹 **Migration System** - CLI-driven migrations with rollback support
 🔹 **SQL Injection Protection** - Automatic parameterized queries throughout
@@ -40,6 +41,7 @@
 - [Database Configuration](#database-configuration)
 - [Entity Definitions](#entity-definitions)
 - [Querying](#querying)
+- [Full-Text Search](#full-text-search)
 - [Entity Serialization](#entity-serialization)
   - [.toObject()](#toobjectoptions)
   - [.toJSON()](#tojson)
@@ -705,6 +707,50 @@ const matching = await db.User
     .where(u => u.name.like($$), '%john%')
     .toList();
 ```
+
+## Full-Text Search
+
+Portable full-text search that runs on each engine's native FTS implementation: FTS5 on SQLite, `tsvector` + GIN on PostgreSQL, `FULLTEXT INDEX` on MySQL. Use it when `LIKE` isn't enough — when you want stemming, tokenization, multi-word queries, and ranking.
+
+### Set up the index in a migration
+
+```javascript
+import masterrecord from 'masterrecord';
+
+class AddMemoryDocFts extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.MemoryDoc);
+        await this.createFullTextIndex({
+            tableName: 'MemoryDoc',
+            columns: ['title', 'body'],
+        });
+    }
+
+    async down(table) {
+        await this.init(table);
+        await this.dropFullTextIndex({ tableName: 'MemoryDoc' });
+        await this.dropTable(table.MemoryDoc);
+    }
+}
+
+export default AddMemoryDocFts;
+```
+
+### Query
+
+```javascript
+const docs = await db.MemoryDoc
+    .search({ in: ['title', 'body'], query: 'auth login' })
+    .where(d => d.workspace_id == $$, workspaceId)
+    .take(10)
+    .toList();
+
+// Each row has a __rank field; default ordering is rank descending.
+for (const d of docs) console.log(d.__rank, d.title);
+```
+
+`.search()` composes with `.where()`, `.take()`, `.skip()`, and `.orderBy()`. Engine-specific query syntax (FTS5's `NEAR` / prefix, Postgres `to_tsquery` operators, MySQL boolean mode), ranking semantics, and engine caveats are documented in [docs/FULL_TEXT_SEARCH.md](./docs/FULL_TEXT_SEARCH.md).
 
 ## Migrations
 
@@ -3377,15 +3423,4 @@ user.name = null;  // Error if name is { nullable: false }
 
 ## Changelog
 
-### Version 0.3.49 (2026-02-21) - FIX: Duplicate Index Creation for New Tables
-
-#### Bug Fixed: `createIndex` called twice for new tables during `update-database`
-- **FIXED**: When running `update-database` with a new table that has indexes, the indexes were created twice — once by `createTable()` in schema.js (which iterates column `.index()` definitions and `__compositeIndexes`), and again by explicit `createIndex()`/`createCompositeIndex()` calls in the generated migration file
-  - **Symptom**: MySQL error `Duplicate key name 'idx_...'` during InitialCreate migrations
-  - **Root Cause**: `migrations.js` `#findNewIndexes()` and `#findNewCompositeIndexes()` added index operations for ALL tables, including brand new ones where `createTable()` already handles them
-  - **Solution**: Skip index generation in migration template for new tables (`item.newTables.length > 0`). For existing tables getting new indexes, explicit `createIndex` calls are still generated correctly.
-
-#### Files Modified
-1. **`Migrations/migrations.js`** - Skip `newIndexes` and `newCompositeIndexes` for new tables in `#findNewIndexes()` and `#findNewCompositeIndexes()`
-2. **`test/v0.3.34-bug-fixes-test.js`** - Updated tests to verify correct behavior + added tests for adding indexes to existing tables
-3. **`package.json`** - Updated to v0.3.49
+See [CHANGES.md](./CHANGES.md) for the full version history.

@@ -1,199 +1,60 @@
 # MasterRecord Changelog
 
-## v1.0.0 — ESM-only
+## v1.1.1 — Documentation
 
-**BREAKING:** MasterRecord is now a pure ECMAScript Modules (ESM) package.
+- Documented the v1.1.0 full-text search feature: new [`docs/FULL_TEXT_SEARCH.md`](docs/FULL_TEXT_SEARCH.md), README section, and `.search()` entry in [`docs/METHODS_REFERENCE.md`](docs/METHODS_REFERENCE.md).
+- Documented `createFullTextIndex` / `dropFullTextIndex` in [`docs/MIGRATIONS_GUIDE.md`](docs/MIGRATIONS_GUIDE.md).
+- Removed stale per-bug postmortem markdown files (kept their fixes; deleted the writeups).
 
-- `package.json` declares `"type": "module"` and publishes an `exports` map.
-- Requires **Node.js 20 or newer**.
-- All sources converted from `require` / `module.exports` to `import` / `export default`.
-- `context.js` imports the SQLite driver (`better-sqlite3`) statically at the top of the module instead of `require(sqlName)` at runtime.
-- Environment config files (`env.*.json`) and migration snapshot files (`*_contextSnapShot.json`) are now loaded with `fs.readFileSync` + `JSON.parse` instead of `require()`, keeping `context.env()` synchronous.
-- User-authored migration files are loaded via `await import(pathToFileURL(file).href)` — `Migrations/cli.js` has always had this path; the CJS `Module.prototype.require` hook that aliased `require('masterrecord')` to the globally installed package has been removed. Host projects must install masterrecord as a local dependency.
-- `Migrations/migrationTemplate.js` always emits ESM migrations (`import masterrecord from 'masterrecord'; … export default <Name>;`). The CJS branch and `moduleType` parameter are gone.
-- `context.js` exports the default class plus named error classes (`ContextError`, `ConfigurationError`, `DatabaseConnectionError`, `EntityValidationError`) and the internal `_poolKey` helper.
-- `Cache/QueryCache.js` background cleanup timer is now `.unref()`'d so it no longer keeps the Node event loop alive after user code finishes.
-- `.eslintrc.js` / `.prettierrc.js` replaced with flat ESM configs (`eslint.config.js`, `prettier.config.js`).
-- Test suite rewritten on top of Node's built-in `node --test` runner (`npm test`).
-- Documentation (`readme.md`, `docs/MIGRATIONS_GUIDE.md`, `docs/POSTGRESQL_SETUP.md`, `docs/QUERY_CACHING_GUIDE.md`, `FOREIGN_KEY_STRING_FIX.md`) updated to ESM syntax throughout.
+## v1.1.0 — Portable Full-Text Search
 
-### Migration guide for consumers
+A single API that targets each engine's native FTS implementation.
 
-1. Bump your Node.js runtime to 20+.
-2. Add `"type": "module"` to your application's `package.json`.
-3. Replace `const X = require('masterrecord/…')` with `import X from 'masterrecord/…'`.
-4. Replace `module.exports = MyContext` with `export default MyContext`.
-5. Add `.js` extensions to all relative import paths (ESM requires explicit extensions).
-6. Regenerate any existing migration files (or rewrite the top/bottom: `import masterrecord from 'masterrecord';` … `export default <Name>;`).
+- **Migrations** — `createFullTextIndex({ tableName, columns, indexName?, config? })` and `dropFullTextIndex({ tableName, indexName? })`:
+  - **SQLite** — FTS5 external-content virtual table + AFTER INSERT/UPDATE/DELETE triggers
+  - **PostgreSQL** — `tsvector` column + GIN index + maintenance trigger (`config` controls `to_tsvector` config, default `'english'`)
+  - **MySQL** — `ALTER TABLE … ADD FULLTEXT INDEX`
+- **Runtime** — `.search({ in: [columns], query: 'terms' })` fluent method on any dbset. Composes with `.where()`, `.take()`, `.skip()`, `.orderBy()`. Each result row has a `__rank` field; default ordering is rank descending.
+- 17 new tests cover DDL output per engine, generated SQL strings, and an end-to-end SQLite ranking test.
 
----
+## v1.0.8 — Idempotent dropColumn + Postgres getTableInfo
 
-## Previous: v0.x — FAANG-Level Improvements
+- `dropColumn` is now idempotent across all engines (uses `IF EXISTS` where supported; no-op when the column is already gone).
+- PostgreSQL: implemented `getTableInfo()` against `information_schema.columns` so introspection-driven migrations work.
 
-Updated `context.js` and `deleteManager.js` to meet Google/Meta/Amazon engineering standards with critical bug fixes, input validation, and performance improvements.
+## v1.0.7 — Postgres identifier quoting + cross-engine cleanup
 
-## Critical Fixes Applied
+- PostgreSQL: all generated DDL and DML now quotes identifiers (`"camelCase"`, `"updatedAt"`, etc.) so mixed-case entity and column names work. Previously these were lowercased silently by Postgres, breaking queries.
+- Removed accidental case transformations from `buildWhere` / `buildAnd` in the SQLite, MySQL, and Postgres engines — field names are now used as declared.
+- MySQL: `bulkDelete` honors the entity's actual primary key column instead of hard-coding `id`.
 
-### 1. ✅ Fixed PostgreSQL Async Bug
-**Issue:** Race condition - code returned before PostgreSQL initialized
-**Fix:** Return the promise properly so callers can await
-```javascript
-// Now returns promise for async initialization
-return (async () => {
-    this.db = await this.__postgresInit(options, 'pg');
-    return this;
-})();
-```
-**Impact:** PostgreSQL users must now `await ctx.env()`
+## v1.0.x — Bug fixes
 
-### 2. ✅ Secure ID Generation
-**Issue:** Random IDs had 1/100,000 collision risk
-**Fix:** Sequential IDs with zero collision risk
-```javascript
-model.__ID = `entity_${context._nextEntityId++}`;
-```
+- `.new()` setter with `transform.toDatabase`: object-valued fields were silently dropped on save. Now applied via the field transformer.
+- Nested-array property assignment no longer corrupts adjacent fields.
+- SQLite engine: absolute paths in `connection` were being concatenated with the project root, producing `/abs//abs/path`. Now passed through unchanged.
+- Query builder parity: `ORDER BY`, `LIMIT`, `OFFSET`, `AND`, and `COUNT` are emitted consistently across all three engines. Previously each engine had a different subset of dropped clauses depending on the call path.
+- CLI `update-database`: now applies every pending migration via a tracking table, not just the latest file.
 
-### 3. ✅ Error Logging
-**Issue:** Errors silently swallowed in config search
-**Fix:** Collect and log all search errors
-```javascript
-searchErrors.push(`${candidateRoots[i]}: ${error.message}`);
-console.log('[Context] Config search errors:', searchErrors.join('; '));
-```
+## v1.0.0 — ESM only
 
-### 4. ✅ Input Validation
-**Issue:** No validation on dbset() - crashes and SQL injection risk
-**Fix:** Validate model and table name
-```javascript
-if(!model) throw new Error('dbset() requires a valid model');
-if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)){
-    throw new Error(`Invalid table name: ${tableName}`);
-}
-```
+**BREAKING:** Pure ESM. Requires **Node.js 20+** and `"type": "module"` in the host project's `package.json`. No CommonJS build.
 
-### 5. ✅ Code Style
-**Issue:** Mixed var/const/let
-**Fix:** Use const/let consistently (FAANG standard)
+- All sources moved from `require` / `module.exports` to `import` / `export default`.
+- Static import of `better-sqlite3` in `context.js` (no more runtime `require(sqlName)`).
+- Environment config files and migration snapshot files load via `fs.readFileSync` + `JSON.parse` instead of `require()` — `context.env()` stays synchronous.
+- User-authored migration files load via `await import(pathToFileURL(file).href)`. The CJS `Module.prototype.require` aliasing hook is gone; host projects must install `masterrecord` as a local dependency.
+- `Migrations/migrationTemplate.js` emits ESM migrations only.
+- `context.js` exports the default class plus named error classes (`ContextError`, `ConfigurationError`, `DatabaseConnectionError`, `EntityValidationError`).
+- `Cache/QueryCache.js` cleanup timer is `.unref()`'d so it no longer keeps the event loop alive.
+- Lint / format configs migrated to flat ESM (`eslint.config.js`, `prettier.config.js`).
+- Test suite rewritten on `node --test`.
 
-## Performance Improvements
-- Entity tracking: O(n) → O(1) [100x faster]
-- ID generation: Zero collision risk
-- Better error messages for debugging
+### Upgrading
 
-## Breaking Changes
-**PostgreSQL users:** Must now await the `env()` method
-```javascript
-// OLD:
-ctx.env('./config');
-
-// NEW:
-await ctx.env('./config');
-```
-
-## Files Updated
-- ✅ context.js v1.0.0 (critical bug fixes + performance)
-- ✅ deleteManager.js v1.0.0 (error handling + code quality)
-
-## Additional Files
-- .eslintrc.js (FAANG linting rules)
-- .prettierrc.js (code formatting)
-
----
-
-## DeleteManager.js Improvements
-
-### Critical Fixes Applied
-
-#### 1. ✅ Proper Error Handling
-**Issue:** Threw string instead of Error object
-**Fix:** Now throws Error objects with context
-```javascript
-// OLD:
-throw "No relationship record found - please set hasOne or hasMany to nullable."
-
-// NEW:
-throw new Error(
-    `Cannot delete ${entity.__entity.__name}: ` +
-    `required relationship '${property}' is null. ` +
-    `Set nullable: true if this is intentional.`
-);
-```
-
-#### 2. ✅ Input Validation
-**Issue:** No validation on currentModel parameter
-**Fix:** Validates inputs before processing
-```javascript
-if (!currentModel) {
-    throw new Error('DeleteManager.init() requires a valid model');
-}
-if (!entity.__entity) {
-    throw new Error('Entity missing __entity metadata');
-}
-```
-
-#### 3. ✅ Null Safety
-**Issue:** Didn't handle null entities in arrays
-**Fix:** Warns and skips null entities safely
-```javascript
-if (!entity) {
-    console.warn(`DeleteManager: Skipping null entity at index ${i}`);
-    continue;
-}
-```
-
-#### 4. ✅ Code Quality Refactoring
-**Issue:** Duplicate code for single entity vs array handling
-**Fix:** Extracted into focused methods
-```javascript
-// Now split into clear, testable methods:
-_deleteSingleEntity(entity)      // Handle one entity
-_deleteMultipleEntities(entities) // Handle array
-_isRelationshipType(type)        // Type checking helper
-```
-
-#### 5. ✅ Constants for Relationship Types
-**Issue:** Magic strings ("hasOne", "hasMany") throughout code
-**Fix:** Constants at module level
-```javascript
-const RELATIONSHIP_TYPES = {
-    HAS_ONE: 'hasOne',
-    HAS_MANY: 'hasMany',
-    HAS_MANY_THROUGH: 'hasManyThrough'
-};
-```
-
-### Code Quality Improvements
-- Comprehensive JSDoc documentation
-- Modern JavaScript (const/let, no var)
-- Removed unused `$that = this` pattern
-- Better error messages with context
-- Reduced cyclomatic complexity
-
-### Example Usage
-```javascript
-// Clear error messages guide developers
-const user = db.User.findById(1);
-
-try {
-    db.User.remove(user);
-    db.saveChanges();
-} catch (error) {
-    console.error(error.message);
-    // "Cannot delete User: required relationship 'Profile' is null.
-    //  Set nullable: true if this is intentional."
-}
-```
-
----
-
-## Context.js Improvements (Previously Applied)
-
-## Next Steps
-1. Update PostgreSQL initialization calls to use `await`
-2. Run `npm install --save-dev eslint prettier`
-3. Run `npm run lint` to check for any remaining issues
-4. Test thoroughly before deploying
-
-## Grade
-**Before:** C+ (Needs Improvement)
-**After:** A (Production Ready)
+1. Node 20 or newer.
+2. `"type": "module"` in your `package.json`.
+3. `require('masterrecord/…')` → `import X from 'masterrecord/…'`.
+4. `module.exports = MyContext` → `export default MyContext`.
+5. Add `.js` extensions to all relative imports (ESM requires explicit extensions).
+6. Regenerate migration files (or update the top/bottom): `import masterrecord from 'masterrecord';` … `export default <Name>;`.

@@ -53,6 +53,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `.orderByDescending(lambda)` | Sort descending | `.orderByDescending(u => u.created_at)` |
 | `.take(n)` | Limit results | `.take(10)` |
 | `.skip(n)` | Offset results | `.skip(20)` |
+| `.search({ in, query })` | Full-text search (see [FULL_TEXT_SEARCH.md](FULL_TEXT_SEARCH.md)) | `context.MemoryDoc.search({ in: ['title','body'], query: 'auth login' })` |
 | `.toList()` | Execute and return array | `.where(...).toList()` |
 | `.single()` | Execute and return one | `.where(...).single()` |
 | `.first()` | Execute and return first | `.where(...).first()` |
@@ -122,6 +123,20 @@ const activeUsers = context.User
     .orderByDescending(u => u.created_at)
     .take(50)
     .toList();
+```
+
+### Full-Text Search
+
+```javascript
+// Requires a migration with createFullTextIndex(); see docs/FULL_TEXT_SEARCH.md
+const docs = await context.MemoryDoc
+    .search({ in: ['title', 'body'], query: 'auth login' })
+    .where(d => d.workspace_id == $$, workspaceId)
+    .take(10)
+    .toList();
+
+// Each row has a __rank field (engine-specific scale)
+docs.forEach(d => console.log(d.__rank, d.title));
 ```
 
 ---

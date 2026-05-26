@@ -186,6 +186,41 @@ class MakeAgeRequired extends masterrecord.schema {
 export default MakeAgeRequired;
 ```
 
+### Full-text search indexes
+
+Create and drop portable FTS indexes. Each engine emits its native equivalent — FTS5 virtual table + triggers on SQLite, `tsvector` column + GIN index + maintenance trigger on PostgreSQL, `FULLTEXT INDEX` on MySQL.
+
+```javascript
+import masterrecord from 'masterrecord';
+
+class AddMemoryDocFts extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+        await this.createTable(table.MemoryDoc);
+        await this.createFullTextIndex({
+            tableName: 'MemoryDoc',
+            columns: ['title', 'body'],
+        });
+    }
+
+    async down(table) {
+        await this.init(table);
+        await this.dropFullTextIndex({ tableName: 'MemoryDoc' });
+        await this.dropTable(table.MemoryDoc);
+    }
+}
+
+export default AddMemoryDocFts;
+```
+
+`createFullTextIndex(info)` accepts:
+- `tableName` (string, required)
+- `columns` (string[], required) — columns to index
+- `indexName` (string, optional) — overrides the generated name (`idx_<table>_fts`)
+- `config` (string, optional) — Postgres-only `to_tsvector` config (defaults to `'english'`)
+
+Runtime querying uses the matching `.search({ in, query })` dbset method — see [FULL_TEXT_SEARCH.md](FULL_TEXT_SEARCH.md) for engine-specific query syntax and ranking caveats.
+
 ### Renaming columns
 
 ```javascript
