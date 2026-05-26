@@ -674,6 +674,64 @@ class schema{
         }
     }
 
+    /**
+     * Create a full-text search index on a table. The engine determines
+     * the underlying implementation:
+     *
+     *   SQLite   → FTS5 external-content virtual table + sync triggers
+     *   Postgres → tsvector column + GIN index + maintenance trigger
+     *   MySQL    → FULLTEXT INDEX on the named columns
+     *
+     * Use the matching runtime API (e.g. `ctx.MemoryDoc.search(...)`) to
+     * query the index.
+     *
+     * @param {object} info
+     * @param {string} info.tableName
+     * @param {string[]} info.columns - Columns to index, in order.
+     * @param {string} [info.indexName] - Optional name override.
+     * @param {string} [info.config] - Postgres-only text search config ('english' default).
+     *
+     * @example
+     * await this.createFullTextIndex({
+     *     tableName: 'MemoryDoc',
+     *     columns: ['title', 'body'],
+     * });
+     */
+    async createFullTextIndex(info){
+        if(!info || !info.tableName || !Array.isArray(info.columns) || info.columns.length === 0){
+            throw new Error('createFullTextIndex requires { tableName, columns: [...] }');
+        }
+        let builder;
+        if(this.context.isSQLite){ builder = new sqliteQuery(); }
+        else if(this.context.isMySQL){ builder = new sqlquery(); }
+        else if(this.context.isPostgres){ builder = new postgresQuery(); }
+        else { throw new Error('createFullTextIndex: unsupported database engine'); }
+
+        const statements = builder.createFullTextIndex(info);
+        for(const stmt of statements){
+            await this.context._execute(stmt);
+        }
+    }
+
+    /**
+     * Drop the full-text search index created by createFullTextIndex.
+     */
+    async dropFullTextIndex(info){
+        if(!info || !info.tableName){
+            throw new Error('dropFullTextIndex requires { tableName }');
+        }
+        let builder;
+        if(this.context.isSQLite){ builder = new sqliteQuery(); }
+        else if(this.context.isMySQL){ builder = new sqlquery(); }
+        else if(this.context.isPostgres){ builder = new postgresQuery(); }
+        else { throw new Error('dropFullTextIndex: unsupported database engine'); }
+
+        const statements = builder.dropFullTextIndex(info);
+        for(const stmt of statements){
+            await this.context._execute(stmt);
+        }
+    }
+
     async seed(tableName, rows){
         if(!tableName || !rows){ return; }
         const items = Array.isArray(rows) ? rows : [rows];

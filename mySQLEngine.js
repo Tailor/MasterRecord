@@ -280,6 +280,23 @@ class MySQLEngine {
             skip: this.buildSkip(query)
         };
 
+        // MySQL FULLTEXT search bolted onto the assembled query: append
+        // MATCH(...) AGAINST(...) AS __rank to SELECT, the same expression
+        // into WHERE (or AND), and default to ORDER BY __rank DESC if the
+        // user didn't chain their own ordering.
+        const fts = this._buildSearch(query, entity);
+        if (fts) {
+            queryObject.select = queryObject.select.replace(/\s*$/, `, ${fts.rankSelect} `);
+            if (queryObject.where && queryObject.where.trim().length > 0) {
+                queryObject.where = `${queryObject.where} AND ${fts.predicate}`;
+            } else {
+                queryObject.where = `WHERE ${fts.predicate}`;
+            }
+            if (!queryObject.orderBy || queryObject.orderBy.trim().length === 0) {
+                queryObject.orderBy = fts.defaultOrder;
+            }
+        }
+
         const queryString = `${queryObject.select} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
         return {
             query: queryString,
@@ -332,6 +349,35 @@ class MySQLEngine {
             return `OFFSET ${Number(query.skip)}`;
         }
         return "";
+    }
+
+    /**
+     * Build the MySQL FULLTEXT search plumbing for the current query if a
+     * `.search()` clause was chained. Returns null otherwise.
+     *
+     * MySQL emits `MATCH(col1, col2) AGAINST(? IN NATURAL LANGUAGE MODE)`.
+     * The MATCH expression appears twice: once in SELECT (aliased as
+     * __rank for ordering), once in WHERE. To keep parameter ordering
+     * consistent we bind the search term twice as separate parameters.
+     */
+    _buildSearch(query, entity) {
+        if (!query.search) return null;
+        const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
+        const cols = query.search.columns.map(c => `${alias}.\`${c}\``).join(', ');
+        const phSelect = query.parameters
+            ? query.parameters.addParam(query.search.query, 'mysql')
+            : '?';
+        const phWhere = query.parameters
+            ? query.parameters.addParam(query.search.query, 'mysql')
+            : '?';
+        const matchSelect = `MATCH(${cols}) AGAINST(${phSelect} IN NATURAL LANGUAGE MODE)`;
+        const matchWhere = `MATCH(${cols}) AGAINST(${phWhere} IN NATURAL LANGUAGE MODE)`;
+        return {
+            rankSelect: `${matchSelect} AS __rank`,
+            predicate: matchWhere,
+            // MySQL relevance: higher = more relevant.
+            defaultOrder: `ORDER BY __rank DESC`,
+        };
     }
 
     /**

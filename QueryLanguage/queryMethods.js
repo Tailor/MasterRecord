@@ -150,6 +150,53 @@ class queryMethods{
         return this;
     }
 
+    /**
+     * Full-text search across one or more columns.
+     *
+     * The schema must already have a full-text index created in a migration
+     * via `schema.createFullTextIndex({ tableName, columns })`. The runtime
+     * search uses FTS5 MATCH on SQLite, tsvector @@ on Postgres, and
+     * MATCH AGAINST on MySQL. Each row gets a `__rank` field for ordering.
+     *
+     * Composes with .where(), .take(), .skip(), .orderBy(). If no .orderBy()
+     * is chained, results come back ordered by rank descending.
+     *
+     * @param {object|string} opts - Either { in: [columns], query: 'terms' }
+     *   or a bare string (which searches every column declared in the
+     *   nearest createFullTextIndex — caller is responsible for matching).
+     * @param {string[]} [opts.in] - Columns to search. Required.
+     * @param {string} [opts.query] - Search terms.
+     *
+     * @example
+     * await ctx.MemoryDoc
+     *     .search({ in: ['title', 'body'], query: 'auth login' })
+     *     .where(d => d.workspace_id == ctx.$$, wid)
+     *     .take(10)
+     *     .toList();
+     */
+    search(opts){
+        let columns, query;
+        if (typeof opts === 'string') {
+            // Bare string form requires the caller to declare columns elsewhere;
+            // we currently require explicit `in:` to keep the API honest.
+            throw new Error('search() requires { in: [columns], query: \'terms\' }. Bare-string form is reserved for a future declarative API.');
+        } else if (opts && typeof opts === 'object') {
+            columns = opts.in;
+            query = opts.query;
+        }
+        if (!Array.isArray(columns) || columns.length === 0) {
+            throw new Error('search() requires `in: [columns]` to be a non-empty array');
+        }
+        if (typeof query !== 'string' || query.length === 0) {
+            throw new Error('search() requires `query` to be a non-empty string');
+        }
+
+        // Stash the config on the script; engine buildQuery turns this into
+        // the right FTS predicate at SQL-generation time.
+        this.__queryObject.script.search = { columns: columns.slice(), query };
+        return this;
+    }
+
     take(number){
         this.__queryObject.script.take = number;
         return this;

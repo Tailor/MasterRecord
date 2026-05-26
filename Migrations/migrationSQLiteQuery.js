@@ -236,6 +236,59 @@ class migrationSQLiteQuery {
     }
 
     /**
+     * Build the DDL statements that create an FTS5 full-text index on a
+     * SQLite table. The strategy is "external content" mode (the FTS5
+     * virtual table mirrors columns from the source table without
+     * duplicating storage), plus AFTER INSERT/UPDATE/DELETE triggers that
+     * keep the FTS5 table in sync with the source table.
+     *
+     * @param {object} info
+     * @param {string} info.tableName - Source table.
+     * @param {string[]} info.columns - Columns to index (in order).
+     * @param {string} [info.ftsTableName] - Override FTS table name.
+     *   Defaults to `<tableName>_fts`.
+     * @returns {string[]} Ordered list of DDL statements to execute.
+     */
+    createFullTextIndex(info){
+        const ftsTable = info.ftsTableName || `${info.tableName}_fts`;
+        const cols = info.columns.join(', ');
+        const insertCols = info.columns.map(c => `[${c}]`).join(', ');
+        const newCols = info.columns.map(c => `new.[${c}]`).join(', ');
+        const oldCols = info.columns.map(c => `old.[${c}]`).join(', ');
+
+        return [
+            // External-content FTS5 virtual table — rowid maps to source PK 'id'.
+            `CREATE VIRTUAL TABLE IF NOT EXISTS [${ftsTable}] USING fts5(${cols}, content=[${info.tableName}], content_rowid=id)`,
+
+            // Sync triggers
+            `CREATE TRIGGER IF NOT EXISTS [${info.tableName}_ai] AFTER INSERT ON [${info.tableName}] BEGIN
+                INSERT INTO [${ftsTable}](rowid, ${cols}) VALUES (new.id, ${newCols});
+            END`,
+            `CREATE TRIGGER IF NOT EXISTS [${info.tableName}_ad] AFTER DELETE ON [${info.tableName}] BEGIN
+                INSERT INTO [${ftsTable}]([${ftsTable}], rowid, ${cols}) VALUES('delete', old.id, ${oldCols});
+            END`,
+            `CREATE TRIGGER IF NOT EXISTS [${info.tableName}_au] AFTER UPDATE ON [${info.tableName}] BEGIN
+                INSERT INTO [${ftsTable}]([${ftsTable}], rowid, ${cols}) VALUES('delete', old.id, ${oldCols});
+                INSERT INTO [${ftsTable}](rowid, ${cols}) VALUES (new.id, ${newCols});
+            END`,
+        ];
+    }
+
+    /**
+     * Drop the FTS5 virtual table and the sync triggers created by
+     * createFullTextIndex.
+     */
+    dropFullTextIndex(info){
+        const ftsTable = info.ftsTableName || `${info.tableName}_fts`;
+        return [
+            `DROP TRIGGER IF EXISTS [${info.tableName}_au]`,
+            `DROP TRIGGER IF EXISTS [${info.tableName}_ad]`,
+            `DROP TRIGGER IF EXISTS [${info.tableName}_ai]`,
+            `DROP TABLE IF EXISTS [${ftsTable}]`,
+        ];
+    }
+
+    /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations
      */

@@ -281,6 +281,39 @@ class migrationMySQLQuery {
         return `DROP INDEX \`${indexInfo.indexName}\` ON \`${indexInfo.tableName}\``;
     }
 
+    _ftsIndexName(tableName, indexName) {
+        return indexName || `idx_${tableName.toLowerCase()}_fts`;
+    }
+
+    /**
+     * Build the DDL that adds a MySQL FULLTEXT index to a table. MySQL
+     * maintains the index automatically — no triggers needed. Requires
+     * MySQL 5.6+ (InnoDB) or any MyISAM table.
+     *
+     * @param {object} info
+     * @param {string} info.tableName
+     * @param {string[]} info.columns
+     * @param {string} [info.indexName]
+     * @returns {string[]}
+     */
+    createFullTextIndex(info){
+        const idxName = this._ftsIndexName(info.tableName, info.indexName);
+        const cols = info.columns.map(c => `\`${c}\``).join(', ');
+        return [
+            `ALTER TABLE \`${info.tableName}\` ADD FULLTEXT INDEX \`${idxName}\` (${cols})`,
+        ];
+    }
+
+    /**
+     * Drop the FULLTEXT index created by createFullTextIndex.
+     */
+    dropFullTextIndex(info){
+        const idxName = this._ftsIndexName(info.tableName, info.indexName);
+        return [
+            `ALTER TABLE \`${info.tableName}\` DROP INDEX \`${idxName}\``,
+        ];
+    }
+
     /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations

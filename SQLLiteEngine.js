@@ -271,13 +271,55 @@ class SQLLiteEngine {
         queryObject.skip = this.buildSkip(query);
         queryObject.orderBy = this.buildOrderBy(query, entity);
 
+        // FTS5 full-text search bolted on top of the assembled query.
+        // The FTS5 virtual table is joined by rowid==id; we add a `__rank`
+        // column, a MATCH predicate against the search query, and default
+        // to ordering by rank if the user didn't chain their own .orderBy().
+        const fts = this._buildSearch(query, entity);
+        if (fts) {
+            queryObject.select = queryObject.select.replace(/\s*$/, `, ${fts.rankSelect} `);
+            queryObject.from = `${queryObject.from} ${fts.join}`;
+            if (queryObject.where && queryObject.where.trim().length > 0) {
+                queryObject.where = `${queryObject.where} AND ${fts.predicate}`;
+            } else {
+                queryObject.where = `WHERE ${fts.predicate}`;
+            }
+            if (!queryObject.orderBy || queryObject.orderBy.trim().length === 0) {
+                queryObject.orderBy = fts.defaultOrder;
+            }
+        }
 
         var queryString = `${queryObject.select} ${queryObject.count} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
-        return { 
+        return {
                 query : queryString,
                 entity : this.getEntity(entity.__name, query.entityMap)
         }
 
+    }
+
+    /**
+     * Build the FTS5 plumbing fragments for the current query if a
+     * `.search()` clause was chained. Returns null if not.
+     */
+    _buildSearch(query, entity){
+        if (!query.search) return null;
+        const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
+        const ftsTable = `${entity.__name}_fts`;
+        // FTS5's MATCH operator does not work with bracket-quoted aliases —
+        // `[_fts] MATCH ?` errors with `no such column: _fts`. We must use
+        // the FTS5 table name (or an unbracketed alias) directly in MATCH.
+        // Aliasing the FTS5 table also breaks MATCH; reference the table by
+        // its real name throughout the JOIN and WHERE.
+        const placeholder = query.parameters
+            ? query.parameters.addParam(query.search.query, 'sqlite')
+            : '?';
+        return {
+            rankSelect: `${ftsTable}.rank AS __rank`,
+            join: `JOIN ${ftsTable} ON ${ftsTable}.rowid = ${alias}.id`,
+            predicate: `${ftsTable} MATCH ${placeholder}`,
+            // FTS5 rank is bm25; lower = more relevant. ASC gives best-first.
+            defaultOrder: `ORDER BY ${ftsTable}.rank`,
+        };
     }
 
     buildOrderBy(query, entity){

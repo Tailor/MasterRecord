@@ -31,6 +31,10 @@ class queryScript{
         skip: 0,
         orderBy : false,
         orderByDesc : false,
+        // Full-text search config: { columns: [...], query: '...' } when set.
+        // Engine-specific buildQuery() turns this into FTS5 MATCH, tsvector @@,
+        // or MATCH AGAINST and adds a __rank column.
+        search : false,
         parentName : "",
         parameters: null  // Will hold QueryParameters instance
     };
@@ -50,6 +54,7 @@ class queryScript{
             skip: 0,
             orderBy : false,
             orderByDesc : false,
+            search : false,
             parentName : "",
             parameters: this.parameters
         };

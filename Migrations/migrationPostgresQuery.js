@@ -264,6 +264,104 @@ class migrationPostgresQuery {
     }
 
     /**
+     * Default name for the tsvector column added by createFullTextIndex.
+     */
+    _ftsColumnName() { return '__tsv'; }
+
+    /**
+     * Default name for the GIN index added by createFullTextIndex.
+     */
+    _ftsIndexName(tableName, indexName) {
+        return indexName || `idx_${tableName.toLowerCase()}_fts`;
+    }
+
+    /**
+     * Default name for the trigger function maintained by createFullTextIndex.
+     */
+    _ftsTriggerFunctionName(tableName) {
+        return `${tableName.toLowerCase()}_tsv_update`;
+    }
+
+    /**
+     * Default name for the trigger maintained by createFullTextIndex.
+     */
+    _ftsTriggerName(tableName) {
+        return `${tableName.toLowerCase()}_tsv_trigger`;
+    }
+
+    /**
+     * Build the DDL statements that create a Postgres tsvector full-text
+     * index on a table. The strategy:
+     *   1. Add a tsvector column (`__tsv` by default).
+     *   2. Backfill it from existing rows using to_tsvector('english', ...).
+     *   3. Create a GIN index on the column.
+     *   4. Create a BEFORE INSERT/UPDATE trigger that keeps __tsv in sync.
+     *
+     * @param {object} info
+     * @param {string} info.tableName
+     * @param {string[]} info.columns - Source columns to concatenate into the tsvector.
+     * @param {string} [info.indexName] - Override the GIN index name.
+     * @param {string} [info.config='english'] - Postgres text-search config.
+     * @returns {string[]} Ordered list of DDL statements.
+     */
+    createFullTextIndex(info){
+        const cfg = info.config || 'english';
+        const tsvCol = this._ftsColumnName();
+        const idxName = this._ftsIndexName(info.tableName, info.indexName);
+        const fnName = this._ftsTriggerFunctionName(info.tableName);
+        const trgName = this._ftsTriggerName(info.tableName);
+
+        // Concat for the existing-rows UPDATE (qualified by the column owner row).
+        const concatTable = info.columns
+            .map(c => `coalesce("${c}", '')`)
+            .join(` || ' ' || `);
+
+        // Concat for the trigger body — references NEW.<col>.
+        const concatNew = info.columns
+            .map(c => `coalesce(NEW."${c}", '')`)
+            .join(` || ' ' || `);
+
+        return [
+            // 1. Add the tsvector column if it doesn't exist
+            `ALTER TABLE "${info.tableName}" ADD COLUMN IF NOT EXISTS "${tsvCol}" tsvector`,
+            // 2. Backfill existing rows
+            `UPDATE "${info.tableName}" SET "${tsvCol}" = to_tsvector('${cfg}', ${concatTable})`,
+            // 3. GIN index for fast @@ matching
+            `CREATE INDEX IF NOT EXISTS "${idxName}" ON "${info.tableName}" USING GIN ("${tsvCol}")`,
+            // 4. Trigger function — $masterrecord$ dollar-quoted to avoid
+            //    collision with any user-supplied content in column defaults.
+            `CREATE OR REPLACE FUNCTION "${fnName}"() RETURNS trigger AS $masterrecord$
+BEGIN
+    NEW."${tsvCol}" := to_tsvector('${cfg}', ${concatNew});
+    RETURN NEW;
+END
+$masterrecord$ LANGUAGE plpgsql`,
+            // 5. Trigger — drop and recreate so config changes apply on re-run.
+            `DROP TRIGGER IF EXISTS "${trgName}" ON "${info.tableName}"`,
+            `CREATE TRIGGER "${trgName}" BEFORE INSERT OR UPDATE ON "${info.tableName}"
+                FOR EACH ROW EXECUTE FUNCTION "${fnName}"()`,
+        ];
+    }
+
+    /**
+     * Drop the trigger, function, index, and tsvector column created by
+     * createFullTextIndex.
+     */
+    dropFullTextIndex(info){
+        const tsvCol = this._ftsColumnName();
+        const idxName = this._ftsIndexName(info.tableName, info.indexName);
+        const fnName = this._ftsTriggerFunctionName(info.tableName);
+        const trgName = this._ftsTriggerName(info.tableName);
+
+        return [
+            `DROP TRIGGER IF EXISTS "${trgName}" ON "${info.tableName}"`,
+            `DROP FUNCTION IF EXISTS "${fnName}"()`,
+            `DROP INDEX IF EXISTS "${idxName}"`,
+            `ALTER TABLE "${info.tableName}" DROP COLUMN IF EXISTS "${tsvCol}"`,
+        ];
+    }
+
+    /**
      * SEED DATA METHODS
      * Support for inserting seed data during migrations
      */

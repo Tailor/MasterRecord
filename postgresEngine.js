@@ -331,11 +331,60 @@ class postgresEngine {
 
         // Standard SQL clause order: SELECT ... FROM ... WHERE ... AND ... ORDER BY ... LIMIT ... OFFSET ...
         // The previous order placed LIMIT/OFFSET before ORDER BY, which Postgres rejects as a syntax error.
-        const sql = `SELECT ${this.buildSelectString(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)} ${this.buildOrderBy(query, entity)} ${this.buildLimit(query)} ${this.buildSkip(query)}`;
+        let selectClause = this.buildSelectString(query, entity);
+        let whereClause = this.buildWhere(query, entity);
+        let orderByClause = this.buildOrderBy(query, entity);
+
+        // Postgres tsvector search bolted onto the assembled clauses.
+        // Adds ts_rank as __rank, the @@ predicate, and orders by rank DESC
+        // by default. Param binding happens via `_buildSearch` (it pushes
+        // the term into params and returns $N placeholders).
+        const fts = this._buildSearch(query, entity, params);
+        if (fts) {
+            selectClause = `${selectClause}, ${fts.rankSelect}`;
+            if (whereClause && whereClause.trim().length > 0) {
+                whereClause = `${whereClause} AND ${fts.predicate}`;
+            } else {
+                whereClause = `WHERE ${fts.predicate}`;
+            }
+            if (!orderByClause || orderByClause.trim().length === 0) {
+                orderByClause = fts.defaultOrder;
+            }
+        }
+
+        const sql = `SELECT ${selectClause} ${this.buildFrom(query, entity)} ${whereClause} ${this.buildAnd(query, entity)} ${orderByClause} ${this.buildLimit(query)} ${this.buildSkip(query)}`;
 
         return {
             query: sql,
             params: params
+        };
+    }
+
+    /**
+     * Build the Postgres tsvector search plumbing for the current query if
+     * a `.search()` clause was chained. Returns null otherwise.
+     *
+     * Pushes the search term onto the live params array (twice — once for
+     * SELECT, once for WHERE) and returns the corresponding $N placeholders
+     * inline. Caller is responsible for splicing the returned fragments
+     * into the right SELECT/WHERE/ORDER BY positions.
+     */
+    _buildSearch(query, entity, params) {
+        if (!query.search) return null;
+        const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
+        const tsvCol = '__tsv'; // matches migrationPostgresQuery._ftsColumnName()
+
+        // Push the search term twice with sequential $N indices.
+        const baseIndex = params.length;
+        params.push(query.search.query);
+        params.push(query.search.query);
+        const phSelect = `$${baseIndex + 1}`;
+        const phWhere = `$${baseIndex + 2}`;
+
+        return {
+            rankSelect: `ts_rank(${alias}.${this._q(tsvCol)}, plainto_tsquery(${phSelect})) AS __rank`,
+            predicate: `${alias}.${this._q(tsvCol)} @@ plainto_tsquery(${phWhere})`,
+            defaultOrder: `ORDER BY __rank DESC`,
         };
     }
 
