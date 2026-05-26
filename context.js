@@ -1299,10 +1299,58 @@ class context {
             enumerable: true
         });
 
+        // belongsTo() hardcodes type='integer' before the parent entity is known.
+        // Now that another entity is registered, re-resolve every belongsTo FK
+        // column's type from its parent's primary-key type. Idempotent.
+        this.#resolveBelongsToTypes();
+
         // Return chainable object with seed() method
         return {
             seed: (data) => this.#addSeedData(tableName, data)
         };
+    }
+
+    // Walk every registered entity. For each column with relationshipType ===
+    // 'belongsTo', look up the parent entity by foreignTable name and copy the
+    // parent's primary-key type onto the FK column. Without this, FKs to a
+    // string/uuid/bigint PK end up declared INTEGER, which SQLite tolerates
+    // (dynamic typing) but Postgres and MySQL reject.
+    #resolveBelongsToTypes() {
+        const entities = this.__entities;
+        if (!entities || entities.length === 0) return;
+
+        // Case-insensitive lookup table — users may write
+        // db.belongsTo('run') while the class is `Run`.
+        const byName = {};
+        for (const e of entities) {
+            if (e && e.__name) {
+                byName[e.__name.toLowerCase()] = e;
+            }
+        }
+
+        for (const entity of entities) {
+            for (const key of Object.keys(entity)) {
+                const col = entity[key];
+                if (!col || typeof col !== 'object') continue;
+                if (col.relationshipType !== 'belongsTo') continue;
+                if (!col.foreignTable) continue;
+
+                const parent = byName[String(col.foreignTable).toLowerCase()];
+                if (!parent) continue;
+
+                // Find the parent's primary-key column.
+                for (const pKey of Object.keys(parent)) {
+                    const pCol = parent[pKey];
+                    if (!pCol || typeof pCol !== 'object') continue;
+                    if (pCol.primary === true && pCol.type) {
+                        if (col.type !== pCol.type) {
+                            col.type = pCol.type;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /**

@@ -1,5 +1,25 @@
 # MasterRecord Changelog
 
+## v1.1.2 — belongsTo FK type resolution + MySQL/SQLite type-map gaps
+
+**Bug:** `belongsTo()` hardcoded the FK column type to `integer` at entity-definition time, before the parent entity was registered. If the parent's PK was `string` / `bigint` / `uuid`, the FK was still emitted as `INTEGER`. SQLite accepted the mismatch silently (dynamic typing); Postgres and MySQL rejected inserts of string IDs into integer columns.
+
+**Fix:** after every `dbset()` call, walk every registered entity and re-resolve each `belongsTo` column's `type` from its parent's primary-key type. Order-independent (works whether parent or child is registered first), idempotent (running multiple times produces the same result), case-insensitive on the `foreignTable` lookup.
+
+| Parent PK type | SQLite FK | MySQL FK     | Postgres FK |
+| -------------- | --------- | ------------ | ----------- |
+| `string`       | TEXT      | VARCHAR(255) | VARCHAR(255) |
+| `integer`      | INTEGER   | INTEGER      | INTEGER     |
+| `bigint`       | INTEGER   | BIGINT       | BIGINT      |
+| `uuid`         | TEXT      | VARCHAR(36)  | UUID        |
+
+**Related cleanup in the migration type maps:**
+
+- **MySQL** `typeManager` now handles `bigint`, `uuid`, `int`, `jsonb`, and falls back to `TEXT` for unknown types. Previously these emitted literal `undefined` into the DDL string (e.g. `` `run_id` undefined NOT NULL ``).
+- **SQLite** `typeManager` now handles `bigint`, `uuid`, `int`, `float`, `decimal`, `binary`/`blob`, `json`/`jsonb`, `date`/`datetime`/`timestamp` explicitly (collapsing to the appropriate SQLite affinity). Same `TEXT` fallback as before.
+
+17 new tests cover the resolver across all four PK types, both `dbset()` orders, and every engine's emitted DDL.
+
 ## v1.1.1 — Documentation
 
 - Documented the v1.1.0 full-text search feature: new [`docs/FULL_TEXT_SEARCH.md`](docs/FULL_TEXT_SEARCH.md), README section, and `.search()` entry in [`docs/METHODS_REFERENCE.md`](docs/METHODS_REFERENCE.md).

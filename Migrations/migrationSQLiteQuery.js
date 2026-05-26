@@ -70,26 +70,32 @@ class migrationSQLiteQuery {
     #typeManager(type){
         switch(type) {
             case "string":
-                return "TEXT"
-              break;
             case "text":
             case "mediumtext":
             case "longtext":
-                // SQLite TEXT is unlimited — MEDIUMTEXT/LONGTEXT collapse to TEXT
-                // for cross-engine portability. (Previously "text" had no case
-                // here at all, which produced "<colname> undefined NOT NULL"
-                // SQL — accepted by SQLite's lax type affinity but still wrong.)
+            case "uuid":
+                // SQLite TEXT is unlimited; MEDIUMTEXT/LONGTEXT/UUID collapse to
+                // TEXT for cross-engine portability.
                 return "TEXT"
-              break;
             case "time":
+            case "date":
+            case "datetime":
+            case "timestamp":
                 return "TEXT"
-              break;
             case "boolean":
-                return "INTEGER"
-              break;
             case "integer":
+            case "int":
+            case "bigint":
                 return "INTEGER"
-              break;
+            case "float":
+            case "decimal":
+                return "REAL"
+            case "binary":
+            case "blob":
+                return "BLOB"
+            case "json":
+            case "jsonb":
+                return "TEXT"
             default:
                 // Fallback for unknown types so we never emit `undefined`.
                 return "TEXT"

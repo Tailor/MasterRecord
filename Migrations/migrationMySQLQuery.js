@@ -89,52 +89,46 @@ class migrationMySQLQuery {
         switch(type) {
             case "string":
                 return "VARCHAR(255)"
-              break;
             case "text":
                 return "TEXT"
-              break;
             case "mediumtext":
                 return "MEDIUMTEXT"
-              break;
             case "longtext":
                 return "LONGTEXT"
-              break;
             case "float":
-                return "fLOAT(24)"
-              break;
+                return "FLOAT(24)"
             case "decimal":
                 return "DECIMAL"
-              break;
             case "datetime":
                 return "DATETIME"
-              break;
             case "timestamp":
                 return "TIMESTAMP"
-              break;
             case "date":
                 return "DATE"
-              break;
             case "time":
                 return "TIME"
-              break;
             case "boolean":
                 return "TINYINT"
-              break;
             case "integer":
+            case "int":
                 return "INTEGER"
-              break;
+            case "bigint":
+                return "BIGINT"
+            case "uuid":
+                // MySQL has no native UUID type; store as fixed-length string.
+                return "VARCHAR(36)"
             case "binary":
-                return "BLOB"
-              break;
             case "blob":
                 return "BLOB"
-              break;
             case "json":
+            case "jsonb":
                 return "JSON"
-              break;
-          }
-          // :string, :text, :integer, :float, :decimal, :datetime, :timestamp, :time, :date, :binary, :boolean
-    }  
+            default:
+                // Fallback so we never emit `undefined` for an unknown type
+                // (matches SQLite's and Postgres's lenient behavior).
+                return "TEXT"
+        }
+    }
 
     // table is the altered field
     alterColumn( table){

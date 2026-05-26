@@ -172,6 +172,35 @@ Even though `chat_id` is never explicitly defined as a field, it's accessible be
 2. `entityTrackerModel.build()` creates properties for all columns from the result
 3. The `belongsTo` relationship doesn't prevent the foreign key from being accessible
 
+## Foreign Key Column Type
+
+> Behavior since **v1.1.2**.
+
+The foreign-key column's SQL type is **automatically resolved from the parent entity's primary-key type**. You do not declare a type on the FK; it inherits from the parent.
+
+```javascript
+class Run {
+    id(db) { db.string().primary(); }   // PK is VARCHAR(255)
+    name(db) { db.string(); }
+}
+
+class Step {
+    id(db) { db.integer().primary().auto(); }
+    Run(db) { db.belongsTo('Run').notNullable(); }  // run_id is VARCHAR(255), not INTEGER
+}
+```
+
+This matters across engines:
+
+| Parent PK type | SQLite `run_id` | MySQL `run_id`    | Postgres `run_id` |
+| -------------- | --------------- | ----------------- | ----------------- |
+| `string`       | TEXT            | VARCHAR(255)      | VARCHAR(255)      |
+| `integer`      | INTEGER         | INTEGER           | INTEGER           |
+| `bigint`       | INTEGER         | BIGINT            | BIGINT            |
+| `uuid`         | TEXT            | VARCHAR(36)       | UUID              |
+
+Before v1.1.2, every belongsTo FK was declared INTEGER regardless of the parent's PK type. SQLite tolerated the mismatch (dynamic typing), but Postgres and MySQL rejected inserts of string IDs into INTEGER columns. The resolver is order-independent: register child and parent entities in either order via `dbset()`.
+
 ## Summary
 
 | Operation | Property to Use | Example |
