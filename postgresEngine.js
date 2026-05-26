@@ -15,6 +15,29 @@ class postgresEngine {
     }
 
     /**
+     * Quote a Postgres identifier (table or column name).
+     *
+     * Postgres folds unquoted identifiers to lowercase, so `SELECT id FROM Foo`
+     * becomes `SELECT id FROM foo` at parse time. For CamelCase entities like
+     * `Agent`, `SchedulerLeader`, `MemoryDoc` the DDL creates the table with
+     * preserved case (because masterrecord's DDL quotes), but unquoted SELECTs
+     * fail with `relation "schedulerleader" does not exist`.
+     *
+     * This helper wraps every identifier in double-quotes and escapes any
+     * embedded double-quotes per the Postgres standard (`"` → `""`).
+     *
+     * Safe for `*` (returns `*` unwrapped) so `COUNT(alias.*)` still works.
+     */
+    _q(ident) {
+        if (ident === '*') return '*';
+        if (ident === null || ident === undefined) return ident;
+        const s = String(ident);
+        // Already-quoted identifiers pass through unchanged.
+        if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s;
+        return `"${s.replace(/"/g, '""')}"`;
+    }
+
+    /**
      * Initialize PostgreSQL connection pool
      * @param {Object} config - PostgreSQL connection config
      */
@@ -51,7 +74,9 @@ class postgresEngine {
             throw new Error('UPDATE failed: Invalid parameterized query structure. Check entity definition.');
         }
 
-        const sqlQuery = `UPDATE ${query.tableName} SET ${query.arg.query} WHERE ${query.tableName}.${query.primaryKey} = $${query.arg.params.length + 1}`;
+        const t = this._q(query.tableName);
+        const pk = this._q(query.primaryKey);
+        const sqlQuery = `UPDATE ${t} SET ${query.arg.query} WHERE ${t}.${pk} = $${query.arg.params.length + 1}`;
         // Add primaryKeyValue to params array
         const params = [...query.arg.params, query.primaryKeyValue];
         return await this._runWithParams(sqlQuery, params);
@@ -62,7 +87,9 @@ class postgresEngine {
      */
     async delete(queryObject) {
         const sqlObject = this._buildDeleteObject(queryObject);
-        const sqlQuery = `DELETE FROM ${sqlObject.tableName} WHERE ${sqlObject.tableName}.${sqlObject.primaryKey} = $1`;
+        const t = this._q(sqlObject.tableName);
+        const pk = this._q(sqlObject.primaryKey);
+        const sqlQuery = `DELETE FROM ${t} WHERE ${t}.${pk} = $1`;
         return await this._runWithParams(sqlQuery, [sqlObject.value]);
     }
 
@@ -78,12 +105,12 @@ class postgresEngine {
 
         // Get primary key name for RETURNING clause
         const primaryKey = tools.getPrimaryKeyObject(queryObject.__entity);
-        const query = `INSERT INTO ${sqlObject.tableName} (${sqlObject.columns}) VALUES (${sqlObject.placeholders}) RETURNING ${primaryKey}`;
+        const query = `INSERT INTO ${this._q(sqlObject.tableName)} (${sqlObject.columns}) VALUES (${sqlObject.placeholders}) RETURNING ${this._q(primaryKey)}`;
 
         const result = await this._runWithParams(query, sqlObject.params);
 
         return {
-            id: result.rows[0][primaryKey]
+            id: result.rows[0] ? result.rows[0][primaryKey] : undefined
         };
     }
 
@@ -120,7 +147,7 @@ class postgresEngine {
                 allParams.push(...sqlObj.params);
             }
 
-            const query = `INSERT INTO "${first.tableName}" (${first.columns}) VALUES ${valueGroups.join(', ')} RETURNING ${primaryKey}`;
+            const query = `INSERT INTO ${this._q(first.tableName)} (${first.columns}) VALUES ${valueGroups.join(', ')} RETURNING ${this._q(primaryKey)}`;
             const result = await this._runWithParams(query, allParams);
 
             // PostgreSQL returns rows with the primary key values
@@ -145,13 +172,18 @@ class postgresEngine {
     }
 
     /**
-     * Batch delete using WHERE IN
+     * Batch delete using WHERE IN.
+     * @param {string} tableName
+     * @param {Array} ids
+     * @param {string} [primaryKey='id'] - Primary-key column name. Defaults to
+     *   'id' for back-compat, but callers should pass the entity's actual PK
+     *   to support custom primary-key names.
      */
-    async bulkDelete(tableName, ids) {
+    async bulkDelete(tableName, ids, primaryKey = 'id') {
         if (!ids || ids.length === 0) return;
 
         const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
-        const query = `DELETE FROM "${tableName}" WHERE id IN (${placeholders})`;
+        const query = `DELETE FROM ${this._q(tableName)} WHERE ${this._q(primaryKey)} IN (${placeholders})`;
         return await this._runWithParams(query, ids);
     }
 
@@ -284,21 +316,58 @@ class postgresEngine {
     buildSelectString(query, entity) {
         if (query.select && query.select.selectFields && query.select.selectFields.length > 0) {
             const alias = this.getEntity(query.parentName || entity.__name, query.entityMap);
-            return query.select.selectFields.map(f => `${alias}.${f}`).join(', ');
+            // Alias is a generated short string (e.g. "a", "p") so does not need quoting,
+            // but the user-defined column names CAN be camelCase and MUST be quoted.
+            return query.select.selectFields.map(f => `${alias}.${this._q(f)}`).join(', ');
         }
-        return `${tools.convertEntityToSelectParameterString(entity)}`;
+        // Fall back to a fully-qualified column list quoted per-identifier.
+        // tools.convertEntityToSelectParameterString returns "alias.col, alias.col"
+        // built off entity field names; rebuild it here with quoting since the
+        // helper itself is engine-agnostic and can't know our quoting rules.
+        const alias = this.getEntity(entity.__name, query.entityMap);
+        const cols = [];
+        for (const key in entity) {
+            if (key.startsWith('_')) continue;
+            const def = entity[key];
+            if (!def || typeof def !== 'object') continue;
+            if (def.type === 'hasMany' || def.type === 'hasOne' || def.type === 'hasManyThrough') continue;
+            if (def.lifecycle === true) continue;
+            // Use foreignKey for belongsTo, otherwise the column's declared name.
+            const colName = (def.relationshipType === 'belongsTo' && def.foreignKey)
+                ? def.foreignKey
+                : def.name;
+            if (!colName) continue;
+            cols.push(`${alias}.${this._q(colName)}`);
+        }
+        return cols.join(', ');
     }
 
     buildCount(query, entity) {
         const entityStr = this.getEntity(entity.__name, query.entityMap);
         if (query.count === "none") {
-            return `COUNT(${entityStr}.*)`;
+            // `alias.*` is not standard Postgres syntax — use COUNT(*) instead.
+            return `COUNT(*)`;
         }
-        return `COUNT(${entityStr}.${query.count})`;
+        // query.count is a cachedExpr with selectFields when set via `.count(p => p.field)`.
+        let field;
+        if (query.count && query.count.selectFields && query.count.selectFields[0]) {
+            field = query.count.selectFields[0];
+        } else if (typeof query.count === 'string') {
+            field = query.count;
+        }
+        if (!field) return `COUNT(*)`;
+        return `COUNT(${entityStr}.${this._q(field)})`;
     }
 
     buildFrom(query, entity) {
-        return `FROM ${entity.__name}`;
+        // Quote the table name AND alias the table so downstream
+        // `alias.column` references in SELECT/WHERE/ORDER BY resolve against
+        // the alias rather than the bare CamelCase name.
+        const alias = this.getEntity(entity.__name, query.entityMap);
+        if (alias && alias !== entity.__name) {
+            return `FROM ${this._q(entity.__name)} AS ${alias}`;
+        }
+        return `FROM ${this._q(entity.__name)}`;
     }
 
     /**
@@ -318,11 +387,18 @@ class postgresEngine {
                     const item = itemEntity[query.parentName][table];
                     const expressions = [];
                     for (let exp in item.expressions) {
-                        let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                        // Use the field name verbatim for SQL emission so it
+                        // matches the actual column case. The capitalized form
+                        // is only useful for the navigational-relationship
+                        // lookup (relationships are stored with PascalCase keys
+                        // like `User`, `Profile` on the entity).
+                        const originalField = item.expressions[exp].field;
+                        const capitalized = tools.capitalizeFirstLetter(originalField);
+                        let field = originalField;
                         let entityRef = entity;
 
-                        if (mainQuery[field] && mainQuery[field].isNavigational) {
-                            entityRef = $that.getEntity(field, query.entityMap);
+                        if (mainQuery[capitalized] && mainQuery[capitalized].isNavigational) {
+                            entityRef = $that.getEntity(capitalized, query.entityMap);
                             field = item.fields[1];
                         }
 
@@ -336,14 +412,14 @@ class postgresEngine {
                         }
 
                         if (arg === "null") {
-                            expressions.push(`${entityRef}.${field} ${func} ${arg}`);
+                            expressions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                         } else {
                             // Check if arg is a parameterized placeholder
                             const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
                             if (isPlaceholder || func === "IN") {
-                                expressions.push(`${entityRef}.${field} ${func} ${arg}`);
+                                expressions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                             } else {
-                                expressions.push(`${entityRef}.${field} ${func} '${arg}'`);
+                                expressions.push(`${entityRef}.${$that._q(field)} ${func} '${arg}'`);
                             }
                         }
                     }
@@ -374,11 +450,14 @@ class postgresEngine {
             const conditions = [];
 
             for (let exp in item.expressions) {
-                let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
+                // Use the field name verbatim for SQL emission. See buildAnd for full rationale.
+                const originalField = item.expressions[exp].field;
+                const capitalized = tools.capitalizeFirstLetter(originalField);
+                let field = originalField;
                 let entityRef = entity;
 
-                if (mainQuery[field] && mainQuery[field].isNavigational) {
-                    entityRef = $that.getEntity(field, query.entityMap);
+                if (mainQuery[capitalized] && mainQuery[capitalized].isNavigational) {
+                    entityRef = $that.getEntity(capitalized, query.entityMap);
                     field = item.fields[1];
                 }
 
@@ -392,16 +471,16 @@ class postgresEngine {
                 }
 
                 if (arg === "null") {
-                    conditions.push(`${entityRef}.${field} ${func} ${arg}`);
+                    conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                 } else if (func === "IN") {
-                    conditions.push(`${entityRef}.${field} ${func} ${arg}`);
+                    conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                 } else {
                     // Check if arg is a parameterized placeholder ($1, $2, etc.)
                     const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
                     if (isPlaceholder) {
-                        conditions.push(`${entityRef}.${field} ${func} ${arg}`);
+                        conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                     } else {
-                        conditions.push(`${entityRef}.${field} ${func} '${arg}'`);
+                        conditions.push(`${entityRef}.${$that._q(field)} ${func} '${arg}'`);
                     }
                 }
             }
@@ -457,7 +536,7 @@ class postgresEngine {
         const entityStr = this.getEntity(query.parentName, query.entityMap);
         const fieldList = [];
         for (const item in orderByEntity.selectFields) {
-            fieldList.push(`${entityStr}.${orderByEntity.selectFields[item]}`);
+            fieldList.push(`${entityStr}.${this._q(orderByEntity.selectFields[item])}`);
         }
         if (fieldList.length === 0) return "";
         return `ORDER BY ${fieldList.join(', ')} ${orderByType}`;
@@ -523,7 +602,7 @@ class postgresEngine {
                     }
                     fkValue = $that._convertValueForDatabase(fkValue, model.__entity[dirtyFields[column]].type);
                     const fore = `_${dirtyFields[column]}`;
-                    sqlParts.push(`${foreignKey} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(foreignKey)} = $${paramIndex++}`);
                     params.push(model[fore]);
                     break;
 
@@ -541,7 +620,7 @@ class postgresEngine {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
                     intValue = $that._convertValueForDatabase(intValue, model.__entity[dirtyFields[column]].type);
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(intValue);
                     break;
 
@@ -559,7 +638,7 @@ class postgresEngine {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
                     strValue = $that._convertValueForDatabase(strValue, model.__entity[dirtyFields[column]].type);
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(strValue);
                     break;
 
@@ -577,7 +656,7 @@ class postgresEngine {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
                     boolValue = $that._convertValueForDatabase(boolValue, model.__entity[dirtyFields[column]].type);
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(boolValue);
                     break;
 
@@ -595,12 +674,12 @@ class postgresEngine {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
                     timeValue = $that._convertValueForDatabase(timeValue, model.__entity[dirtyFields[column]].type);
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(timeValue);
                     break;
 
                 case "hasMany":
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(model["_" + dirtyFields[column]]);
                     break;
 
@@ -618,7 +697,7 @@ class postgresEngine {
                     } catch (transformError) {
                         throw new Error(`UPDATE failed: ${transformError.message}`);
                     }
-                    sqlParts.push(`${dirtyFields[column]} = $${paramIndex++}`);
+                    sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(rawValue);
                 }
             }
@@ -674,7 +753,16 @@ class postgresEngine {
 
                     // Skip auto-increment primary keys
                     if (modelEntity[column].auto !== true) {
-                        columnNames.push(column);
+                        // For belongsTo relationships, the actual SQL column is
+                        // the foreignKey (e.g. `user_id`), not the relationship
+                        // property name (`User`). MySQL handles this; Postgres
+                        // used to push the relationship name and emit invalid
+                        // INSERT column lists.
+                        const relationship = modelEntity[column].relationshipType;
+                        const actualColumn = relationship === "belongsTo" && modelEntity[column].foreignKey
+                            ? modelEntity[column].foreignKey
+                            : column;
+                        columnNames.push($that._q(actualColumn));
                         params.push(fieldColumn);
                     }
                 }

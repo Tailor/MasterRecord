@@ -202,10 +202,16 @@ class queryScript{
 
     // look and grab all fields
     buildFields(text, desc){
-        var match = text.match(/^([\w\d$_]+?)\s*=>((?:\{\sreturn\s)?[\s\S]*(?:\})?)/);
+        // Accept both `p => body` and `(p) => body` (and `(p, ...) => body`).
+        // JS Function.prototype.toString() preserves the parenthesized form
+        // for arrow functions, so when users pass a real lambda we receive
+        // `(p) => p.name == ...` — the previous regex only matched bare
+        // identifiers and silently mis-parsed parens as the entity name,
+        // producing SQL like `SELECT (.id, (.name FROM Plugin AS (`.
+        var match = text.match(/^\s*(?:\(\s*([\w\d$_]+)[^)]*\)|([\w\d$_]+))\s*=>((?:\{\sreturn\s)?[\s\S]*(?:\})?)/);
         if(match){
-            const entity = match[1];
-            let exprStr = match[2];
+            const entity = match[1] || match[2];
+            let exprStr = match[3];
             const fields = [];
 
             exprStr.replace(new RegExp(entity + "\\.([\\w_]+)", "g"), function (_, field) {
@@ -465,13 +471,17 @@ class queryScript{
     }
 
     getEntity(str){
-        // Prefer parsing the lambda parameter (e.g., 'uc' in 'uc => uc.user_id == $$')
-        const m = str.match(/^\s*([\w\d$_]+?)\s*=>/);
-        if(m && m[1]){
-            return m[1];
+        // Prefer parsing the lambda parameter. Accept both bare-arg and
+        // parenthesized-arg forms — JS `.toString()` preserves parens.
+        //   uc => uc.user_id == $$
+        //   (uc) => uc.user_id == $$
+        //   (uc, idx) => ...
+        const m = str.match(/^\s*(?:\(\s*([\w\d$_]+)[^)]*\)|([\w\d$_]+))\s*=>/);
+        if(m){
+            return m[1] || m[2];
         }
         // Fallback to previous behavior: first non-space char
-        var clean = str.replace(/\s/g, '');  
+        var clean = str.replace(/\s/g, '');
         return clean.substring(0, 1);
     }
 

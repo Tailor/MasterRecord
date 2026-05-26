@@ -241,6 +241,29 @@ class context {
     }
 
     /**
+     * Parameter placeholder accessor for TypeScript / ESLint-clean queries.
+     *
+     * Bare `$$` in a lambda body is a free identifier that fails static
+     * analysis. Accessing `ctx.$$` (or `this.$$` from inside a context method)
+     * is a valid property reference, so editors and type checkers won't flag it.
+     *
+     * The getter just returns the string `'$$'`. The lambda is never evaluated
+     * at runtime — `.where()` / `.orderBy()` / `.and()` stringify it and treat
+     * any `<ident>.$$` token (or bare `$$`) as a parameter placeholder.
+     *
+     * @example
+     * // Bare $$ — works, but ESLint/TS flag it
+     * await ctx.User.where('u => u.id == $$', 42).single();
+     *
+     * @example
+     * // ctx.$$ — same behavior, ESLint/TS-clean
+     * await ctx.User.where(u => u.id == ctx.$$, 42).single();
+     */
+    get $$() {
+        return '$$';
+    }
+
+    /**
      * Ensure the database engine is initialized and ready for queries.
      *
      * If an async init is in flight (_initPromise), awaits it.
@@ -1792,24 +1815,28 @@ class context {
             const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
             await deleteObject.init(entities[0]);
         } else {
-            // Batch delete - group by table for efficiency
-            const deletesByTable = new Map();  // Use Map instead of object for better performance
+            // Batch delete - group by (table, primaryKey) for efficiency. The
+            // primary-key column is part of the grouping key so a context with
+            // entities that have different PK column names still produces one
+            // bulkDelete call per (table, PK) pair.
+            const deletesByTable = new Map();  // Map<`${table}::${pk}`, { tableName, primaryKey, ids: [] }>
 
             for (const entity of entities) {
                 const tableName = entity.__entity.__name;
                 const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
                 const id = entity[primaryKey];
+                const groupKey = `${tableName}::${primaryKey}`;
 
-                if (!deletesByTable.has(tableName)) {
-                    deletesByTable.set(tableName, []);
+                if (!deletesByTable.has(groupKey)) {
+                    deletesByTable.set(groupKey, { tableName, primaryKey, ids: [] });
                 }
-                deletesByTable.get(tableName).push(id);
+                deletesByTable.get(groupKey).ids.push(id);
             }
 
             try {
                 // Performance: Use for...of with Map entries
-                for (const [tableName, ids] of deletesByTable.entries()) {
-                    await this._SQLEngine.bulkDelete(tableName, ids);
+                for (const { tableName, primaryKey, ids } of deletesByTable.values()) {
+                    await this._SQLEngine.bulkDelete(tableName, ids, primaryKey);
                 }
             } catch (error) {
                 console.error('[Context] Bulk delete failed, falling back to individual deletes:', error.message);

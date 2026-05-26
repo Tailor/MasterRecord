@@ -112,7 +112,7 @@ test('Postgres: COUNT SQL has a FROM clause even with no prior .where()', () => 
     // accept either shape here since the bug under test is about FROM, not
     // the exact COUNT expression.
     assert.match(sql, /SELECT\s+COUNT\(/, 'emits SELECT COUNT(...)');
-    assert.match(sql, /FROM\s+Thing/, 'has FROM clause naming the table');
+    assert.match(sql, /FROM\s+"?Thing"?/, 'has FROM clause naming the table (quoted or unquoted)');
 });
 
 test('SQLite engine directly: buildFrom on empty entityMap now produces a valid FROM', () => {

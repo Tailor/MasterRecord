@@ -297,6 +297,14 @@ class queryMethods{
     }
 
     __validateAndCollectParameters(str, args, methodName){
+        // Normalize `<ident>.$$` (e.g. `ctx.$$`, `this.$$`) to bare `$$` so
+        // TypeScript/ESLint-clean lambdas like `(u) => u.id == ctx.$$` work
+        // identically to `'u => u.id == $$'`. The lambda is never evaluated
+        // at runtime — only stringified — so the property path doesn't matter.
+        // Note: `$$$$` in a String.prototype.replace replacement string means
+        // a literal `$$` (each `$$` escapes to a single `$`).
+        str = str.replace(/[A-Za-z_$][\w$]*\.\$\$/g, '$$$$');
+
         // Count placeholders - support both $$ (standard) and $ (backwards compatibility)
         // Match $$ first to avoid double-counting, then match remaining single $
         let placeholderCount = 0;

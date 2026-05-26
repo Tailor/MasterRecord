@@ -117,13 +117,18 @@ class MySQLEngine {
     }
 
     /**
-     * Batch delete using WHERE IN
+     * Batch delete using WHERE IN.
+     * @param {string} tableName
+     * @param {Array} ids
+     * @param {string} [primaryKey='id'] - Primary-key column name. Defaults to
+     *   'id' for back-compat, but callers should pass the entity's actual PK
+     *   to support custom primary-key names.
      */
-    async bulkDelete(tableName, ids) {
+    async bulkDelete(tableName, ids, primaryKey = 'id') {
         if (!ids || ids.length === 0) return;
 
         const placeholders = ids.map(() => '?').join(', ');
-        const query = `DELETE FROM \`${tableName}\` WHERE id IN (${placeholders})`;
+        const query = `DELETE FROM \`${tableName}\` WHERE \`${primaryKey}\` IN (${placeholders})`;
         return await this._runWithParams(query, ids);
     }
 
@@ -347,9 +352,17 @@ class MySQLEngine {
                 const item = itemEntity[query.parentName][table];
                 const expressions = [];
                 for (const exp in item.expressions) {
-                    let field = tools.capitalizeFirstLetter(item.expressions[exp].field);
-                    if (mainQuery[field] && mainQuery[field].isNavigational) {
-                        entity = $that.getEntity(field, query.entityMap);
+                    // Use the field name verbatim for SQL emission. With
+                    // backtick quoting, MySQL on case-sensitive filesystems
+                    // (Linux defaults) wouldn't match a column named `stage`
+                    // if we emit `\`Stage\``. Only use the capitalized form
+                    // for the navigational-relationship lookup since those
+                    // are stored as PascalCase keys on the entity.
+                    const originalField = item.expressions[exp].field;
+                    const capitalized = tools.capitalizeFirstLetter(originalField);
+                    let field = originalField;
+                    if (mainQuery[capitalized] && mainQuery[capitalized].isNavigational) {
+                        entity = $that.getEntity(capitalized, query.entityMap);
                         field = item.fields[1];
                     }
 
@@ -464,7 +477,10 @@ class MySQLEngine {
         const exprs = item.expressions || [];
 
         function exprToSql(expr) {
-            let field = expr.field.toLowerCase();
+            // Preserve case for column-name emission — `.toLowerCase()` used
+            // to turn `updatedAt` into `updatedat`, which doesn't match a
+            // case-sensitive backtick-quoted column on Linux MySQL.
+            let field = expr.field;
             let ent = entityAlias;
             if (mainQuery[field]) {
                 if (mainQuery[field].isNavigational) {

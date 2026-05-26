@@ -102,11 +102,11 @@ class SQLLiteEngine {
     /**
      * Batch delete multiple entities using WHERE IN
      */
-    async bulkDelete(tableName, ids) {
+    async bulkDelete(tableName, ids, primaryKey = 'id') {
         if (!ids || ids.length === 0) return Promise.resolve();
 
         const placeholders = ids.map(() => '?').join(', ');
-        const query = `DELETE FROM [${tableName}] WHERE id IN (${placeholders})`;
+        const query = `DELETE FROM [${tableName}] WHERE [${primaryKey}] IN (${placeholders})`;
         return Promise.resolve(this._runWithParams(query, ids));
     }
 
@@ -345,10 +345,15 @@ class SQLLiteEngine {
                      var item = itemEntity[query.parentName][table];
                     const expressions = [];
                     for (let exp in item.expressions) {
-                        var field = tools.capitalizeFirstLetter(item.expressions[exp].field);
-                        if(mainQuery[field]){
-                            if(mainQuery[field].isNavigational){
-                                entity = $that.getEntity(field, query.entityMap);
+                        // Use the field name verbatim for SQL emission; only
+                        // use the capitalized form for the navigational
+                        // relationship lookup (those are PascalCase keys).
+                        const originalField = item.expressions[exp].field;
+                        const capitalized = tools.capitalizeFirstLetter(originalField);
+                        var field = originalField;
+                        if(mainQuery[capitalized]){
+                            if(mainQuery[capitalized].isNavigational){
+                                entity = $that.getEntity(capitalized, query.entityMap);
                                 field = item.fields[1];
                             }
                         }
@@ -398,7 +403,12 @@ class SQLLiteEngine {
         var exprs = item.expressions || [];
 
         function exprToSql(expr){
-            var field = expr.field.toLowerCase();
+            // Preserve case for column emission. SQLite identifier matching
+            // is case-insensitive so the old `.toLowerCase()` worked in
+            // practice, but it would have hidden a bug if SQLite were ever
+            // configured with strict case-sensitive identifiers, and it
+            // produced inconsistent SQL output across engines.
+            var field = expr.field;
             var ent = entityAlias;
             if(mainQuery[field]){
                 if(mainQuery[field].isNavigational){

@@ -221,7 +221,7 @@ test('Postgres buildQuery emits ORDER BY ... ASC for .orderBy()', () => {
     );
     const engine = new PostgresEngine();
     const out = engine.buildQuery(script, entity, {});
-    assert.match(out.query, /ORDER BY\s+\w+\.updatedAt\s+ASC/);
+    assert.match(out.query, /ORDER BY\s+\w+\."?updatedAt"?\s+ASC/);
 });
 
 test('Postgres buildQuery emits ORDER BY ... DESC for .orderByDescending()', () => {
@@ -230,7 +230,7 @@ test('Postgres buildQuery emits ORDER BY ... DESC for .orderByDescending()', () 
     );
     const engine = new PostgresEngine();
     const out = engine.buildQuery(script, entity, {});
-    assert.match(out.query, /ORDER BY\s+\w+\.updatedAt\s+DESC/);
+    assert.match(out.query, /ORDER BY\s+\w+\."?updatedAt"?\s+DESC/);
 });
 
 test('Postgres buildQuery emits LIMIT and OFFSET', () => {
