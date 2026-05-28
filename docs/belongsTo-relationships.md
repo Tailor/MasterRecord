@@ -41,18 +41,23 @@ console.log(chunk.Document);     // Accesses the relationship (object or ID)
 
 ### Pattern 1: INSERT Operations (Setting Foreign Keys)
 
-When **creating new records**, use the **relationship property name**:
+Both the relationship property name and the foreign-key column name work (since **v1.1.3** — before that, only the relationship property reliably tracked the assignment).
 
 ```javascript
-const chunk = new DocumentChunk();
+// Option A — relationship property name (always worked)
+const chunk = context.DocumentChunk.new();
 chunk.content = "Sample content";
-chunk.Document = documentId;  // ✅ CORRECT - Use relationship property for INSERT
+chunk.Document = documentId;
+await chunk.save();
 
-context.DocumentChunk.add(chunk);
-context.saveChanges();
+// Option B — foreign-key column name (fixed in v1.1.3)
+const chunk = context.DocumentChunk.new();
+chunk.content = "Sample content";
+chunk.document_id = documentId;
+await chunk.save();
 ```
 
-**Why?** The `belongsTo` setter (entityTrackerModel.js:98-105) triggers dirty field tracking and marks the model as modified when you set the relationship property.
+Both paths produce identical state internally — the FK setter aliases to the relationship property's tracking. Pick whichever feels more natural for your call site. Useful when you only have the ID handy and don't want the noise of "set the relationship property" semantics for what is effectively a scalar assignment.
 
 ### Pattern 2: READ Operations (Accessing Foreign Keys)
 
@@ -77,19 +82,17 @@ if (chunk.document_id === targetId) {
 
 ### Pattern 3: UPDATE Operations
 
-For updates, you can use either property:
+For updates, both properties are equivalent (since **v1.1.3**):
 
 ```javascript
-// Using relationship property (preferred for consistency)
+// Using relationship property
 chunk.Document = newDocumentId;
 
-// Using foreign key directly (also works)
+// Using foreign key directly
 chunk.document_id = newDocumentId;
 ```
 
-Both will work because:
-- Setting `chunk.Document` triggers the relationship setter (line 98-105)
-- Setting `chunk.document_id` directly modifies the underlying value
+Both push the same canonical name (`Document`) to `__dirtyFields` and store the value where the engine UPDATE builders read it. Before v1.1.3, `chunk.document_id = newDocumentId` on a loaded entity crashed with `Cannot read properties of undefined (reading 'set')` because the tracker's setter dereferenced `__entity['document_id'].set` — and `__entity` only has the relationship property `Document`, not a separate `document_id` field. That forced users into the `context.db` raw-SQL escape hatch for UPDATE-by-FK.
 
 ## Code References
 

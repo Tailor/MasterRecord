@@ -1,5 +1,29 @@
 # MasterRecord Changelog
 
+## v1.1.3 — belongsTo FK column setter on both `.new()` and loaded entities
+
+**Bug:** `belongsTo('Run')` declares a navigation property `Run` and an implicit FK column `run_id`. Two assignment paths existed but only one worked reliably:
+
+| Path                                | Worked before? | Why                                                 |
+| ----------------------------------- | -------------- | --------------------------------------------------- |
+| `step.Run = id` (any entity)        | ✅             | Setter installed by relationship-models pass        |
+| `step.run_id = id` (new entity)     | ⚠️ partial     | Value reached INSERT via fallback, but wasn't tracked as dirty |
+| `step.run_id = id` (loaded entity)  | ❌ **crash**   | Tracker setter dereferenced `__entity['run_id'].set` — undefined → TypeError |
+
+The loaded-entity crash forced users into the raw-SQL escape hatch on `context.db` to update FKs.
+
+**Fix:**
+- `QueryLanguage/queryMethods.js` `.new()` — for each `belongsTo` field, also install a setter on the FK column name (e.g. `run_id`). Both `step.Run = id` and `step.run_id = id` now produce identical tracked state.
+- `Entity/entityTrackerModel.js` `build()` — when the DB-row iterator builds a setter for a column that has no `__entity` entry (the FK column case), guard the `.set` access and canonicalize the dirty-field name to the navigation property's name so the engine UPDATE/INSERT builders' existing belongsTo path picks it up.
+
+Setting the FK column on a loaded entity now correctly emits an UPDATE; setting it on a `.new()` entity correctly marks the field dirty so subsequent saves include it.
+
+3 new tests in `test/belongs-to-fk-setter.test.js` cover the three paths above.
+
+### Known limitation: columns added by a migration after the class is loaded
+
+If a migration adds a column but the entity class file isn't reloaded (Node's import cache is process-lifetime), assignments to the new field on `.new()` instances won't be tracked because `__entity` was built from the stale class. There's no fix possible from inside the library — restart the process after editing the model class. As a stopgap, use `context.db` to run raw SQL.
+
 ## v1.1.2 — belongsTo FK type resolution + MySQL/SQLite type-map gaps
 
 **Bug:** `belongsTo()` hardcoded the FK column type to `integer` at entity-definition time, before the parent entity was registered. If the parent's PK was `string` / `bigint` / `uuid`, the FK was still emitted as `INTEGER`. SQLite accepted the mismatch silently (dynamic typing); Postgres and MySQL rejected inserts of string IDs into integer columns.

@@ -268,3 +268,41 @@ console.log(user.Auth.password_hash);  // Wrong! This is navigation property
 - **Add debug logging** to catch Promise objects being treated as entities
 
 This pattern is consistent throughout MasterRecord and applies to all relationship types: `hasOne`, `hasMany`, `belongsTo`, and `hasManyThrough`.
+
+---
+
+## "Cannot read properties of undefined (reading 'set')" on FK assignment
+
+If you see this error setting a foreign-key column on a loaded entity:
+
+```javascript
+const step = await ctx.Step.findById(1);
+step.run_id = 'run_beta';  // ← TypeError before v1.1.3
+await step.save();
+```
+
+**Cause:** before v1.1.3, the entity tracker's setter dereferenced `__entity['run_id'].set` without a null guard. The `belongsTo('Run')` definition only registers the navigation property `Run` (with `foreignKey: 'run_id'`) — there is no `run_id` field on `__entity`, so `__entity['run_id']` is `undefined` and accessing `.set` on it threw.
+
+**Fix:** upgrade to **v1.1.3 or later**. Both `step.Run = id` and `step.run_id = id` are now safe and produce identical persisted state.
+
+If you can't upgrade, the workaround is to use the navigation property: `step.Run = id`, or to drop to raw SQL via `ctx.db`.
+
+---
+
+## A column added by migration isn't seen by `.new()` until I restart Node
+
+If you add a column via a migration, update the entity class to declare it, and assignments to the new field still don't track:
+
+```javascript
+// 1. Migration adds `step.created_at`
+// 2. You add `created_at(db) { db.string(); }` to Step.js
+// 3. Without restarting Node:
+const step = ctx.Step.new();
+step.created_at = String(Date.now());  // ← stored as a plain JS prop, INSERT misses it
+```
+
+**Cause:** Node ESM module cache is process-lifetime. The context built `__entity` from the Step class *as it was when the process started*. Editing Step.js doesn't update the in-memory class — and therefore doesn't update `__entity`.
+
+**Fix:** restart the Node process. There is no library-level fix; this is how Node module loading works.
+
+Until restart, the workaround is to set the field via raw SQL through `ctx.db` (e.g. `ctx.db.prepare('INSERT INTO Step (...) VALUES (...)').run(...)`) — or, for fields that exist in the DB but not the class definition, lazy-load the entity (which iterates the DB row's actual columns and creates setters for them on the instance, even if the class doesn't declare them).

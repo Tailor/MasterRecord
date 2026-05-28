@@ -701,6 +701,60 @@ class queryMethods{
                                 return this.__proto__["_" + fname];
                             }
                         });
+
+                        // belongsTo declares a navigation property (e.g. `Run`)
+                        // and an implicit foreign-key column (e.g. `run_id`).
+                        // The loop above installs a setter for `Run`. Also
+                        // install one on the FK column name so user code can
+                        // do `step.run_id = 'xyz'` instead of being forced
+                        // into `step.Run = 'xyz'`.
+                        //
+                        // Both paths must produce identical state: push the
+                        // *navigation* name to `__dirtyFields` and store the
+                        // value at `_<navName>`. The engine INSERT/UPDATE
+                        // builders detect belongsTo by looking up that name
+                        // in `__entity`; if we pushed the FK column name
+                        // instead, the builder would crash on
+                        // `__entity['run_id']` (no such key) when computing
+                        // the SQL column type.
+                        if (fieldDef && fieldDef.relationshipType === 'belongsTo' && fieldDef.foreignKey) {
+                            const fkName = fieldDef.foreignKey;
+                            const navName = fname;
+                            // Don't clobber an explicit column declaration:
+                            // some entities declare `run_id(db) { db.string() }`
+                            // alongside `Run(db) { db.belongsTo('Run') }`. If
+                            // that's the case, the explicit setter has already
+                            // been installed by this loop on its own iteration.
+                            if (!Object.prototype.hasOwnProperty.call(newEntity, fkName)) {
+                                Object.defineProperty(newEntity, fkName, {
+                                    enumerable: true,
+                                    configurable: true,
+                                    set: function(value) {
+                                        this.__proto__["_" + navName] = value;
+                                        if (!this.__dirtyFields.includes(navName)) {
+                                            this.__dirtyFields.push(navName);
+                                        }
+                                        if (this.__state === 'track') {
+                                            this.__state = 'modified';
+                                        }
+                                        if (this.__context && typeof this.__context.__track === 'function') {
+                                            this.__context.__track(this);
+                                        }
+                                    },
+                                    get: function() {
+                                        // Prefer the nav-property backing
+                                        // (most recently assigned). Fall back
+                                        // to the FK-column backing populated
+                                        // by DB hydration in
+                                        // entityTrackerModel.build().
+                                        const navVal = this.__proto__["_" + navName];
+                                        return navVal !== undefined
+                                            ? navVal
+                                            : this.__proto__["_" + fkName];
+                                    }
+                                });
+                            }
+                        }
                     })(fieldName, field);
                 }
             }
