@@ -20,6 +20,18 @@ class EntityTrackerModel {
         modelClass.__context = context;
         this.buildRelationshipModels(modelClass, currentEntity, dataModel);
 
+        // Pre-compute belongsTo navName lookup for FK column names that
+        // appear in the DB row but not as a top-level key in `__entity`
+        // (e.g. row has `run_id`; __entity has `Run` with foreignKey:
+        // 'run_id' but no separate `run_id` declaration).
+        const fkToNavName = {};
+        for (const k of Object.keys(currentEntity)) {
+            const def = currentEntity[k];
+            if (def && def.relationshipType === 'belongsTo' && def.foreignKey) {
+                fkToNavName[def.foreignKey] = k;
+            }
+        }
+
         // loop through data model fields
         for (const [modelField, modelFieldValue] of modelFields) {
 
@@ -108,23 +120,52 @@ class EntityTrackerModel {
                         }
 
                         modelClass.__state = "modified";
+
+                        // belongsTo FK columns appear in the DB row but not as
+                        // a top-level key in `__entity` (the entity defines
+                        // the navigation property `Run` with foreignKey:
+                        // 'run_id'; there's no separate 'run_id' field). The
+                        // engine UPDATE/INSERT builders detect belongsTo by
+                        // looking up __entity[<dirtyField>]; pushing 'run_id'
+                        // would crash on `__entity['run_id'].type`. Translate
+                        // the dirty field to the navigation name and mirror
+                        // the value into both backing fields so existing
+                        // belongsTo handling (which reads `_<navName>`) and
+                        // FK-name reads (which read `_<modelField>`) both
+                        // return the new value.
+                        const navNameForFk = (!currentEntity[modelField] && fkToNavName[modelField])
+                            ? fkToNavName[modelField]
+                            : null;
+                        const dirtyName = navNameForFk || modelField;
+
                         // Deduplicate: setting the same field twice used to push
                         // the name twice, producing duplicate assignments in the
                         // UPDATE SET clause (`SET col = ?, col = ?`) which is a
                         // hard error in Postgres and may silently take-last in
                         // MySQL/SQLite.
-                        if (!modelClass.__dirtyFields.includes(modelField)) {
-                            modelClass.__dirtyFields.push(modelField);
+                        if (!modelClass.__dirtyFields.includes(dirtyName)) {
+                            modelClass.__dirtyFields.push(dirtyName);
                         }
                         // ensure this entity is tracked on any modification
                         if(modelClass.__context && typeof modelClass.__context.__track === 'function'){
                             modelClass.__context.__track(modelClass);
                         }
-                        if(typeof currentEntity[modelField].set === "function"){
-                            this["__proto__"]["_" + modelField] = currentEntity[modelField].set(value);
+                        // Guard against currentEntity[modelField] being
+                        // undefined (the FK column case described above).
+                        const fieldDefForSet = currentEntity[modelField];
+                        let storedValue;
+                        if(fieldDefForSet && typeof fieldDefForSet.set === "function"){
+                            storedValue = fieldDefForSet.set(value);
                         }else{
-                            // Then it will add name to dirty fields
-                            this["__proto__"]["_" + modelField] = value;
+                            storedValue = value;
+                        }
+                        this["__proto__"]["_" + modelField] = storedValue;
+                        if (navNameForFk) {
+                            // Mirror into the nav-property backing so the
+                            // engine UPDATE builders (which read
+                            // `_<dirtyField>` for belongsTo) find the new
+                            // value.
+                            this["__proto__"]["_" + navNameForFk] = storedValue;
                         }
                     },
                     get:function(){
