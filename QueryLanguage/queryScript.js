@@ -3,8 +3,6 @@
 import tools from '../Tools.js';
 import QueryParameters from './queryParameters.js';
 
-const LOG_OPERATORS_REGEX = /(\|\|)|(&&)/;
-
 // Escape special regex characters so user-supplied names can be safely
 // interpolated into RegExp constructors (prevents "Unmatched ')'" etc.)
 function escapeRegExp(str) {
@@ -245,11 +243,11 @@ class queryScript{
 
 
     splitGroupsByLogicalOperators(text) {
-        let parts = {}, tmp;
+        const parts = {};
         const part = {query : text, name : "query"}
 
         //tmp = this.splitByLogicalOperators(part.query, entityRegExp)
-        tmp = this.extractInside(part.query, part.name);
+        const tmp = this.extractInside(part.query, part.name);
         if(tmp){
             part.inside = tmp;
             parts[part.name] = part;
@@ -441,17 +439,17 @@ class queryScript{
                     if ((match = segment.match(exprPartRegExp))) {
                         fields = match[1].split(".");
                         func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
-                        if (func == "==" || func == "===") {
+                        if (func === "==" || func === "===") {
                             func = "=";
                         }
-                        else if (func == "!==") {
+                        else if (func === "!==") {
                             func = "!=";
                         }
                         arg = match[2] || match[4];
-                        if (arg == "true" || arg == "false") {
-                            arg = arg == "true";
+                        if (arg === "true" || arg === "false") {
+                            arg = arg === "true";
                         }
-                        else if (arg && arg.charAt(0) == arg.charAt(arg.length - 1) && (arg.charAt(0) == "'" || arg.charAt(0) == '"')) {
+                        else if (arg && arg.charAt(0) === arg.charAt(arg.length - 1) && (arg.charAt(0) === "'" || arg.charAt(0) === '"')) {
                             arg = arg.slice(1, -1);
                         }
                         part.entity = entity;

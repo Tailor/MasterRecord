@@ -601,7 +601,6 @@ class queryMethods{
         };
 
         // Set up property setters for all entity fields
-        const $that = this;
         for (const fieldName in this.__entity) {
             if(!fieldName.startsWith("__")){
                 const field = this.__entity[fieldName];
@@ -802,7 +801,7 @@ class queryMethods{
                 if (!isRelationship) {
                     try {
                         plain[fieldName] = this[fieldName];
-                    } catch (e) {
+                    } catch (_e) {
                         // Skip fields that throw errors when accessed
                     }
                 }
@@ -836,7 +835,7 @@ class queryMethods{
                                     _visited: visited
                                 });
                             }
-                        } catch (e) {
+                        } catch (_e) {
                             // Skip relationships that throw errors when accessed
                         }
                     }

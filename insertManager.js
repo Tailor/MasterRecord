@@ -337,7 +337,7 @@ class InsertManager {
         for (const entity of Object.keys(entityModel)) {
             const currentEntity = entityModel[entity];
 
-            if (!entityModel.hasOwnProperty(entity)) {
+            if (!Object.prototype.hasOwnProperty.call(entityModel, entity)) {
                 continue;
             }
 

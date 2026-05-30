@@ -163,7 +163,7 @@ class MySQLEngine {
      * method (expects a lambda), not a SQL wrapper; the return value was the
      * queryScript object and running it as SQL produced "[object Object]".
      */
-    async getCount(queryObject, entity, context) {
+    async getCount(queryObject, entity, _context) {
         const query = queryObject.script;
         try {
             let sql;
@@ -713,7 +713,7 @@ class MySQLEngine {
             }
 
             switch (type) {
-                case "belongsTo":
+                case "belongsTo": {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
                     let fkValue = model[dirtyFields[column]];
                     try {
@@ -730,8 +730,9 @@ class MySQLEngine {
                     sqlParts.push(`\`${foreignKey}\` = ?`);
                     params.push(model[fore]);
                     break;
+                }
 
-                case "integer":
+                case "integer": {
                     let intValue = model["_" + dirtyFields[column]];
                     try {
                         intValue = FieldTransformer.toDatabase(intValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -746,8 +747,9 @@ class MySQLEngine {
                     sqlParts.push(`\`${dirtyFields[column]}\` = ?`);
                     params.push(intValue);
                     break;
+                }
 
-                case "string":
+                case "string": {
                     let strValue = model["_" + dirtyFields[column]];
                     try {
                         strValue = FieldTransformer.toDatabase(strValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -762,8 +764,9 @@ class MySQLEngine {
                     sqlParts.push(`\`${dirtyFields[column]}\` = ?`);
                     params.push(strValue);
                     break;
+                }
 
-                case "boolean":
+                case "boolean": {
                     let boolValue = model["_" + dirtyFields[column]];
                     try {
                         boolValue = FieldTransformer.toDatabase(boolValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -780,8 +783,9 @@ class MySQLEngine {
                     sqlParts.push(`\`${dirtyFields[column]}\` = ?`);
                     params.push(bool);
                     break;
+                }
 
-                case "time":
+                case "time": {
                     let timeValue = model["_" + dirtyFields[column]];
                     try {
                         timeValue = FieldTransformer.toDatabase(timeValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -796,6 +800,7 @@ class MySQLEngine {
                     sqlParts.push(`\`${dirtyFields[column]}\` = ?`);
                     params.push(timeValue);
                     break;
+                }
 
                 case "hasMany":
                     sqlParts.push(`\`${dirtyFields[column]}\` = ?`);
@@ -872,7 +877,7 @@ class MySQLEngine {
                     params.push(fieldColumn);
                 } else {
                     switch (modelEntity[column].type) {
-                        case "belongsTo":
+                        case "belongsTo": {
                             const fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column);
                             if (Object.keys(fieldObject).length > 0) {
                                 const primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
@@ -882,6 +887,7 @@ class MySQLEngine {
                                 params.push(fieldColumn);
                             }
                             break;
+                        }
                     }
                 }
             }

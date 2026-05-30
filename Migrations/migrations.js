@@ -19,7 +19,7 @@ class Migrations{
             const seenTableNames = new Set();  // Track processed table names to prevent duplicates
 
             if(oldSchema.length === 0){
-                newSchema.forEach(function (item, index) {
+                newSchema.forEach(function (item, _index) {
                     const tableName = item["__name"];
 
                     // Skip if we've already processed this table name
@@ -47,7 +47,7 @@ class Migrations{
                 });
             }
             else{
-                newSchema.forEach(function (item, index) {
+                newSchema.forEach(function (item, _index) {
                     const tableName = item["__name"];
 
                     // Skip if we've already processed this table name
@@ -72,7 +72,7 @@ class Migrations{
                         newSeedData : []
                     }
 
-                    oldSchema.forEach(function (oldItem, index) {
+                    oldSchema.forEach(function (oldItem, _index) {
                         const oldItemName = oldItem["__name"];
                         if(table.name === oldItemName){
                             table.old = oldItem;
@@ -87,7 +87,7 @@ class Migrations{
     }
 
     #findDeletedColumns(tables){
-            tables.forEach(function (item, index) {
+            tables.forEach(function (item, _index) {
                 let deletedColumn = null;
                 if(item.new && item.old){
                     Object.keys(item.old).forEach(function (key) {
@@ -111,7 +111,7 @@ class Migrations{
     #findUpdatedColumns(tables){
 
 
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
            
             const UD = diff.updatedDiff(item.old, item.new);
             const isEmpty = Object.keys(UD).length === 0;
@@ -131,7 +131,7 @@ class Migrations{
     }
 
     #findNewColumns(tables){
-            tables.forEach(function (item, index) {
+            tables.forEach(function (item, _index) {
                 if(item.new && item.old){
                     Object.keys(item.new).forEach(function (key) {
                         if(typeof item.new[key] === "object"){
@@ -170,7 +170,7 @@ class Migrations{
 
     #findNewTables(tables){
         // find new tables 
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             if(item.new && item.old){
                     if(Object.keys(item.old).length === 0){
                         item.newTables.push(item);
@@ -201,7 +201,7 @@ class Migrations{
     }
 
     #findNewIndexes(tables){
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             // Skip new tables — createTable() in schema.js already creates their indexes
             if(item.newTables && item.newTables.length > 0) return;
 
@@ -248,7 +248,7 @@ class Migrations{
     }
 
     #findDeletedIndexes(tables){
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             if(item.new && item.old){
                 Object.keys(item.old).forEach(function (key) {
                     if(typeof item.old[key] === "object" && item.old[key].indexes){
@@ -292,7 +292,7 @@ class Migrations{
     }
 
     #findNewCompositeIndexes(tables) {
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             // Skip new tables — createTable() in schema.js already creates their composite indexes
             if(item.newTables && item.newTables.length > 0) return;
 
@@ -320,7 +320,7 @@ class Migrations{
     }
 
     #findDeletedCompositeIndexes(tables) {
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             if (item.new && item.old) {
                 const newComposite = item.new.__compositeIndexes || [];
                 const oldComposite = item.old.__compositeIndexes || [];
@@ -393,7 +393,7 @@ class Migrations{
             const newObj = {}
 
             for (const key in entity) {
-                if (entity.hasOwnProperty(key)) {
+                if (Object.prototype.hasOwnProperty.call(entity, key)) {
               
                     if(entity[key].type !== "hasOne" && entity[key].type  !== "hasMany" && entity[key].type  !== "hasManyThrough"){
                         // if(entity[key].relationshipType == "belongsTo" ){
@@ -464,21 +464,21 @@ class Migrations{
                     // this.createTable(table.TableName) can safely access it.
                     tableObj[item.name] = columnInfo.new;
                     
-                    item.newTables.forEach(function (column, ind) {
+                    item.newTables.forEach(function (_column, _ind) {
                         tableObj[item.name] = columnInfo.new;
                     });
 
-                    item.newColumns.forEach(function (column, ind) {
+                    item.newColumns.forEach(function (column, _ind) {
                         columnInfo.new[column].tableName = item.name;
                         tableObj[column] = columnInfo.new[column];
                     });
 
-                    item.deletedColumns.forEach(function (column, ind) {
+                    item.deletedColumns.forEach(function (column, _ind) {
                         columnInfo.old[column].tableName = item.name;
                         tableObj[column] = columnInfo.old[column];
                     });
 
-                    item.updatedColumns.forEach(function (column, ind) {
+                    item.updatedColumns.forEach(function (column, _ind) {
                         tableObj[column.table.name] = column;
                     });
 
@@ -521,30 +521,30 @@ class Migrations{
         }
         const tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
 
-        tables.forEach(function (item, index) {
+        tables.forEach(function (item, _index) {
             // (Whole-table create/drop is handled below via item.newTables /
             //  item.deletedColumns. The previous `if (item.old === null)` /
             //  `if (item.new === null)` branches here referenced an undefined
             //  `column` and never ran — old/new are always {} or an object,
             //  never null — so they were dead, broken code and were removed.)
 
-            item.newTables.forEach(function (column, ind) {
+            item.newTables.forEach(function (_column, _ind) {
                 MT.createTable("up", item.name);
                 MT.dropTable("down", item.name);
             });
 
             // add new columns for table
-            item.newColumns.forEach(function (column, index) {
+            item.newColumns.forEach(function (column, _index) {
                 MT.addColumn("up", column, item.name);
                 MT.dropColumn("down", column, item.name);
             });
 
-            item.deletedColumns.forEach(function (column, index) {
+            item.deletedColumns.forEach(function (column, _index) {
                 MT.dropColumn("up", column, item.name);
                 MT.addColumn("down",column, item.name);
             });
 
-            item.updatedColumns.forEach(function (column, index) {
+            item.updatedColumns.forEach(function (column, _index) {
                 const isEmpty = Object.keys(column).length === 0;
                 if(!isEmpty){
                     MT.alterColumn("up", column.table.name, item.name);
@@ -552,19 +552,19 @@ class Migrations{
                 }
             });
 
-            item.newIndexes.forEach(function (indexInfo, index) {
+            item.newIndexes.forEach(function (indexInfo, _index) {
                 MT.createIndex("up", indexInfo);
             });
 
-            item.deletedIndexes.forEach(function (indexInfo, index) {
+            item.deletedIndexes.forEach(function (indexInfo, _index) {
                 MT.dropIndex("up", indexInfo);
             });
 
-            item.newCompositeIndexes.forEach(function (indexInfo, index) {
+            item.newCompositeIndexes.forEach(function (indexInfo, _index) {
                 MT.createCompositeIndex("up", indexInfo);
             });
 
-            item.deletedCompositeIndexes.forEach(function (indexInfo, index) {
+            item.deletedCompositeIndexes.forEach(function (indexInfo, _index) {
                 MT.dropCompositeIndex("up", indexInfo);
             });
 

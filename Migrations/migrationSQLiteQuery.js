@@ -258,7 +258,6 @@ class migrationSQLiteQuery {
     createFullTextIndex(info){
         const ftsTable = info.ftsTableName || `${info.tableName}_fts`;
         const cols = info.columns.join(', ');
-        const insertCols = info.columns.map(c => `[${c}]`).join(', ');
         const newCols = info.columns.map(c => `new.[${c}]`).join(', ');
         const oldCols = info.columns.map(c => `old.[${c}]`).join(', ');
 

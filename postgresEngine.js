@@ -215,7 +215,7 @@ class postgresEngine {
     /**
      * SELECT COUNT
      */
-    async getCount(queryObject, entity, context) {
+    async getCount(queryObject, entity, _context) {
         const query = queryObject.script;
         try {
             let queryString;
@@ -225,7 +225,7 @@ class postgresEngine {
                 if (query.count === undefined) {
                     query.count = "none";
                 }
-                const entityAlias = this.getEntity(entity.__name, query.entityMap);
+                const _entityAlias = this.getEntity(entity.__name, query.entityMap);
                 // Include buildAnd so chained .and() calls survive into the
                 // COUNT SQL. Without this they were silently dropped.
                 queryString = {
@@ -325,8 +325,8 @@ class postgresEngine {
     /**
      * Build complete SELECT query with parameters
      */
-    buildQuery(query, entity, context) {
-        const entityStr = this.getEntity(entity.__name, query.entityMap);
+    buildQuery(query, entity, _context) {
+        const _entityStr = this.getEntity(entity.__name, query.entityMap);
         const params = query.parameters ? query.parameters.getParams() : [];
 
         // Standard SQL clause order: SELECT ... FROM ... WHERE ... AND ... ORDER BY ... LIMIT ... OFFSET ...
@@ -667,7 +667,7 @@ class postgresEngine {
             }
 
             switch (type) {
-                case "belongsTo":
+                case "belongsTo": {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
                     let fkValue = model[dirtyFields[column]];
                     // Apply toDatabase transformer
@@ -686,8 +686,9 @@ class postgresEngine {
                     sqlParts.push(`${$that._q(foreignKey)} = $${paramIndex++}`);
                     params.push(model[fore]);
                     break;
+                }
 
-                case "integer":
+                case "integer": {
                     let intValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
@@ -704,8 +705,9 @@ class postgresEngine {
                     sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(intValue);
                     break;
+                }
 
-                case "string":
+                case "string": {
                     let strValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
@@ -722,8 +724,9 @@ class postgresEngine {
                     sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(strValue);
                     break;
+                }
 
-                case "boolean":
+                case "boolean": {
                     let boolValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
@@ -740,8 +743,9 @@ class postgresEngine {
                     sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(boolValue);
                     break;
+                }
 
-                case "time":
+                case "time": {
                     let timeValue = model["_" + dirtyFields[column]];
                     // Apply toDatabase transformer
                     try {
@@ -758,6 +762,7 @@ class postgresEngine {
                     sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
                     params.push(timeValue);
                     break;
+                }
 
                 case "hasMany":
                     sqlParts.push(`${$that._q(dirtyFields[column])} = $${paramIndex++}`);
@@ -795,7 +800,6 @@ class postgresEngine {
         const $that = this;
         const columnNames = [];
         const params = [];
-        const paramIndex = 1;
 
         for (const column in modelEntity) {
             if (column.indexOf("__") === -1) {
@@ -893,21 +897,23 @@ class postgresEngine {
                 return String(value);
 
             case 'integer':
-            case 'int':
+            case 'int': {
                 const intVal = parseInt(value, 10);
                 if (isNaN(intVal)) {
                     throw new Error(`Field '${entityName}.${fieldName}' must be an integer, got: ${value}`);
                 }
                 return intVal;
+            }
 
             case 'float':
             case 'double':
-            case 'decimal':
+            case 'decimal': {
                 const floatVal = parseFloat(value);
                 if (isNaN(floatVal)) {
                     throw new Error(`Field '${entityName}.${fieldName}' must be a number, got: ${value}`);
                 }
                 return floatVal;
+            }
 
             case 'boolean':
             case 'bool':
@@ -918,7 +924,7 @@ class postgresEngine {
 
             case 'date':
             case 'datetime':
-            case 'timestamp':
+            case 'timestamp': {
                 if (value instanceof Date) {
                     return value;
                 }
@@ -927,6 +933,7 @@ class postgresEngine {
                     throw new Error(`Field '${entityName}.${fieldName}' must be a valid date, got: ${value}`);
                 }
                 return dateVal;
+            }
 
             case 'json':
             case 'jsonb':

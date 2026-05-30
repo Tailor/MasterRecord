@@ -47,7 +47,7 @@ class Tools{
 
     static getPrimaryKeyObject(model){
         for (const key in model) {
-            if (model.hasOwnProperty(key)) {
+            if (Object.prototype.hasOwnProperty.call(model, key)) {
                 if(model[key].primary){
                     if(model[key].primary === true){
                         return key
@@ -59,7 +59,7 @@ class Tools{
 
     static findForeignTable(name, model){
         for (const key in model) {
-            if (model.hasOwnProperty(key)) {
+            if (Object.prototype.hasOwnProperty.call(model, key)) {
                 if(model[key].foreignTable){
                     if(model[key].foreignTable === name){
                         return model[key];
@@ -131,7 +131,7 @@ class Tools{
 
         for(const entity in modelEntity) {
             const currentEntity = modelEntity[entity];
-            if (modelEntity.hasOwnProperty(entity)) {
+            if (Object.prototype.hasOwnProperty.call(modelEntity, entity)) {
                 if(currentEntity.primary === true){
                     delete newCurrentModel[`_${entity}`];
                 }
@@ -148,7 +148,7 @@ class Tools{
     static getEntity(name, modelEntity){
         for(const entity in modelEntity) {
             const currentEntity = modelEntity[entity];
-            if (modelEntity.hasOwnProperty(entity)) {
+            if (Object.prototype.hasOwnProperty.call(modelEntity, entity)) {
                 if(currentEntity.__name === name){
                     return currentEntity;
                 }

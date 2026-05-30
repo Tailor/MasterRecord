@@ -70,11 +70,11 @@ class PostgresSyncConnect {
         this.engine.setDB(this.pool, 'postgres');
 
         // Set up error handlers
-        this.pool.on('error', (err, client) => {
+        this.pool.on('error', (err, _client) => {
             console.error('Unexpected PostgreSQL error:', err);
         });
 
-        this.pool.on('connect', (client) => {
+        this.pool.on('connect', (_client) => {
             console.log('New PostgreSQL client connected');
         });
 

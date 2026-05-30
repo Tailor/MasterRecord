@@ -19,7 +19,6 @@ import query from './QueryLanguage/queryMethods.js';
 import tools from './Tools.js';
 import SQLLiteEngine from './SQLLiteEngine.js';
 import MySQLEngine from './mySQLEngine.js';
-import PostgresEngine from './postgresEngine.js';
 import insertManager from './insertManager.js';
 import deleteManager from './deleteManager.js';
 import { globSync } from 'glob';
@@ -2059,7 +2058,7 @@ class context {
             const entity = EntityClass.new();
             // Copy properties from data object to entity
             for (const key in item) {
-                if (item.hasOwnProperty(key)) {
+                if (Object.prototype.hasOwnProperty.call(item, key)) {
                     entity[key] = item[key];
                 }
             }
@@ -2112,7 +2111,7 @@ class context {
 
             // Apply updates to entity
             for (const key in update) {
-                if (update.hasOwnProperty(key) && key !== 'id') {
+                if (Object.prototype.hasOwnProperty.call(update, key) && key !== 'id') {
                     entity[key] = update[key];
                 }
             }
@@ -2249,7 +2248,7 @@ class context {
      * });
      */
     static async closeAll() {
-        for (const [key, entry] of _pools) {
+        for (const [_key, entry] of _pools) {
             try {
                 if (entry.promise) {
                     // Wait for pending init to complete, then close it

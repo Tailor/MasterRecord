@@ -37,7 +37,7 @@ export default ${this.name};
 `;
     }
 
-    alterColumn(type, name, parent){
+    alterColumn(type, name, _parent){
         if(type === "up"){
             this.#up += os.EOL + `     await this.alterColumn(table.${name});`
         }
@@ -54,7 +54,7 @@ export default ${this.name};
         }
     }
 
-    addColumn(type, name, parent){
+    addColumn(type, name, _parent){
         if(type === "up"){
             this.#up += os.EOL + `     await this.addColumn(table.${name});`
         }
@@ -73,7 +73,7 @@ export default ${this.name};
         }
     }
 
-    dropColumn(type, name, parent){
+    dropColumn(type, name, _parent){
         if(type === "up"){
             this.#up += os.EOL + `     await this.dropColumn(table.${name});`
         }
@@ -83,7 +83,7 @@ export default ${this.name};
     }
 
     createIndex(type, indexInfo){
-        const indexName = indexInfo.indexName === true
+        const _indexName = indexInfo.indexName === true
             ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
             : indexInfo.indexName;
 
@@ -102,7 +102,7 @@ export default ${this.name};
     }
 
     dropIndex(type, indexInfo){
-        const indexName = indexInfo.indexName === true
+        const _indexName = indexInfo.indexName === true
             ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
             : indexInfo.indexName;
 
@@ -277,7 +277,7 @@ export default ${this.name};
             }
 
             const pkValue = rollback.value;
-            const pkKey = rollback.key || 'id';
+            const _pkKey = rollback.key || 'id';
 
             // Generate delete code with error handling
             this.#down += os.EOL + `     try {`;

@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.1.7 — clear remaining safe lint errors (0 errors)
+
+Follow-up to 1.1.6. ESLint now reports **0 errors** (192 `no-var`/`no-redeclare` warnings remain, intentionally deferred — see below). No runtime behavior changes; full test suite green (same single pre-existing `count-no-from-audit` failure).
+
+- **`no-prototype-builtins` (9):** `obj.hasOwnProperty(k)` → `Object.prototype.hasOwnProperty.call(obj, k)`.
+- **`no-case-declarations` (23):** wrapped `switch`-`case` bodies that declare `const`/`let` in blocks (SQLite/MySQL/Postgres engines).
+- **`no-unused-vars` (61):** removed genuinely-unused imports/locals (verified safe — e.g. an unused `PostgresEngine` import in `context.js`, which builds the PG engine via `PostgresClient`/`__postgresInit`, and an unused `tools` import in `deleteManager.js`), prefixed unused params/catch bindings with `_`.
+- **`eqeqeq` (12):** switched the rule to `'smart'` (permits the `x == null` null-or-undefined idiom) and converted the lambda-DSL string comparisons in `queryScript` to `===`.
+- **`prefer-const` (2):** in `queryScript`.
+
+**Deferred (now `warn`, not `error`):** `no-var` (123) and `no-redeclare` (69). These live in legacy var-heavy engine internals; mechanically converting them across the MySQL/Postgres code paths — which the local test run (SQLite only) does not exercise — risks silent regressions. Tracked for a dedicated, individually-verified pass.
+
 ## v1.1.6 — lint-driven bug fixes + ESLint tooling
 
 Set up ESLint (flat config, eslint 9 + `globals.node`) with a `lint`/`lint:check` script and ran it across the codebase. Beyond the mechanical `var`→`const`/`let` autofix (safe; full test suite still green), the lint surfaced several genuine bugs, now fixed:

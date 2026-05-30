@@ -168,7 +168,7 @@ class SQLLiteEngine {
         }catch(_){ return Promise.resolve([]); }
     }
 
-    async getCount(queryObject, entity, context){
+    async getCount(queryObject, entity, _context){
         const query = queryObject.script;
         const queryString = {};
         try {
@@ -242,7 +242,7 @@ class SQLLiteEngine {
 
     }
 
-    buildCount(query, mainQuery){
+    buildCount(query, _mainQuery){
             const entity = this.getEntity(query.parentName, query.entityMap);
             if(query.count){
                 if(query.count !== "none"){
@@ -257,7 +257,7 @@ class SQLLiteEngine {
             }
     }
 
-    buildQuery(query, entity, context, limit){
+    buildQuery(query, entity, context, _limit){
 
         const queryObject = {};
         queryObject.entity = this.getEntity(entity.__name, query.entityMap);
@@ -324,7 +324,6 @@ class SQLLiteEngine {
 
     buildOrderBy(query, entity){
         // ORDER BY column1, column2, ... ASC|DESC;
-        const $that = this;
         let orderByType = "ASC";
         let orderByEntity = query.orderBy;
         let strQuery = "";
@@ -759,7 +758,7 @@ class SQLLiteEngine {
             }
             // TODO Boolean value is a string with a letter
             switch(type){
-                case "belongsTo" :
+                case "belongsTo" : {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
                     let fkValue = model[dirtyFields[column]];
                     // 🔥 NEW: Validate foreign key type
@@ -772,6 +771,7 @@ class SQLLiteEngine {
                     // dirty fields must not wipe the accumulated SET clause.
                     argument = argument === null ? `${foreignKey} = ${fkValue},` : `${argument} ${foreignKey} = ${fkValue},`;
                 break;
+                }
                  case "integer" :
                      //model.__entity[dirtyFields[column]].skipGetFunction = true;
                     var columneValue = model[`_${dirtyFields[column]}`];
@@ -875,7 +875,7 @@ class SQLLiteEngine {
 
             // Build parameterized SET clause
             switch(type){
-                case "belongsTo":
+                case "belongsTo": {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
                     let fkValue = model[dirtyFields[column]];
 
@@ -895,6 +895,7 @@ class SQLLiteEngine {
                     sqlParts.push(`[${foreignKey}] = ?`);
                     params.push(model[fore]);
                 break;
+                }
                 case "integer":
                     var intValue = model["_" + dirtyFields[column]];
 

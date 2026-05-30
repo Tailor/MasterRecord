@@ -222,7 +222,7 @@ class EntityTrackerModel {
             // This is the FASTEST method - direct access to plain data storage
             if (this._values && typeof this._values === 'object') {
                 for (const key in this._values) {
-                    if (this._values.hasOwnProperty(key)) {
+                    if (Object.prototype.hasOwnProperty.call(this._values, key)) {
                         plain[key] = this._values[key];
                     }
                 }
@@ -240,7 +240,7 @@ class EntityTrackerModel {
                     if (!isRelationship) {
                         try {
                             plain[fieldName] = this[fieldName];
-                        } catch (e) {
+                        } catch (_e) {
                             // Skip fields that throw errors when accessed
                         }
                     }
@@ -275,7 +275,7 @@ class EntityTrackerModel {
                                     _visited: visited
                                 });
                             }
-                        } catch (e) {
+                        } catch (_e) {
                             // Skip relationships that throw errors when accessed
                         }
                     }
@@ -423,7 +423,7 @@ class EntityTrackerModel {
         const $that = this;
         // loop though current entity and add only relationship models to this list
         const entityFields = Object.entries(currentEntity); 
-        for (const [entityField, entityFieldValue] of entityFields) { // loop through entity values
+        for (const [entityField, _entityFieldValue] of entityFields) { // loop through entity values
           
             if($that._isRelationship(currentEntity[entityField])){ 
  
@@ -492,7 +492,7 @@ class EntityTrackerModel {
                                             try{
                                                 const joiningEntity = this.__context[tools.capitalize(entityName)];
                                                 const entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
-                                                const thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
+                                                const _thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
                                                 const firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
                                                 const secondJoiningID = Object.values(joiningEntity.__entity).find(e => e.foreignTable === ent.__name);
                                                 if(firstJoiningID && secondJoiningID )

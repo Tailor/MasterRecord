@@ -51,7 +51,6 @@ function __getMigrationTimestamp(file){
 const __MIGRATIONS_TABLE__ = '_masterrecord_migrations';
 
 async function __ensureMigrationsTable(ctx){
-  const engine = ctx._SQLEngine;
   if (ctx.isSQLite) {
     await ctx._execute(`CREATE TABLE IF NOT EXISTS [${__MIGRATIONS_TABLE__}] (
       migration_name TEXT PRIMARY KEY,
@@ -127,7 +126,7 @@ async function __cleanupAndExit(contextInstance, exitCode = 0) {
 }
 
 
-const [,, ...args] = process.argv
+const [,, ..._args] = process.argv
 
 
 
@@ -179,7 +178,7 @@ program.option('-V', 'output the version');
   .action(async function(contextFileName){
     const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    const migration = new Migration();
+    const _migration = new Migration();
     let contextInstance = null;
     try{
       const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });

@@ -73,7 +73,7 @@ class EntityModelBuilder {
             throw new Error(`compositeIndexes must be an array`);
         }
 
-        return indexes.map((index, i) => {
+        return indexes.map((index, _i) => {
             // Simple array: ['col1', 'col2'] -> auto-generate name
             if (Array.isArray(index)) {
                 const colNames = index.join('_');

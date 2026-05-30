@@ -56,7 +56,7 @@ class RedisQueryCache {
         return null;
     }
 
-    async set(cacheKey, data, tableName) {
+    async set(cacheKey, data, _tableName) {
         if (!this.enabled) return;
 
         try {
