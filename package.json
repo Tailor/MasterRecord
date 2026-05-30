@@ -1,6 +1,6 @@
 {
   "name": "masterrecord",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "type": "module",
   "main": "./MasterRecord.js",
@@ -32,6 +32,19 @@
   "bin": {
     "masterrecord": "./Migrations/cli.js"
   },
+  "files": [
+    "*.js",
+    "Cache/**/*.js",
+    "Entity/**/*.js",
+    "QueryLanguage/**/*.js",
+    "Migrations/**/*.js",
+    "!**/*.test.js",
+    "!eslint.config.js",
+    "!prettier.config.js",
+    "docs/**/*.md",
+    "CHANGES.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
