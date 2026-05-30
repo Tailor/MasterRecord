@@ -10,8 +10,8 @@ class EntityTrackerModel {
 
     // start tracking model
     build(dataModel, currentEntity, context){
-        var $that = this;
-        var modelClass = this.buildObject(); // build entity with models
+        const $that = this;
+        const modelClass = this.buildObject(); // build entity with models
         modelClass.__proto__ = {};
         const modelFields = Object.entries(dataModel); /// return array of objects
 
@@ -63,7 +63,7 @@ class EntityTrackerModel {
                         if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
                             for (const validator of fieldDef.validators) {
                                 let isValid = true;
-                                let errorMsg = validator.message;
+                                const errorMsg = validator.message;
 
                                 switch (validator.type) {
                                     case 'required':
@@ -420,7 +420,7 @@ class EntityTrackerModel {
     }
 
     buildRelationshipModels(modelClass, currentEntity, currentModel){
-        var $that = this;
+        const $that = this;
         // loop though current entity and add only relationship models to this list
         const entityFields = Object.entries(currentEntity); 
         for (const [entityField, entityFieldValue] of entityFields) { // loop through entity values
@@ -438,9 +438,9 @@ class EntityTrackerModel {
                         this["__proto__"]["_" + entityField] = value;
                     },
                     get : function(){
-                        var ent = tools.findEntity(entityField, this.__context);
+                        let ent = tools.findEntity(entityField, this.__context);
                         if(!ent){
-                            var parentEntity = tools.findEntity(this.__name, this.__context);
+                            const parentEntity = tools.findEntity(this.__name, this.__context);
                             if(parentEntity){
                                 ent = tools.findEntity(parentEntity.__entity[entityField].foreignTable, this.__context);
                                 if(!ent){
@@ -457,12 +457,12 @@ class EntityTrackerModel {
                             if(currentEntity[entityField].lazyLoading){
                                  // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
                             
-                                 var name = currentEntity[entityField].foreignKey;
+                                 const name = currentEntity[entityField].foreignKey;
                                  var priKey = tools.getPrimaryKeyObject(ent.__entity);
      
                                  //var idValue = currentEntity[entityField].foreignKey;
-                                 var currentValue = this.__proto__[`_${name}`];
-                                 var val = this["__proto__"]["_"+entityField];
+                                 const currentValue = this.__proto__[`_${name}`];
+                                 const val = this["__proto__"]["_"+entityField];
                                  var modelValue = null;
                                  if(!val){
                                     modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
@@ -484,17 +484,17 @@ class EntityTrackerModel {
                             if(currentEntity[entityField].lazyLoading){
                                 var priKey = tools.getPrimaryKeyObject(this.__entity);
                                 var entityName = currentEntity[entityField].foreignTable === undefined ? entityField : currentEntity[entityField].foreignTable;
-                                var tableName = "";
+                                let tableName = "";
                                 if(entityName){
                                     switch(currentEntity[entityField].type){
                                         // TODO: move the SQL generation part to the SQL builder so that we can later on use many diffrent types of SQL databases. 
                                         case "hasManyThrough" :
                                             try{
-                                                var joiningEntity = this.__context[tools.capitalize(entityName)];
-                                                var entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
-                                                var thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
-                                                var firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
-                                                var secondJoiningID = Object.values(joiningEntity.__entity).find(e => e.foreignTable === ent.__name);
+                                                const joiningEntity = this.__context[tools.capitalize(entityName)];
+                                                const entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
+                                                const thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
+                                                const firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
+                                                const secondJoiningID = Object.values(joiningEntity.__entity).find(e => e.foreignTable === ent.__name);
                                                 if(firstJoiningID && secondJoiningID )
                                                 {
                                                     var modelValue = ent.include(`p => p.${entityFieldJoinName}.select(j => j.${joiningEntity.__entity[this.__entity.__name].foreignKey})`).include(`p =>p.${this.__entity.__name}`).where(`r =>r.${this.__entity.__name}.${priKey} = ${this[priKey]}`).toList();

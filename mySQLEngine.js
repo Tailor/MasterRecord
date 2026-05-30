@@ -472,7 +472,7 @@ class MySQLEngine {
         const includeQueries = [];
         const $that = this;
 
-        for (let part in query.include) {
+        for (const part in query.include) {
             const includeEntity = query.include[part];
             if (includeEntity) {
                 const parentObj = includeEntity[query.parentName];
@@ -537,7 +537,7 @@ class MySQLEngine {
                 }
             }
             let func = expr.func;
-            let arg = expr.arg;
+            const arg = expr.arg;
             if ((!func && typeof arg === 'undefined')) {
                 return null;
             }
@@ -613,7 +613,7 @@ class MySQLEngine {
     }
 
     getEntity(name, maps) {
-        for (let item in maps) {
+        for (const item in maps) {
             const map = maps[item];
             if (tools.capitalizeFirstLetter(name) === map.name) {
                 return map.entity;

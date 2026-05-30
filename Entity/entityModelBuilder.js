@@ -9,10 +9,10 @@ class EntityModelBuilder {
         if(model.name === undefined){
             throw "dbset model declaired incorrectly. Check you dbset models for code errors."
         }
-        var mod = new model(); //create new instance of Entity Model
-        var obj = {};
-        var methodNamesArray = Object.getOwnPropertyNames( mod.__proto__ );
-        var constructorIndex = methodNamesArray.indexOf("constructor");
+        const mod = new model(); //create new instance of Entity Model
+        const obj = {};
+        const methodNamesArray = Object.getOwnPropertyNames( mod.__proto__ );
+        const constructorIndex = methodNamesArray.indexOf("constructor");
         // remove contructor method
         if (constructorIndex > -1) {
             methodNamesArray.splice(constructorIndex, 1);
@@ -22,7 +22,7 @@ class EntityModelBuilder {
         const lifecycleHooks = ['beforeSave', 'afterSave', 'beforeDelete', 'afterDelete'];
 
         // loop through all method names in the entity model
-        for (var i = 0; i < methodNamesArray.length; i++) {
+        for (let i = 0; i < methodNamesArray.length; i++) {
             const methodName = methodNamesArray[i];
 
             // Skip lifecycle hooks - they should not be called during entity construction
@@ -37,7 +37,7 @@ class EntityModelBuilder {
                 continue;
             }
 
-            let MDB = new modelDB(model.name); // create a new instance of entity Model class
+            const MDB = new modelDB(model.name); // create a new instance of entity Model class
             mod[methodName](MDB);
             this.cleanNull(MDB.obj); // remove objects that are null or undefined
             if(Object.keys(MDB.obj).length === 0){
@@ -61,7 +61,7 @@ class EntityModelBuilder {
     }
 
     static cleanNull(obj) {
-        for (var propName in obj) {
+        for (const propName in obj) {
           if (obj[propName] === null) {
             delete obj[propName];
           }

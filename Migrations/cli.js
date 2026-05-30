@@ -145,18 +145,18 @@ program.option('-V', 'output the version');
   .description('Enables the migration in your project by creating a configuration class called ContextSnapShot.json')
   .action(async function(contextFileName){
         try {
-          var migration = new Migration();
+          const migration = new Migration();
           // location of folder where command is being executed..
-          var executedLocation = process.cwd();
+          const executedLocation = process.cwd();
           // find context file from main folder location
-          var contextFile = migration.findContextFile(executedLocation, contextFileName);
+          const contextFile = migration.findContextFile(executedLocation, contextFileName);
           if(!contextFile){
             console.error(`\n❌ Error - Cannot read or find Context file '${contextFileName}.js'`);
             console.error(`\nSearched in: ${executedLocation}`);
             console.error(`\nMake sure your Context file exists and is named correctly.`);
             process.exit(1);
           }
-          var snap = {
+          const snap = {
             file : contextFile,
             executedLocation : executedLocation,
             contextEntities : [],
@@ -177,18 +177,18 @@ program.option('-V', 'output the version');
   .alias('ed')
   .description('Ensure the target database exists for the given context (MySQL)')
   .action(async function(contextFileName){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    var migration = new Migration();
-    var contextInstance = null;
+    const migration = new Migration();
+    let contextInstance = null;
     try{
-      var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-      var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+      const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
         return;
       }
-      var contextSnapshot;
+      let contextSnapshot;
       try{
         contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
       }catch(_){
@@ -204,16 +204,16 @@ program.option('-V', 'output the version');
         migBase = snapDir;
       }
       // Find latest migration file (so we can use its class which extends schema)
-      var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
       if(!(migrationFiles && migrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         process.exit(1);
       }
-      var mFiles = migrationFiles.slice().sort(function(a, b){
+      const mFiles = migrationFiles.slice().sort(function(a, b){
         return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
       });
-      var mFile = mFiles[mFiles.length -1];
+      const mFile = mFiles[mFiles.length -1];
 
       let ContextCtor;
       try{
@@ -230,8 +230,8 @@ program.option('-V', 'output the version');
       }
 
       // Use the migration class (extends schema) so createdatabase is available
-      var MigrationCtor = await __loadUserModule(mFile);
-      var mig = new MigrationCtor(ContextCtor);
+      const MigrationCtor = await __loadUserModule(mFile);
+      const mig = new MigrationCtor(ContextCtor);
       contextInstance = mig._context || mig.context || null;
 
       if(typeof mig.createdatabase === 'function'){
@@ -283,18 +283,18 @@ program.option('-V', 'output the version');
   .command('add-migration <name> <contextFileName>')
   .alias('am')
   .action(async function(name, contextFileName){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    var migration = new Migration();
+    const migration = new Migration();
       try{
           // find context file from main folder location
-        var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+        const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+        const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
         if(!file){
           console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'. Run 'masterrecord enable-migrations ${contextFileName}'.`);
           return;
         }
-        var contextSnapshot = null;
+        let contextSnapshot = null;
         try{
           contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
         }catch(_){
@@ -345,9 +345,9 @@ program.option('-V', 'output the version');
           }
           return;
         }
-        var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-        var seedData = contextInstance.__contextSeedData || {};
-        var seedConfig = contextInstance.__contextSeedConfig || {};
+        const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+        const seedData = contextInstance.__contextSeedData || {};
+        const seedConfig = contextInstance.__contextSeedConfig || {};
 
         // Skip if no changes between snapshot schema and current entities
         const has = migration.hasChanges(contextSnapshot.schema || [], cleanEntities || [], seedData);
@@ -356,12 +356,12 @@ program.option('-V', 'output the version');
           return;
         }
 
-        var newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig, null);
+        const newEntity = migration.template(name, contextSnapshot.schema, cleanEntities, seedData, seedConfig, null);
         if(!fs.existsSync(migBase)){
           try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
         }
-        var migrationDate = Date.now();
-        var outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
+        const migrationDate = Date.now();
+        const outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
         fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
           if (err) {
             console.log("--- Error running cammand, re-run command add-migration ---- ", err);
@@ -381,15 +381,15 @@ program.option('-V', 'output the version');
   .alias('ud')
   .description('Apply pending migrations to database - up method call')
   .action(async function(contextFileName){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    var migration = new Migration();
-    var contextInstance = null;
+    const migration = new Migration();
+    let contextInstance = null;
       try{
          console.log(`\n🔍 Searching for context snapshot '${contextFileName}_contextSnapShot.json'...`);
          // find context snapshot (cwd-based glob)
-         var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-         var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+         const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
 
          if(!file){
            console.error(`\n❌ Error - Cannot find Context snapshot file`);
@@ -401,7 +401,7 @@ program.option('-V', 'output the version');
 
          console.log(`✓ Found snapshot: ${file}`);
 
-         var contextSnapshot;
+         let contextSnapshot;
          try{
            contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
          }catch(err){
@@ -421,7 +421,7 @@ program.option('-V', 'output the version');
          }
 
          console.log(`\n🔍 Searching for migration files in: ${migBase}`);
-         var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+         let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
          migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
 
          if(!(migrationFiles && migrationFiles.length)){
@@ -435,13 +435,13 @@ program.option('-V', 'output the version');
          // Then run EVERY pending migration in order, not just the last one —
          // the old behavior silently skipped earlier pending migrations when a
          // user had stacked multiple add-migration calls before deploying.
-         var mFiles = migrationFiles.slice().sort(function(a, b){
+         const mFiles = migrationFiles.slice().sort(function(a, b){
            return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
          });
          console.log(`✓ Found ${mFiles.length} migration file(s)`);
 
          console.log(`\n🔍 Loading Context file from: ${contextAbs}`);
-         var ContextCtor;
+         let ContextCtor;
          try{
            ContextCtor = await __loadUserModule(contextAbs);
          }catch(err){
@@ -505,7 +505,7 @@ program.option('-V', 'output the version');
          }
 
          console.log(`\n🔍 Loading entities from context...`);
-         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+         const cleanEntities = migration.cleanEntities(contextInstance.__entities);
          console.log(`✓ Found ${cleanEntities.length} entity/entities`);
 
          if(cleanEntities.length === 0){
@@ -521,7 +521,7 @@ program.option('-V', 'output the version');
          // migration, so there's no historical per-migration tableObj.
          // Idempotent helpers (createTable checks tableExists; addColumn
          // no-ops on undefined `table.col`) make this safe in practice.
-         var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+         const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
          // Bootstrap the migrations tracking table, then filter out any
          // migrations already applied so re-running update-database is a
@@ -565,7 +565,7 @@ program.option('-V', 'output the version');
          }
 
          console.log(`\n💾 Updating snapshot...`);
-         var snap = {
+         const snap = {
            file : contextAbs,
            executedLocation : executedLocation,
            context : contextInstance,
@@ -607,18 +607,18 @@ program.option('-V', 'output the version');
   .alias('udd')
   .description('Run the latest migration down method for the given context')
   .action(async function(contextFileName){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    var migration = new Migration();
+    const migration = new Migration();
     var contextInstance = null;
     try{
-       var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-       var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+       const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+       const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
        if(!file){
          console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
          return;
        }
-       var contextSnapshot;
+       let contextSnapshot;
        try{
          contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
        }catch(_){
@@ -628,7 +628,7 @@ program.option('-V', 'output the version');
        const snapDir = path.dirname(file);
        const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
        const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
-       var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+       let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
        migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
        if(!(migrationFiles && migrationFiles.length)){
          console.log("Error - Cannot read or find migration file");
@@ -636,7 +636,7 @@ program.option('-V', 'output the version');
        }
        // Sort so we can find the latest APPLIED migration (not just the
        // latest on disk) using the tracking table.
-       var mFiles = migrationFiles.slice().sort(function(a, b){
+       const mFiles = migrationFiles.slice().sort(function(a, b){
          return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
        });
 
@@ -674,8 +674,8 @@ program.option('-V', 'output the version');
          }
          return;
        }
-       var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-       var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+       const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+       const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
        // Roll back the most recently APPLIED migration. Falls back to the
        // latest migration file on disk if the tracking table is missing or
@@ -696,8 +696,8 @@ program.option('-V', 'output the version');
          console.log(`⚠️  No applied-migration record found; falling back to latest file on disk: ${rollbackName}`);
        }
 
-       var MigCtor = await __loadUserModule(rollbackFile);
-       var migInstance = new MigCtor(ContextCtor);
+       const MigCtor = await __loadUserModule(rollbackFile);
+       const migInstance = new MigCtor(ContextCtor);
        if(typeof migInstance.down === 'function'){
          await migInstance.down(tableObj);
          await __removeMigrationApplied(contextInstance, rollbackName);
@@ -706,7 +706,7 @@ program.option('-V', 'output the version');
        }
 
        // Update snapshot
-       var snap = {
+       const snap = {
          file : contextAbs,
          executedLocation : executedLocation,
          context : contextInstance,
@@ -731,19 +731,19 @@ program.option('-V', 'output the version');
   .alias('udr')
   .description('Apply pending migrations to database - up method call')
   .action(async function(contextFileName){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     contextFileName = contextFileName.toLowerCase();
-    var migration = new Migration();
+    const migration = new Migration();
     var contextInstance = null;
       try{
          // find context snapshot (cwd-based glob)
-         var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-         var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+         const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+         const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
          if(!file){
            console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
            return;
          }
-      var contextSnapshot;
+      let contextSnapshot;
          try{
            contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
          }catch(_){
@@ -753,14 +753,14 @@ program.option('-V', 'output the version');
       const snapDir = path.dirname(file);
       const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
       const migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
-      var migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
       migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
          if(!(migrationFiles && migrationFiles.length)){
            console.log("Error - Cannot read or find migration file");
            return;
          }
          // organize by time using filename timestamp or file mtime
-         var mFiles = migrationFiles.slice().sort(function(a, b){
+         const mFiles = migrationFiles.slice().sort(function(a, b){
            return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
          });
          let ContextCtor;
@@ -793,12 +793,12 @@ program.option('-V', 'output the version');
            }
            return;
          }
-         var cleanEntities = migration.cleanEntities(contextInstance.__entities);
+         const cleanEntities = migration.cleanEntities(contextInstance.__entities);
          for (let i = 0; i < mFiles.length; i++) {
-            var migFile = mFiles[i];
-            var migrationProjectFile = await __loadUserModule(migFile);
-            var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
-            var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+            const migFile = mFiles[i];
+            const migrationProjectFile = await __loadUserModule(migFile);
+            const newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
+            const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
             await newMigrationProjectInstance.up(tableObj);
          }
          const snap = {
@@ -826,27 +826,27 @@ program.option('-V', 'output the version');
  .alias('gm')
  .description('Get a list of migration file names using the context')
  .action(function(contextFileName){
-      var executedLocation = process.cwd();
+      const executedLocation = process.cwd();
       contextFileName = contextFileName.toLowerCase();
-      var files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
-      var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+      const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
       if(!file){
         console.log(`Error - Cannot read or find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'.`);
         return;
       }
-      var contextSnapshot;
+      let contextSnapshot;
       try{
         contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
       }
-      var migrationFiles = globSync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
+      const migrationFiles = globSync(`**/*_migration.js`, { cwd: contextSnapshot.migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(migrationFiles && migrationFiles.length)){
         console.log("No migration files found.");
         return;
       }
-      var sorted = migrationFiles.slice().sort((a,b) => __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, a)) - __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, b)));
+      const sorted = migrationFiles.slice().sort((a,b) => __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, a)) - __getMigrationTimestamp(path.resolve(contextSnapshot.migrationFolder, b)));
       // Print relative names for readability
       for(const f of sorted){
         console.log(path.basename(f));
@@ -860,31 +860,31 @@ program.option('-V', 'output the version');
   .description('Apply pending migrations to database - down method call')
   .action(async function(migrationFileName){
   // this will call all the down methods until it gets to the one your looking for. First it needs to validate that there is such a file.
-    var executedLocation = process.cwd();
-    var migration = new Migration();
+    const executedLocation = process.cwd();
+    const migration = new Migration();
     var contextInstance = null;
     try{
       // Accept either a bare filename or a path; normalize to basename
-      var targetName = path.basename(migrationFileName);
+      const targetName = path.basename(migrationFileName);
 
       // Locate the target migration file anywhere under the current folder
-      var targetMatches = globSync(`**/${targetName}`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
+      const targetMatches = globSync(`**/${targetName}`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true });
       if(!(targetMatches && targetMatches.length)){
         console.log(`Error - Cannot read or find migration file '${targetName}' in '${executedLocation}'.`);
         return;
       }
-      var targetFilePath = path.resolve(executedLocation, targetMatches[0]);
-      var migrationFolder = path.dirname(targetFilePath);
+      const targetFilePath = path.resolve(executedLocation, targetMatches[0]);
+      const migrationFolder = path.dirname(targetFilePath);
 
       // Find the context snapshot within the same migrations folder
-      var snapshotMatches = globSync(`**/*_contextSnapShot.json`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
-      var snapshotFile = snapshotMatches && snapshotMatches[0] ? path.resolve(migrationFolder, snapshotMatches[0]) : null;
+      const snapshotMatches = globSync(`**/*_contextSnapShot.json`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
+      const snapshotFile = snapshotMatches && snapshotMatches[0] ? path.resolve(migrationFolder, snapshotMatches[0]) : null;
       if(!snapshotFile){
         console.log("Error - Cannot read or find Context snapshot in migration folder.");
         return;
       }
 
-      var contextSnapshot;
+      let contextSnapshot;
       try{
         contextSnapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
       }catch(_){
@@ -893,25 +893,30 @@ program.option('-V', 'output the version');
       }
 
       // Get all migration files in this folder
-      var allMigrationFiles = globSync(`**/*_migration.js`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
+      const allMigrationFiles = globSync(`**/*_migration.js`, { cwd: migrationFolder, dot: true, windowsPathsNoEscape: true });
       if(!(allMigrationFiles && allMigrationFiles.length)){
         console.log("Error - Cannot read or find migration file");
         return;
       }
 
       // Sort chronologically
-      var sorted = allMigrationFiles.slice().sort(function(a, b){
+      const sorted = allMigrationFiles.slice().sort(function(a, b){
         return __getMigrationTimestamp(path.resolve(migrationFolder, a)) - __getMigrationTimestamp(path.resolve(migrationFolder, b));
       });
 
       // Find target index by basename match
-      var targetIndex = sorted.findIndex(function(f){ return path.basename(f) === targetName; });
+      const targetIndex = sorted.findIndex(function(f){ return path.basename(f) === targetName; });
       if(targetIndex === -1){
         console.log(`Error - Target migration '${targetName}' not found.`);
         return;
       }
 
-      // Prepare context and table object
+      // Prepare context and table object.
+      // Resolve the Context file path from the snapshot (relative to the
+      // snapshot's directory) — this was previously referenced as `contextAbs`
+      // without being defined in this handler, throwing ReferenceError on the
+      // first use below and breaking the rollback-to-target command.
+      const contextAbs = path.resolve(path.dirname(snapshotFile), contextSnapshot.contextLocation || '');
       let ContextCtor;
       try{
         ContextCtor = await __loadUserModule(contextAbs);
@@ -942,14 +947,14 @@ program.option('-V', 'output the version');
         }
         return;
       }
-      var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-      var tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
+      const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+      const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
       // Roll back (down) all migrations newer than the target (i.e., strictly after targetIndex)
-      for (var i = sorted.length - 1; i > targetIndex; i--) {
-        var migFile = path.resolve(migrationFolder, sorted[i]);
-        var MigCtor = await __loadUserModule(migFile);
-        var migInstance = new MigCtor(ContextCtor);
+      for (let i = sorted.length - 1; i > targetIndex; i--) {
+        const migFile = path.resolve(migrationFolder, sorted[i]);
+        const MigCtor = await __loadUserModule(migFile);
+        const migInstance = new MigCtor(ContextCtor);
         if(typeof migInstance.down === 'function'){
           await migInstance.down(tableObj);
         } else {
@@ -958,7 +963,7 @@ program.option('-V', 'output the version');
       }
 
       // Update snapshot
-      var snap = {
+      const snap = {
         file : contextAbs,
         executedLocation : executedLocation,
         context : contextInstance,
@@ -983,15 +988,15 @@ program.option('-V', 'output the version');
   .alias('ama')
   .description('Create a migration with the given name for all detected contexts')
   .action(async function(name){
-    var executedLocation = process.cwd();
-    var contextInstances = [];
+    const executedLocation = process.cwd();
+    const contextInstances = [];
     try{
-      var snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      const snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations-all first.');
         return;
       }
-      var created = 0;
+      let created = 0;
       for(const snapRel of snapshotFiles){
         try{
           const snapFile = path.resolve(executedLocation, snapRel);
@@ -1018,22 +1023,22 @@ program.option('-V', 'output the version');
             console.error(`   Details: ${err.message}`);
             continue;
           }
-          var migration = new Migration();
-          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-          var seedData = contextInstance.__contextSeedData || {};
-          var seedConfig = contextInstance.__contextSeedConfig || {};
+          const migration = new Migration();
+          const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          const seedData = contextInstance.__contextSeedData || {};
+          const seedConfig = contextInstance.__contextSeedConfig || {};
           // If no changes, skip with message
           const has = migration.hasChanges(cs.schema || [], cleanEntities || [], seedData);
           if(!has){
             console.log(`No changes detected for ${path.basename(contextAbs)}. Skipping.`);
             continue;
           }
-          var newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig, null);
+          const newEntity = migration.template(name, cs.schema, cleanEntities, seedData, seedConfig, null);
           if(!fs.existsSync(migBase)){
             try{ fs.mkdirSync(migBase, { recursive: true }); }catch(_){ /* ignore */ }
           }
-          var migrationDate = Date.now();
-          var outputFile = path.join(migBase, `${migrationDate}_${name}_migration.js`);
+          const migrationDate = Date.now();
+          const outputFile = path.join(migBase, `${migrationDate}_${name}_migration.js`);
           fs.writeFileSync(outputFile, newEntity, 'utf8');
           console.log(`Created migration '${path.basename(outputFile)}' for ${path.basename(contextAbs)}`);
           created++;
@@ -1068,17 +1073,17 @@ program.option('-V', 'output the version');
   .alias('uda')
   .description('Scan the project for *Context.js files and run update-database on each')
   .action(async function(){
-    var executedLocation = process.cwd();
-    var contextInstances = [];
+    const executedLocation = process.cwd();
+    const contextInstances = [];
     try{
       // Find all context snapshots and run update per snapshot (avoids unrelated framework contexts)
-      var snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+      const snapshotFiles = globSync('**/*_contextSnapShot.json', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
       if(!(snapshotFiles && snapshotFiles.length)){
         console.log('No context snapshots found. Run enable-migrations for each context first.');
         return;
       }
       // Group snapshots by context name (case-insensitive) and pick best per group
-      var groups = {};
+      const groups = {};
       for(const snapRel of snapshotFiles){
         const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
@@ -1101,22 +1106,22 @@ program.option('-V', 'output the version');
         groups[ctxName].push({ snapFile, snapDir, cs, ctxName, migs, contextAbs, migBase });
       }
 
-      var migration = new Migration();
-      var ctxNames = Object.keys(groups);
+      const migration = new Migration();
+      const ctxNames = Object.keys(groups);
       for(const name of ctxNames){
         try{
-          var list = groups[name];
+          const list = groups[name];
           // Prefer entries that actually have migration files
-          var withMigs = list.filter(e => e.migs && e.migs.length > 0);
-          var entry = withMigs.length ? withMigs[withMigs.length - 1] : list[0];
+          const withMigs = list.filter(e => e.migs && e.migs.length > 0);
+          const entry = withMigs.length ? withMigs[withMigs.length - 1] : list[0];
           if(!(entry.migs && entry.migs.length)){
             console.log(`Skipping ${entry.ctxName}: no migration files found.`);
             continue;
           }
-          var mFiles = entry.migs.slice().sort(function(a, b){
+          const mFiles = entry.migs.slice().sort(function(a, b){
             return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
           });
-          var mFile = mFiles[mFiles.length - 1];
+          const mFile = mFiles[mFiles.length - 1];
 
           var ContextCtor;
           try{
@@ -1135,12 +1140,12 @@ program.option('-V', 'output the version');
             console.error(`   Details: ${err.message}`);
             continue;
           }
-          var migrationProjectFile = await __loadUserModule(mFile);
-          var newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
-          var cleanEntities = migration.cleanEntities(contextInstance.__entities);
-          var tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
+          const migrationProjectFile = await __loadUserModule(mFile);
+          const newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
+          const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          const tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
           await newMigrationProjectInstance.up(tableObj);
-          var snap = {
+          const snap = {
             file : entry.contextAbs,
             executedLocation : executedLocation,
             context : contextInstance,
@@ -1179,17 +1184,17 @@ program.option('-V', 'output the version');
   .alias('ema')
   .description('Enable migrations for all detected MasterRecord Context files')
   .action(function(){
-    var executedLocation = process.cwd();
+    const executedLocation = process.cwd();
     try{
       // Find candidate Context files
-      var candidates = globSync('**/*Context.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
+      const candidates = globSync('**/*Context.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true }) || [];
       if(!(candidates && candidates.length)){
         console.log('No Context files found.');
         return;
       }
-      var seen = new Set();
-      var enabled = 0;
-      var migration = new Migration();
+      const seen = new Set();
+      let enabled = 0;
+      const migration = new Migration();
       for(const rel of candidates){
         try{
           const abs = path.resolve(executedLocation, rel);
@@ -1205,7 +1210,7 @@ program.option('-V', 'output the version');
           if(seen.has(key)){ continue; }
           seen.add(key);
           // Create snapshot relative to the context file directory
-          var snap = {
+          const snap = {
             file : abs,
             executedLocation : executedLocation,
             contextEntities : [],

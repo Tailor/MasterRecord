@@ -19,9 +19,9 @@ class Tools{
     }
 
     static returnEntityList(list, entityList ){
-        var newList = [];
-        for(var max = 0; max < list.length; max++ ){
-            var ent = entityList[list[max]];
+        const newList = [];
+        for(let max = 0; max < list.length; max++ ){
+            const ent = entityList[list[max]];
             if(ent){
                 if(ent.relationshipType === "hasMany" || ent.relationshipType === "hasOne"){
                     newList.push(ent.name);
@@ -38,15 +38,15 @@ class Tools{
     // this will remove everthing from back slash amount
     static removeBackwardSlashSection(string, amount, type){
         type = type === undefined ? "\\" : type;
-        var stringArray =  string.split(type);
-        for(var i = 0; i < amount; i++){
+        const stringArray =  string.split(type);
+        for(let i = 0; i < amount; i++){
             stringArray.pop();
         }
         return stringArray.join(type);
     }
 
     static getPrimaryKeyObject(model){
-        for (var key in model) {
+        for (const key in model) {
             if (model.hasOwnProperty(key)) {
                 if(model[key].primary){
                     if(model[key].primary === true){
@@ -58,7 +58,7 @@ class Tools{
     }
 
     static findForeignTable(name, model){
-        for (var key in model) {
+        for (const key in model) {
             if (model.hasOwnProperty(key)) {
                 if(model[key].foreignTable){
                     if(model[key].foreignTable === name){
@@ -85,7 +85,7 @@ class Tools{
 
     static clearAllProto(proto){
 
-        var newproto = {}
+        const newproto = {}
         if(proto.__proto__ ){
             // Include non-enumerable own properties so we don't lose values defined via getters
             const keys = Object.getOwnPropertyNames(proto);
@@ -127,10 +127,10 @@ class Tools{
     }
 
     static removePrimarykeyandVirtual(currentModel, modelEntity){
-        var newCurrentModel = Object.create(currentModel);
+        const newCurrentModel = Object.create(currentModel);
 
-        for(var entity in modelEntity) {
-            var currentEntity = modelEntity[entity];
+        for(const entity in modelEntity) {
+            const currentEntity = modelEntity[entity];
             if (modelEntity.hasOwnProperty(entity)) {
                 if(currentEntity.primary === true){
                     delete newCurrentModel[`_${entity}`];
@@ -146,8 +146,8 @@ class Tools{
     }
 
     static getEntity(name, modelEntity){
-        for(var entity in modelEntity) {
-            var currentEntity = modelEntity[entity];
+        for(const entity in modelEntity) {
+            const currentEntity = modelEntity[entity];
             if (modelEntity.hasOwnProperty(entity)) {
                 if(currentEntity.__name === name){
                     return currentEntity;
@@ -168,14 +168,14 @@ class Tools{
 
              // return randome letter that is not the skip letter
     static getRandomLetter(length, skip){
-        var result           = '';
-        var characters       = 'abcdefghijklmnopqrstuvwxyz';
-        var charactersLength = characters.length;
+        let result           = '';
+        const characters       = 'abcdefghijklmnopqrstuvwxyz';
+        const charactersLength = characters.length;
         
-        for ( var i = 0; i < length; i++ ) {
+        for ( let i = 0; i < length; i++ ) {
             result += characters.charAt(Math.floor(Math.random() * charactersLength));
             if(skip){
-                for ( var b = 0; b < skip.length; b++ ) {
+                for ( let b = 0; b < skip.length; b++ ) {
                     if(result === skip[i].entity){
                         result = "";
                         i--;
@@ -192,7 +192,7 @@ class Tools{
 
     static convertEntityToSelectParameterString(obj){
         // todo: loop throgh object and append string with comma to
-        var mainString = "";
+        let mainString = "";
         const entries = Object.keys(obj);
         for (const key of entries) {
             // Skip lifecycle hooks - they are not database columns

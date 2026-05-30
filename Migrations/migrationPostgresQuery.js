@@ -4,16 +4,16 @@ class migrationPostgresQuery {
     #tempTableName = "_temp_alter_column_update"
 
     #getTableColumns(table){
-        var columnList = [];
-        for (var key in table) {
+        const columnList = [];
+        for (const key in table) {
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
                 // Skip relationship-only fields
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
                     continue;
                 }
                 // Map belongsTo to its foreignKey name
-                var name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
+                const name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
                 columnList.push(`"${name}"`);
             }
         }
@@ -36,13 +36,13 @@ class migrationPostgresQuery {
         */
 
         // PostgreSQL uses SERIAL for auto-increment, not separate AUTO_INCREMENT keyword
-        var auto = "";
-        var primaryKey = table.primary ? " PRIMARY KEY" : "";
-        var nullName = table.nullable ? "" : " NOT NULL";
-        var unique = table.unique ? " UNIQUE" : "";
+        let auto = "";
+        let primaryKey = table.primary ? " PRIMARY KEY" : "";
+        const nullName = table.nullable ? "" : " NOT NULL";
+        const unique = table.unique ? " UNIQUE" : "";
 
         // For PostgreSQL, if auto-increment primary key, use SERIAL or BIGSERIAL
-        var type;
+        let type;
         if(table.auto && table.primary && (table.type === 'integer' || table.type === 'int')){
             type = "SERIAL";  // Auto-incrementing integer
             auto = "";
@@ -55,12 +55,12 @@ class migrationPostgresQuery {
             type = this.typeManager(table.type);
         }
 
-        var tableName = table.name;
+        let tableName = table.name;
         if(table.relationshipType === 'belongsTo' && table.foreignKey){
             tableName = table.foreignKey;
         }
 
-        var defaultValue = "";
+        let defaultValue = "";
         if(table.default !== undefined && table.default !== null){
             let def = table.default;
             if(table.type === 'boolean' || table.type === 'bool'){
@@ -135,7 +135,7 @@ class migrationPostgresQuery {
             const type = this.typeManager(table.table.type);
 
             // Build ALTER statements - PostgreSQL requires separate statements for different changes
-            let statements = [];
+            const statements = [];
 
             // Change type
             statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${type}`);
@@ -200,16 +200,16 @@ class migrationPostgresQuery {
     }
 
     createTable(table){
-        var queryVar = "";
+        let queryVar = "";
 
-        for (var key in table) {
+        for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
             if(key === 'indexes' || key.startsWith('__')){
                 continue;
             }
 
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
 
                 if(col.type !== "hasOne" && col.type !== "hasMany" && col.type !== "hasManyThrough"){
                     // Whitelist: Only process objects that look like column definitions
@@ -223,7 +223,7 @@ class migrationPostgresQuery {
             }
         }
 
-        var completeQuery = `CREATE TABLE IF NOT EXISTS "${table.__name}" (${queryVar.replace(/,\s*$/, "")});`;
+        const completeQuery = `CREATE TABLE IF NOT EXISTS "${table.__name}" (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;
     }
 

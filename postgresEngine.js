@@ -462,12 +462,12 @@ class postgresEngine {
             const entity = this.getEntity(query.parentName, query.entityMap);
             const andList = [];
 
-            for (let entityPart in andEntity) {
+            for (const entityPart in andEntity) {
                 const itemEntity = andEntity[entityPart];
-                for (let table in itemEntity[query.parentName]) {
+                for (const table in itemEntity[query.parentName]) {
                     const item = itemEntity[query.parentName][table];
                     const expressions = [];
-                    for (let exp in item.expressions) {
+                    for (const exp in item.expressions) {
                         // Use the field name verbatim for SQL emission so it
                         // matches the actual column case. The capitalized form
                         // is only useful for the navigational-relationship
@@ -530,7 +530,7 @@ class postgresEngine {
             const item = whereEntity[query.parentName].query;
             const conditions = [];
 
-            for (let exp in item.expressions) {
+            for (const exp in item.expressions) {
                 // Use the field name verbatim for SQL emission. See buildAnd for full rationale.
                 const originalField = item.expressions[exp].field;
                 const capitalized = tools.capitalizeFirstLetter(originalField);
@@ -643,7 +643,7 @@ class postgresEngine {
         const dirtyFields = model.__dirtyFields;
         let paramIndex = 1;
 
-        for (let column in dirtyFields) {
+        for (const column in dirtyFields) {
             const fieldName = dirtyFields[column];
             const entityDef = model.__entity[fieldName];
 
@@ -795,7 +795,7 @@ class postgresEngine {
         const $that = this;
         const columnNames = [];
         const params = [];
-        let paramIndex = 1;
+        const paramIndex = 1;
 
         for (const column in modelEntity) {
             if (column.indexOf("__") === -1) {

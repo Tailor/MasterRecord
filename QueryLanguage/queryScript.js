@@ -117,10 +117,10 @@ class queryScript{
 
     buildScript(text, type, obj, entityName){
 
-        var cachedExpr = {}; // this function will just get the high level
+        const cachedExpr = {}; // this function will just get the high level
 
         /// first we find all the groups in the query string
-        var querySections = this.getFunctionsInQuery(text);
+        const querySections = this.getFunctionsInQuery(text);
 
         // remove spaces from query and get the Entity
         cachedExpr.entity = this.getEntity(text);
@@ -213,10 +213,10 @@ class queryScript{
         // `(p) => p.name == ...` — the previous regex only matched bare
         // identifiers and silently mis-parsed parens as the entity name,
         // producing SQL like `SELECT (.id, (.name FROM Plugin AS (`.
-        var match = text.match(/^\s*(?:\(\s*([\w\d$_]+)[^)]*\)|([\w\d$_]+))\s*=>((?:\{\sreturn\s)?[\s\S]*(?:\})?)/);
+        const match = text.match(/^\s*(?:\(\s*([\w\d$_]+)[^)]*\)|([\w\d$_]+))\s*=>((?:\{\sreturn\s)?[\s\S]*(?:\})?)/);
         if(match){
             const entity = match[1] || match[2];
-            let exprStr = match[3];
+            const exprStr = match[3];
             const fields = [];
 
             exprStr.replace(new RegExp(entity + "\\.([\\w_]+)", "g"), function (_, field) {
@@ -246,7 +246,7 @@ class queryScript{
 
     splitGroupsByLogicalOperators(text) {
         let parts = {}, tmp;
-        var part = {query : text, name : "query"}
+        const part = {query : text, name : "query"}
 
         //tmp = this.splitByLogicalOperators(part.query, entityRegExp)
         tmp = this.extractInside(part.query, part.name);
@@ -299,7 +299,7 @@ class queryScript{
     }
 
     getParentField(text, funcName){
-       var split = text.split(".");
+       const split = text.split(".");
        for (let i = 0; i < split.length; i++) {
 
             if(split[i].includes(funcName)){
@@ -322,18 +322,18 @@ class queryScript{
     describeExpressionPartsFunctions(cachedExpr, functions){
         cachedExpr.functions = [];
         if(functions.length > 0){
-            for (let item in functions) {
+            for (const item in functions) {
 
-                var part = functions[item];
-                var partQuery = part.inside;
+                const part = functions[item];
+                const partQuery = part.inside;
                 // get entity of inside function
-                var entity =  this.getEntity(partQuery);
+                const entity =  this.getEntity(partQuery);
                 
                 part.entity = entity;
 
                 // is the function name white listed
                 if(this.isFunction(part.name)){
-                    var scriptInner =  {
+                    const scriptInner =  {
                         select : false,
                         where: false,
                         and : [],
@@ -408,23 +408,23 @@ class queryScript{
     describeExpressionParts(parts) {
         if(parts.query) {
             let  match, fields, func, arg;
-            var part = {};
+            const part = {};
             part.inside = parts.query.query;
             part.expressions = [];
-            var partQuery = part.inside;
-            var entity =  this.getEntity(partQuery);
-            var exprPartRegExp = this.OPERATORS_REGEX(entity);
+            const partQuery = part.inside;
+            const entity =  this.getEntity(partQuery);
+            const exprPartRegExp = this.OPERATORS_REGEX(entity);
             // check if query contains an AND.
-            var normalized = partQuery.replace(/\s+/g, ' ').trim();
-            var splitByAnd = normalized.split(/\sand\s/);
+            const normalized = partQuery.replace(/\s+/g, ' ').trim();
+            const splitByAnd = normalized.split(/\sand\s/);
             let groupId = 0;
-            for (let splitAnds in splitByAnd) {
-                let token = splitByAnd[splitAnds];
+            for (const splitAnds in splitByAnd) {
+                const token = splitByAnd[splitAnds];
                 // Split possible OR groups inside this AND segment
-                let orParts = token.split(/\sor\s/);
+                const orParts = token.split(/\sor\s/);
                 const hasOrGroup = orParts.length > 1;
-                let currentGroup = hasOrGroup ? (++groupId) : null;
-                for (let idx in orParts){
+                const currentGroup = hasOrGroup ? (++groupId) : null;
+                for (const idx in orParts){
                     let segment = orParts[idx];
                     // strip wrapping parentheses pairs repeatedly
                     segment = segment.trim();
@@ -438,7 +438,7 @@ class queryScript{
                         isNegated = true;
                         segment = segment.replace(/^\s*!+\s*/, '');
                     }
-                    if (match = segment.match(exprPartRegExp)) {
+                    if ((match = segment.match(exprPartRegExp))) {
                         fields = match[1].split(".");
                         func = (match[2] ? fields[fields.length - 1] : (match[3] || "exists"));
                         if (func == "==" || func == "===") {
@@ -486,13 +486,13 @@ class queryScript{
             return m[1] || m[2];
         }
         // Fallback to previous behavior: first non-space char
-        var clean = str.replace(/\s/g, '');
+        const clean = str.replace(/\s/g, '');
         return clean.substring(0, 1);
     }
 
     isMapped(name, maps){
-        for (let item in maps) {
-            var map = maps[item];
+        for (const item in maps) {
+            const map = maps[item];
             if(tools.capitalizeFirstLetter(name) === map.name){
                 return true
             }
@@ -525,8 +525,8 @@ class queryScript{
     }
     
     isFunction(func){
-        var funcList = [ "include", "like", "any"]
-        for(var i =0; i < funcList.length; i++){
+        const funcList = [ "include", "like", "any"]
+        for(let i =0; i < funcList.length; i++){
             if(funcList[i] === func){
                 return true
             }

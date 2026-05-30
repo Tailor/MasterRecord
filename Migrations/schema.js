@@ -538,9 +538,9 @@ class schema{
             if(this.fullTable){
                 if(this.context.isSQLite){
                                         var queryBuilder = new sqliteQuery();
-                    var tableSchema = (this._tableObj && this._tableObj[table.tableName]) || this.fullTable.new;
-                    var queryObj = queryBuilder.alterColumn(tableSchema, table);
-                    for (var key in queryObj) {
+                    const tableSchema = (this._tableObj && this._tableObj[table.tableName]) || this.fullTable.new;
+                    const queryObj = queryBuilder.alterColumn(tableSchema, table);
+                    for (const key in queryObj) {
                         var query = queryObj[key];
                         await this.context._execute(query);
                     }

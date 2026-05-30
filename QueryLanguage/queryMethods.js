@@ -15,10 +15,10 @@ class queryMethods{
 
     // build a single entity
     __singleEntityBuilder(dataModel){
-        var $that = this;
+        const $that = this;
         if(dataModel){
-            var ent = new entityTrackerModel();
-            var mod = ent.build(dataModel, $that.__entity, $that.__context);
+            const ent = new entityTrackerModel();
+            const mod = ent.build(dataModel, $that.__entity, $that.__context);
             mod.__state = "track";
             $that.__context.__track(mod);
             return mod;
@@ -29,8 +29,8 @@ class queryMethods{
 
     // build multiple entities
     __multipleEntityBuilder(entityValue){
-        var $that = this;
-        var listArray = [];
+        const $that = this;
+        const listArray = [];
         if(entityValue){
             for(let i = 0; i < entityValue.length; i++){
                 listArray.push($that.__singleEntityBuilder(entityValue[i]));
@@ -61,28 +61,28 @@ class queryMethods{
     }
 
     ______orderByCount(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'orderByCount');
         this.__queryObject.orderByCount(str, this.__entity.__name);
         return this;
     }
 
     ______orderByCountDescending(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'orderByCountDescending');
         this.__queryObject.orderByCountDesc(str, this.__entity.__name);
         return this;
     }
 
     orderBy(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'orderBy');
         this.__queryObject.orderBy(str, this.__entity.__name);
         return this;
     }
 
     orderByDescending(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'orderByDescending');
         this.__queryObject.orderByDesc(str, this.__entity.__name);
         return this;
@@ -112,9 +112,9 @@ class queryMethods{
 
     /* WHERE and AND work together its a way to add to the WHERE CLAUSE DYNAMICALLY */
     and(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         // Transform .includes() syntax to .any() syntax
-        var transformResult = this.__transformIncludes(str, args);
+        const transformResult = this.__transformIncludes(str, args);
         str = transformResult.query;
         args = transformResult.args;
         str = this.__validateAndCollectParameters(str, args, 'and');
@@ -123,9 +123,9 @@ class queryMethods{
     }
 
     where(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         // Transform .includes() syntax to .any() syntax
-        var transformResult = this.__transformIncludes(str, args);
+        const transformResult = this.__transformIncludes(str, args);
         str = transformResult.query;
         args = transformResult.args;
         str = this.__validateAndCollectParameters(str, args, 'where');
@@ -136,7 +136,7 @@ class queryMethods{
     // when you dont want to use lazy loading and want it called at that moment
     //Eagerly loading
     include(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'include');
         this.__queryObject.include(str, this.__entity.__name);
         return this;
@@ -144,7 +144,7 @@ class queryMethods{
 
     // only takes a array of selected items
     select(query,  ...args){
-        var str = query.toString();
+        let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'select');
         this.__queryObject.select(str, this.__entity.__name);
         return this;
@@ -213,7 +213,7 @@ class queryMethods{
 
     async count(query,  ...args){
         if(query){
-            var str = query.toString();
+            let str = query.toString();
             str = this.__validateAndCollectParameters(str, args, 'count');
             this.__queryObject.count(str, this.__entity.__name);
         }
@@ -386,8 +386,8 @@ class queryMethods{
 
         // Replace $$ with ? placeholders and collect parameter values
         if(args){
-            for(let argument in args){
-                var item = args[argument];
+            for(const argument in args){
+                const item = args[argument];
                 if(typeof item === 'undefined'){
                     const msg = `Query argument error in ${methodName}: placeholder value at index ${argument} is undefined.`;
                     console.error(msg);
@@ -504,7 +504,7 @@ class queryMethods{
 
         // Cache miss - execute query
         await this.__context._ensureReady();
-        var result = null;
+        let result = null;
         if(this.__context.isSQLite){
             var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
             result = this.__singleEntityBuilder(entityValue);
@@ -557,7 +557,7 @@ class queryMethods{
 
         // Cache miss - execute query
         await this.__context._ensureReady();
-        var result = [];
+        let result = [];
         if(this.__context.isSQLite){
             var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
             result = this.__multipleEntityBuilder(entityValue);
@@ -590,7 +590,7 @@ class queryMethods{
     // Creates a new empty entity instance ready for insertion
     // Returns an object with property setters that track changes
     new(){
-        var newEntity = {
+        const newEntity = {
             __ID : Math.floor((Math.random() * 100000) + 1),
             __dirtyFields : [],
             __state : "insert",
@@ -601,10 +601,10 @@ class queryMethods{
         };
 
         // Set up property setters for all entity fields
-        var $that = this;
-        for (var fieldName in this.__entity) {
+        const $that = this;
+        for (const fieldName in this.__entity) {
             if(!fieldName.startsWith("__")){
-                var field = this.__entity[fieldName];
+                const field = this.__entity[fieldName];
                 // Skip navigational properties (relationships)
                 if(!field.isNavigational && field.type !== "hasMany" && field.type !== "hasOne" && field.type !== "hasManyThrough"){
                     (function(fname, fieldDef){
@@ -616,7 +616,7 @@ class queryMethods{
                                 if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
                                     for (const validator of fieldDef.validators) {
                                         let isValid = true;
-                                        let errorMsg = validator.message;
+                                        const errorMsg = validator.message;
 
                                         switch (validator.type) {
                                             case 'required':
@@ -989,7 +989,7 @@ class queryMethods{
 
     removeRange(entityValues){
         for (const property in entityValues) {
-            var entityValue = entityValues[property];
+            const entityValue = entityValues[property];
             entityValue.__state = "delete";
             entityValue.__entity = this.__entity;
             entityValue.__context = this.__context;

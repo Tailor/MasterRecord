@@ -1069,7 +1069,7 @@ class context {
         }
 
         // Normalize type — require explicit type, no silent inference
-        let type = (options.type || '').toString().toLowerCase();
+        const type = (options.type || '').toString().toLowerCase();
         if (!type) {
             throw new ConfigurationError(
                 'Database type is required. Please specify type: "sqlite", "mysql", or "postgres" in your configuration.',

@@ -5,16 +5,16 @@ class migrationSQLiteQuery {
     #tempTableName = "_temp_alter_column_update"
     
     #getTableColumns(table){
-        var columnList = [];
-        for (var key in table) {
+        const columnList = [];
+        for (const key in table) {
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
                 // Skip relationship-only fields
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
                     continue;
                 }
                 // Map belongsTo to its foreignKey name
-                var name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
+                const name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
                 columnList.push(name);
             }
         }
@@ -38,17 +38,17 @@ class migrationSQLiteQuery {
         */
         // name TEXT NOT NULL,
 
-        var auto = table.auto ? " AUTOINCREMENT":"";
-        var primaryKey = table.primary ? " PRIMARY KEY" : "";
-        var nullName = table.nullable ? "" : " NOT NULL";
-        var unique = table.unique ? " UNIQUE" : "";
-        var type = this.#typeManager(table.type);
-        var colName = table.name;
+        const auto = table.auto ? " AUTOINCREMENT":"";
+        const primaryKey = table.primary ? " PRIMARY KEY" : "";
+        const nullName = table.nullable ? "" : " NOT NULL";
+        const unique = table.unique ? " UNIQUE" : "";
+        const type = this.#typeManager(table.type);
+        let colName = table.name;
         if(table.relationshipType === 'belongsTo' && table.foreignKey){
             colName = table.foreignKey;
         }
         // DEFAULT clause
-        var defaultClause = "";
+        let defaultClause = "";
         if(table.default !== undefined && table.default !== null){
             let def = table.default;
             if(table.type === 'boolean'){
@@ -163,15 +163,15 @@ class migrationSQLiteQuery {
     }
 
     createTable(table){
-        var queryVar = "";
-        for (var key in table) {
+        let queryVar = "";
+        for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
             if(key === 'indexes' || key.startsWith('__')){
                 continue;
             }
 
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
                 // Skip relationship-only fields
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
                     continue;

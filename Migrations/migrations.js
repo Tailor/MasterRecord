@@ -15,12 +15,12 @@ import { resolveMigrationsDirectory } from './pathUtils.js';
 class Migrations{
 
     #organizeSchemaByTables(oldSchema, newSchema){
-            var tables = []
-            var seenTableNames = new Set();  // Track processed table names to prevent duplicates
+            const tables = []
+            const seenTableNames = new Set();  // Track processed table names to prevent duplicates
 
             if(oldSchema.length === 0){
                 newSchema.forEach(function (item, index) {
-                    var tableName = item["__name"];
+                    const tableName = item["__name"];
 
                     // Skip if we've already processed this table name
                     if(seenTableNames.has(tableName)){
@@ -29,7 +29,7 @@ class Migrations{
                     }
                     seenTableNames.add(tableName);
 
-                    var table = {
+                    const table = {
                         name: tableName,
                         new :item,
                         old : {},
@@ -48,7 +48,7 @@ class Migrations{
             }
             else{
                 newSchema.forEach(function (item, index) {
-                    var tableName = item["__name"];
+                    const tableName = item["__name"];
 
                     // Skip if we've already processed this table name
                     if(seenTableNames.has(tableName)){
@@ -57,7 +57,7 @@ class Migrations{
                     }
                     seenTableNames.add(tableName);
 
-                    var table = {
+                    const table = {
                         name: tableName,
                         old: {},
                         new :item,
@@ -73,7 +73,7 @@ class Migrations{
                     }
 
                     oldSchema.forEach(function (oldItem, index) {
-                        var oldItemName = oldItem["__name"];
+                        const oldItemName = oldItem["__name"];
                         if(table.name === oldItemName){
                             table.old = oldItem;
                         }
@@ -88,13 +88,13 @@ class Migrations{
 
     #findDeletedColumns(tables){
             tables.forEach(function (item, index) {
-                var deletedColumn = null;
+                let deletedColumn = null;
                 if(item.new && item.old){
                     Object.keys(item.old).forEach(function (key) {
-                        var value = item.old[key].name;
+                        const value = item.old[key].name;
                         deletedColumn = null;
                         Object.keys(item.new).forEach(function (newKey) {
-                            var newValue = item.new[newKey].name;
+                            const newValue = item.new[newKey].name;
                             if(value === newValue){
                                 deletedColumn = value;
                             }
@@ -113,11 +113,11 @@ class Migrations{
 
         tables.forEach(function (item, index) {
            
-            var UD = diff.updatedDiff(item.old, item.new);
+            const UD = diff.updatedDiff(item.old, item.new);
             const isEmpty = Object.keys(UD).length === 0;
             if(!isEmpty){
-                for (var key in UD) {
-                    var tableChanges = {
+                for (const key in UD) {
+                    const tableChanges = {
                         changes : UD[key],
                         table : item.new[key],
                         tableName : item.name
@@ -135,11 +135,11 @@ class Migrations{
                 if(item.new && item.old){
                     Object.keys(item.new).forEach(function (key) {
                         if(typeof item.new[key] === "object"){
-                            var value = item.new[key].name;
-                            var columnNotFound = false;
+                            const value = item.new[key].name;
+                            let columnNotFound = false;
                             Object.keys(item.old).forEach(function (oldKey) {
                                 if(typeof item.old[oldKey] === "object"){
-                                    var oldValue = item.old[oldKey].name;
+                                    const oldValue = item.old[oldKey].name;
                                     if(value === oldValue){
                                         columnNotFound = true;
                                     }
@@ -186,7 +186,7 @@ class Migrations{
     // build table to build new migration snapshot
     #buildMigrationObject(oldSchema, newSchema, newSeedData = {}){
 
-        var tables = this.#organizeSchemaByTables(oldSchema, newSchema);
+        let tables = this.#organizeSchemaByTables(oldSchema, newSchema);
 
         tables = this.#findNewTables(tables);
         tables = this.#findNewColumns(tables);
@@ -208,11 +208,11 @@ class Migrations{
             if(item.new && item.old){
                 Object.keys(item.new).forEach(function (key) {
                     if(typeof item.new[key] === "object" && item.new[key].indexes){
-                        var columnName = item.new[key].name;
-                        var newIndexes = item.new[key].indexes;
+                        const columnName = item.new[key].name;
+                        const newIndexes = item.new[key].indexes;
 
                         // Check if this column existed before
-                        var oldColumn = null;
+                        let oldColumn = null;
                         Object.keys(item.old).forEach(function (oldKey) {
                             if(typeof item.old[oldKey] === "object" && item.old[oldKey].name === columnName){
                                 oldColumn = item.old[oldKey];
@@ -252,11 +252,11 @@ class Migrations{
             if(item.new && item.old){
                 Object.keys(item.old).forEach(function (key) {
                     if(typeof item.old[key] === "object" && item.old[key].indexes){
-                        var columnName = item.old[key].name;
-                        var oldIndexes = item.old[key].indexes;
+                        const columnName = item.old[key].name;
+                        const oldIndexes = item.old[key].indexes;
 
                         // Check if this column still exists
-                        var newColumn = null;
+                        let newColumn = null;
                         Object.keys(item.new).forEach(function (newKey) {
                             if(typeof item.new[newKey] === "object" && item.new[newKey].name === columnName){
                                 newColumn = item.new[newKey];
@@ -358,22 +358,22 @@ class Migrations{
 
 
     findContextFile(executedLocation, contextFileName){
-        var files = globSync(`**/*${contextFileName}.js`, {
+        const files = globSync(`**/*${contextFileName}.js`, {
             cwd: executedLocation,
             dot: true,
             windowsPathsNoEscape: true
         });
-        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+        const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
         return file;
     }
 
     async findContext(executedLocation, contextFileName){
-        var files = globSync(`**/*${contextFileName}.js`, {
+        const files = globSync(`**/*${contextFileName}.js`, {
             cwd: executedLocation,
             dot: true,
             windowsPathsNoEscape: true
         });
-        var file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+        const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
         if(!file){
             return null;
         }
@@ -387,12 +387,12 @@ class Migrations{
 
     // remove hasMany and hasOne and hasManyThrough
     cleanEntities(entities){
-        var newEntity = [];
+        const newEntity = [];
         for (let i = 0; i < entities.length; i++) {
-            var entity = entities[i];
-            var newObj = {}
+            const entity = entities[i];
+            const newObj = {}
 
-            for (let key in entity) {
+            for (const key in entity) {
                 if (entity.hasOwnProperty(key)) {
               
                     if(entity[key].type !== "hasOne" && entity[key].type  !== "hasMany" && entity[key].type  !== "hasManyThrough"){
@@ -454,12 +454,12 @@ class Migrations{
 
     // validate if schema has changed based on new and old
     buildUpObject(oldSchema, newSchema){
-        var tableObj = {}
-        var tables = this.#buildMigrationObject(oldSchema, newSchema);
+        const tableObj = {}
+        const tables = this.#buildMigrationObject(oldSchema, newSchema);
 
         tables.forEach(function (item, index) {
                     // add new columns for table
-                    var columnInfo = tables[index];
+                    const columnInfo = tables[index];
                     // Always expose each table under its name so templates like
                     // this.createTable(table.TableName) can safely access it.
                     tableObj[item.name] = columnInfo.new;
@@ -514,23 +514,19 @@ class Migrations{
     }
 
     template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null){
-        var MT = new MigrationTemplate(name);
+        const MT = new MigrationTemplate(name);
         // Determine current environment if not provided
         if (!currentEnv) {
             currentEnv = process.env.NODE_ENV || process.env.master || 'development';
         }
-        var tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
+        const tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
 
         tables.forEach(function (item, index) {
-            if(item.old === null){
-                MT.createTable("up", column, item.name);
-                MT.dropTable("down", column, item.name);
-            }
-
-            if(item.new === null){
-                MT.dropTable("up", column, item.name);
-                MT.createTable("down", column, item.name);
-            }
+            // (Whole-table create/drop is handled below via item.newTables /
+            //  item.deletedColumns. The previous `if (item.old === null)` /
+            //  `if (item.new === null)` branches here referenced an undefined
+            //  `column` and never ran — old/new are always {} or an object,
+            //  never null — so they were dead, broken code and were removed.)
 
             item.newTables.forEach(function (column, ind) {
                 MT.createTable("up", item.name);

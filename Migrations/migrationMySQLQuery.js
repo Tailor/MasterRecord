@@ -5,16 +5,16 @@ class migrationMySQLQuery {
     #tempTableName = "_temp_alter_column_update"
     
     #getTableColumns(table){
-        var columnList = [];
-        for (var key in table) {
+        const columnList = [];
+        for (const key in table) {
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
                 // Skip relationship-only fields
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough'){
                     continue;
                 }
                 // Map belongsTo to its foreignKey name
-                var name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
+                const name = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
                 columnList.push(`\`${name}\``);
             }
         }
@@ -38,16 +38,16 @@ class migrationMySQLQuery {
         */
         // name TEXT NOT NULL,
 
-        var auto = table.auto ? " AUTO_INCREMENT":"";
-        var primaryKey = table.primary ? " PRIMARY KEY" : "";
-        var nullName = table.nullable ? "" : " NOT NULL";
-        var unique = table.unique ? " UNIQUE" : "";
-        var type = this.typeManager(table.type);
-        var tableName = table.name;
+        const auto = table.auto ? " AUTO_INCREMENT":"";
+        const primaryKey = table.primary ? " PRIMARY KEY" : "";
+        const nullName = table.nullable ? "" : " NOT NULL";
+        const unique = table.unique ? " UNIQUE" : "";
+        const type = this.typeManager(table.type);
+        let tableName = table.name;
         if(table.relationshipType === 'belongsTo' && table.foreignKey){
             tableName = table.foreignKey;
         }
-        var defaultValue  = "";
+        let defaultValue  = "";
         if(table.default !== undefined && table.default !== null){
             let def = table.default;
             if(table.type === 'boolean'){
@@ -69,18 +69,12 @@ class migrationMySQLQuery {
     boolType(type){
         switch(type) {
             case "true":
-                return "1"
-              break;
-              case "false":
-                return "0"
-              break;
-              case true:
-                return "1"
-              break;
-              case false:
-                return "0"
-              break;
-              default:
+            case true:
+                return "1";
+            case "false":
+            case false:
+                return "0";
+            default:
                 return type;
         }
     }
@@ -197,16 +191,16 @@ class migrationMySQLQuery {
 
     createTable(table){
 
-        var queryVar = "";
+        let queryVar = "";
         //console.log("Dsfdsfdsf---------", table)
-        for (var key in table) {
+        for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
             if(key === 'indexes' || key.startsWith('__')){
                 continue;
             }
 
             if(typeof table[key] === "object"){
-                var col = table[key];
+                const col = table[key];
 
                 if(col.type !== "hasOne" && col.type  !== "hasMany" && col.type  !== "hasManyThrough"){
                     // Whitelist: Only process objects that look like column definitions
@@ -220,7 +214,7 @@ class migrationMySQLQuery {
             }
         }
 
-        var completeQuery = `CREATE TABLE IF NOT EXISTS \`${table.__name}\` (${queryVar.replace(/,\s*$/, "")});`;
+        const completeQuery = `CREATE TABLE IF NOT EXISTS \`${table.__name}\` (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;
 
             /*

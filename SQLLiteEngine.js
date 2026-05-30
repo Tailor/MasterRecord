@@ -13,31 +13,31 @@ class SQLLiteEngine {
             throw new Error('UPDATE failed: Invalid parameterized query structure. Check entity definition.');
         }
 
-        var sqlQuery = ` UPDATE [${query.tableName}]
+        const sqlQuery = ` UPDATE [${query.tableName}]
         SET ${query.arg.sql}
         WHERE [${query.tableName}].[${query.primaryKey}] = ?`;
         // Add primaryKeyValue to params array
-        var params = [...query.arg.params, query.primaryKeyValue];
+        const params = [...query.arg.params, query.primaryKeyValue];
         return Promise.resolve(this._runWithParams(sqlQuery, params));
     }
 
     async delete(queryObject){
-       var sqlObject = this._buildDeleteObject(queryObject);
+       const sqlObject = this._buildDeleteObject(queryObject);
        // Use parameterized query to prevent SQL injection
-       var sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
+       const sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
        return Promise.resolve(this._executeWithParams(sqlQuery, [sqlObject.value]));
     }
 
     async insert(queryObject){
         // Use NEW SECURE parameterized version
-        var sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
+        const sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
         if(sqlObject === -1){
             throw new Error('INSERT failed: No columns to insert');
         }
-        var query = `INSERT INTO [${sqlObject.tableName}] (${sqlObject.columns})
+        const query = `INSERT INTO [${sqlObject.tableName}] (${sqlObject.columns})
         VALUES (${sqlObject.placeholders})`;
-        var queryObj = this._runWithParams(query, sqlObject.params);
-        var open = {
+        const queryObj = this._runWithParams(query, sqlObject.params);
+        const open = {
             "id": queryObj.lastInsertRowid
         };
         return Promise.resolve(open);
@@ -111,7 +111,7 @@ class SQLLiteEngine {
     }
 
     async get(query, entity, context){
-        var queryString = {};
+        let queryString = {};
         try {
             if(query.raw){
                 queryString.query = query.raw;
@@ -131,7 +131,7 @@ class SQLLiteEngine {
                     console.debug("[SQL]", queryString.query);
                     console.debug("[Params]", params);
                 }
-                var queryReturn = this.db.prepare(queryString.query).get(...params);
+                const queryReturn = this.db.prepare(queryString.query).get(...params);
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -169,8 +169,8 @@ class SQLLiteEngine {
     }
 
     async getCount(queryObject, entity, context){
-        var query = queryObject.script;
-        var queryString = {};
+        const query = queryObject.script;
+        const queryString = {};
         try {
             if(query.raw){
                 queryString.query = query.raw;
@@ -186,14 +186,14 @@ class SQLLiteEngine {
                 queryString.query = `SELECT ${this.buildCount(query, entity)} ${this.buildFrom(query, entity)} ${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`
             }
             if(queryString.query){
-                var queryCount = queryString.query
+                const queryCount = queryString.query
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
                 if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
                     console.debug("[SQL]", queryCount);
                     console.debug("[Params]", params);
                 }
-                var queryReturn = this.db.prepare(queryCount).get(...params);
+                const queryReturn = this.db.prepare(queryCount).get(...params);
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -204,7 +204,7 @@ class SQLLiteEngine {
     }
 
     async all(query, entity, context){
-        var selectQuery = {};
+        let selectQuery = {};
         try {
             if(query.raw){
                 selectQuery.query = query.raw;
@@ -220,7 +220,7 @@ class SQLLiteEngine {
                     console.debug("[SQL]", selectQuery.query);
                     console.debug("[Params]", params);
                 }
-                var queryReturn = this.db.prepare(selectQuery.query).all(...params);
+                const queryReturn = this.db.prepare(selectQuery.query).all(...params);
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -232,7 +232,7 @@ class SQLLiteEngine {
 
     changeNullQuery(query){
         if(query.where){
-            var whereClaus;
+            let whereClaus;
             whereClaus = query.where.expr.replace("=== null", "is null");
             if(whereClaus === query.where.expr){
                 whereClaus = query.where.expr.replace("!= null", "is not null");
@@ -243,7 +243,7 @@ class SQLLiteEngine {
     }
 
     buildCount(query, mainQuery){
-            var entity = this.getEntity(query.parentName, query.entityMap);
+            const entity = this.getEntity(query.parentName, query.entityMap);
             if(query.count){
                 if(query.count !== "none"){
                     return `COUNT(${entity}.${query.count.selectFields[0]})`
@@ -259,7 +259,7 @@ class SQLLiteEngine {
 
     buildQuery(query, entity, context, limit){
 
-        var queryObject = {};
+        const queryObject = {};
         queryObject.entity = this.getEntity(entity.__name, query.entityMap);
         queryObject.select = this.buildSelect(query, entity);
         queryObject.count = this.buildCount(query, entity);
@@ -289,7 +289,7 @@ class SQLLiteEngine {
             }
         }
 
-        var queryString = `${queryObject.select} ${queryObject.count} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
+        const queryString = `${queryObject.select} ${queryObject.count} ${queryObject.from} ${queryObject.include} ${queryObject.where} ${queryObject.and} ${queryObject.orderBy} ${queryObject.take} ${queryObject.skip}`;
         return {
                 query : queryString,
                 entity : this.getEntity(entity.__name, query.entityMap)
@@ -324,10 +324,10 @@ class SQLLiteEngine {
 
     buildOrderBy(query, entity){
         // ORDER BY column1, column2, ... ASC|DESC;
-        var $that = this;
-        var orderByType = "ASC";
-        var orderByEntity = query.orderBy;
-        var strQuery = "";
+        const $that = this;
+        let orderByType = "ASC";
+        let orderByEntity = query.orderBy;
+        let strQuery = "";
         if(orderByEntity === false){
             orderByType = "DESC";
             orderByEntity = query.orderByDesc;
@@ -342,7 +342,7 @@ class SQLLiteEngine {
                     }
                 }
             }
-            var entityAlias = this.getEntity(query.parentName, query.entityMap);
+            const entityAlias = this.getEntity(query.parentName, query.entityMap);
             const fieldList = [];
             for (const item in orderByEntity.selectFields) {
                 fieldList.push(`${entityAlias}.${orderByEntity.selectFields[item]}`);
@@ -374,25 +374,25 @@ class SQLLiteEngine {
     buildAnd(query, mainQuery){
         // loop through the AND
         // loop update ther where .expr
-        var andEntity = query.and;
-        var $that = this;
-        var str = "";
+        const andEntity = query.and;
+        const $that = this;
+        let str = "";
 
         if(andEntity){
-            var entity = this.getEntity(query.parentName, query.entityMap);
+            let entity = this.getEntity(query.parentName, query.entityMap);
             var andList = [];
-            for (let entityPart in andEntity) { // loop through list of and's
-                    var itemEntity = andEntity[entityPart]; // get the entityANd
-                for (let table in itemEntity[query.parentName]) { // find the main table
-                     var item = itemEntity[query.parentName][table];
+            for (const entityPart in andEntity) { // loop through list of and's
+                    const itemEntity = andEntity[entityPart]; // get the entityANd
+                for (const table in itemEntity[query.parentName]) { // find the main table
+                     const item = itemEntity[query.parentName][table];
                     const expressions = [];
-                    for (let exp in item.expressions) {
+                    for (const exp in item.expressions) {
                         // Use the field name verbatim for SQL emission; only
                         // use the capitalized form for the navigational
                         // relationship lookup (those are PascalCase keys).
                         const originalField = item.expressions[exp].field;
                         const capitalized = tools.capitalizeFirstLetter(originalField);
-                        var field = originalField;
+                        let field = originalField;
                         if(mainQuery[capitalized]){
                             if(mainQuery[capitalized].isNavigational){
                                 entity = $that.getEntity(capitalized, query.entityMap);
@@ -411,7 +411,7 @@ class SQLLiteEngine {
                             expressions.push(`${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`);
                         }else{
                             // Check if arg is a parameterized placeholder
-                            var isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
+                            const isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
                             if(isPlaceholder){
                                 expressions.push(`${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`);
                             }else{
@@ -433,16 +433,16 @@ class SQLLiteEngine {
     }
 
     buildWhere(query, mainQuery){
-        var whereEntity = query.where;
+        const whereEntity = query.where;
 
-        var $that = this;
+        const $that = this;
         if(!whereEntity){
             return "";
         }
 
-        var entityAlias = this.getEntity(query.parentName, query.entityMap);
-        var item = whereEntity[query.parentName].query;
-        var exprs = item.expressions || [];
+        const entityAlias = this.getEntity(query.parentName, query.entityMap);
+        const item = whereEntity[query.parentName].query;
+        const exprs = item.expressions || [];
 
         function exprToSql(expr){
             // Preserve case for column emission. SQLite identifier matching
@@ -450,8 +450,8 @@ class SQLLiteEngine {
             // practice, but it would have hidden a bug if SQLite were ever
             // configured with strict case-sensitive identifiers, and it
             // produced inconsistent SQL output across engines.
-            var field = expr.field;
-            var ent = entityAlias;
+            let field = expr.field;
+            let ent = entityAlias;
             if(mainQuery[field]){
                 if(mainQuery[field].isNavigational){
                     ent = $that.getEntity(field, query.entityMap);
@@ -462,7 +462,7 @@ class SQLLiteEngine {
                 }
             }
             let func = expr.func;
-            let arg = expr.arg;
+            const arg = expr.arg;
             if((!func && typeof arg === 'undefined')){
                 return null;
             }
@@ -481,7 +481,7 @@ class SQLLiteEngine {
                 return `${ent}.${field}  ${func} ${arg}`;
             }
             // Check if arg is a parameterized placeholder (? for MySQL/SQLite, $1/$2/etc for Postgres)
-            var isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
+            const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
             if(isPlaceholder){
                 // Don't quote placeholders - they must remain as bare ? or $1
                 return `${ent}.${field}  ${func} ${arg}`;
@@ -518,23 +518,23 @@ class SQLLiteEngine {
 
     buildInclude( query, entity, context){
         const includeQueries = [];
-        for (let part in query.include) {
-            var includeEntity = query.include[part];
-            var $that = this;
+        for (const part in query.include) {
+            const includeEntity = query.include[part];
+            const $that = this;
             if(includeEntity){
-                var parentObj = includeEntity[query.parentName];
-                var currentContext = "";
+                const parentObj = includeEntity[query.parentName];
+                let currentContext = "";
                 if(includeEntity.selectFields){
                     currentContext = context[tools.capitalizeFirstLetter(includeEntity.selectFields[0])];
                 }
 
                 if(parentObj){
                     parentObj.entityMap = query.entityMap;
-                    var foreignKey = $that.getForeignKey(entity.__name, currentContext.__entity);
-                    var mainPrimaryKey = $that.getPrimarykey(entity);
+                    let foreignKey = $that.getForeignKey(entity.__name, currentContext.__entity);
+                    let mainPrimaryKey = $that.getPrimarykey(entity);
                     var mainEntity = $that.getEntity(entity.__name, query.entityMap);
                     if(currentContext.__entity[entity.__name].type === "hasManyThrough"){
-                        var foreignTable = tools.capitalizeFirstLetter(currentContext.__entity[entity.__name].foreignTable); //to uppercase letter
+                        const foreignTable = tools.capitalizeFirstLetter(currentContext.__entity[entity.__name].foreignTable); //to uppercase letter
                         foreignKey = $that.getPrimarykey(currentContext.__entity);
                         mainPrimaryKey = context[foreignTable].__entity[currentContext.__entity.__name].foreignKey;
                         var mainEntity = $that.getEntity(foreignTable,query.entityMap);
@@ -548,7 +548,7 @@ class SQLLiteEngine {
                         parentObj.select.selectFields.push(foreignKey);
                     }
 
-                    var innerQuery = $that.buildQuery(parentObj, currentContext.__entity, context);
+                    const innerQuery = $that.buildQuery(parentObj, currentContext.__entity, context);
 
                     includeQueries.push(`LEFT JOIN (${innerQuery.query}) AS ${innerQuery.entity} ON ${ mainEntity}.${mainPrimaryKey} = ${innerQuery.entity}.${foreignKey}`);
 
@@ -559,7 +559,7 @@ class SQLLiteEngine {
     }
 
     buildFrom(query, entity){
-        var entityName = this.getEntity(entity.__name, query.entityMap);
+        const entityName = this.getEntity(entity.__name, query.entityMap);
         if(entityName ){
             return `FROM ${entity.__name } AS ${entityName}`;
         }
@@ -568,9 +568,9 @@ class SQLLiteEngine {
 
     buildSelect(query, entity){
         // this means that there is a select statement
-        var select = "SELECT";
+        const select = "SELECT";
         const arr = [];
-        var $that = this;
+        const $that = this;
         if(query.select){
             for (const item in query.select.selectFields) {
                 arr.push(`${$that.getEntity(entity.__name, query.entityMap)}.${query.select.selectFields[item]}`);
@@ -578,7 +578,7 @@ class SQLLiteEngine {
 
         }
         else{
-            var entityList = this.getEntityList(entity);
+            const entityList = this.getEntityList(entity);
             for (const item in entityList) {
                 arr.push(`${$that.getEntity(entity.__name, query.entityMap)}.${entityList[item]}`);
             };
@@ -609,9 +609,9 @@ class SQLLiteEngine {
     }
 
     getInclude(name, query){
-        var include = query.include;
+        const include = query.include;
         if(include){
-            for (let part in include) {
+            for (const part in include) {
                 if(tools.capitalizeFirstLetter(include[part].selectFields[0]) === name){
                     return include[part];
                 }
@@ -623,8 +623,8 @@ class SQLLiteEngine {
     }
 
     getEntity(name, maps){
-        for (let item in maps) {
-            var map = maps[item];
+        for (const item in maps) {
+            const map = maps[item];
             if(tools.capitalizeFirstLetter(name) === tools.capitalizeFirstLetter(map.name)){
                 return map.entity
             }
@@ -639,9 +639,9 @@ class SQLLiteEngine {
 
  // return a list of entity names and skip foreign keys and underscore.
  getEntityList(entity){
-    var entitiesList = [];
-    var $that = this;
-    for (var ent in entity) {
+    const entitiesList = [];
+    const $that = this;
+    for (const ent in entity) {
             if(!ent.startsWith("_")){
                 // Skip lifecycle hooks - they are not database columns
                 if(entity[ent].lifecycle === true){
@@ -668,7 +668,7 @@ class SQLLiteEngine {
                 else{
                     
                     if(entity[ent].relationshipType === "belongsTo"){
-                        var name = entity[ent].foreignKey;
+                        const name = entity[ent].foreignKey;
                         if($that.chechUnsupportedWords(name)){
                             entitiesList.push(`'${name}'`);
                             //entitiesList.push(`'${ent}'`);
@@ -693,8 +693,8 @@ class SQLLiteEngine {
     return entitiesList
 }
     chechUnsupportedWords(word){
-        for (var item in this.unsupportedWords) {
-            var text = this.unsupportedWords[item];
+        for (const item in this.unsupportedWords) {
+            const text = this.unsupportedWords[item];
             if(text === word){
                 return true
             }
@@ -724,15 +724,15 @@ class SQLLiteEngine {
     }
 
     _buildSQLEqualTo(model){
-        var $that = this;
-        var argument = null;
-        var dirtyFields = model.__dirtyFields;
+        const $that = this;
+        let argument = null;
+        const dirtyFields = model.__dirtyFields;
 
-        for (var column in dirtyFields) {
+        for (const column in dirtyFields) {
 
 			// Validate non-nullable constraints on updates
-			var fieldName = dirtyFields[column];
-			var entityDef = model.__entity[fieldName];
+			const fieldName = dirtyFields[column];
+			const entityDef = model.__entity[fieldName];
 			if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
 				// Determine the value that will actually be persisted for this field
 				var persistedValue;
@@ -746,13 +746,13 @@ class SQLLiteEngine {
 					default:
 						persistedValue = model[fieldName];
 				}
-				var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+				const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
 				if(persistedValue === undefined || persistedValue === null || isEmptyString){
 					throw `Entity ${model.__entity.__name} column ${fieldName} is a required Field`;
 				}
 			}
 
-            var type = model.__entity[dirtyFields[column]].type;
+            let type = model.__entity[dirtyFields[column]].type;
 
             if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){
                 type = "belongsTo";
@@ -768,7 +768,9 @@ class SQLLiteEngine {
                     } catch(typeError) {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
-                    argument = `${foreignKey} = ${fkValue},`;
+                    // Append (don't overwrite) — a belongsTo field after other
+                    // dirty fields must not wipe the accumulated SET clause.
+                    argument = argument === null ? `${foreignKey} = ${fkValue},` : `${argument} ${foreignKey} = ${fkValue},`;
                 break;
                  case "integer" :
                      //model.__entity[dirtyFields[column]].skipGetFunction = true;
@@ -820,10 +822,6 @@ class SQLLiteEngine {
                     }
                     argument = argument === null ? `[${dirtyFields[column]}] = '${timeValue}',` : `${argument} [${dirtyFields[column]}] = '${timeValue}',`;
                 break;
-                case "belongsTo" :
-                    var fore = `_${dirtyFields[column]}`;
-                    argument = argument === null ? `[${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',` : `${argument} [${model.__entity[dirtyFields[column]].foreignKey}] = '${model[fore]}',`;
-                break;
                 case "hasMany" :
                     argument = argument === null ? `[${dirtyFields[column]}] = '${model[dirtyFields[column]]}',` : `${argument} [${dirtyFields[column]}] = '${model[dirtyFields[column]]}',`;
                 break;
@@ -847,29 +845,29 @@ class SQLLiteEngine {
      * This prevents SQL injection by separating SQL structure from values
      */
     _buildSQLEqualToParameterized(model){
-        var $that = this;
-        var sqlParts = [];
-        var params = [];
-        var dirtyFields = model.__dirtyFields;
+        const $that = this;
+        const sqlParts = [];
+        const params = [];
+        const dirtyFields = model.__dirtyFields;
 
-        for (var column in dirtyFields) {
+        for (const column in dirtyFields) {
             // Validate non-nullable constraints on updates
-            var fieldName = dirtyFields[column];
-            var entityDef = model.__entity[fieldName];
+            const fieldName = dirtyFields[column];
+            const entityDef = model.__entity[fieldName];
             if(entityDef && entityDef.nullable === false && entityDef.primary !== true){
                 // Read the raw backing field to get the set()-transformed value,
                 // bypassing get() which may change the type (e.g. parseFloat)
-                var persistedValue = model["_" + fieldName];
+                let persistedValue = model["_" + fieldName];
                 if(persistedValue === undefined){
                     persistedValue = model[fieldName];
                 }
-                var isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
+                const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
                 if(persistedValue === undefined || persistedValue === null || isEmptyString){
                     throw `Entity ${model.__entity.__name} column ${fieldName} is a required Field`;
                 }
             }
 
-            var type = model.__entity[dirtyFields[column]].type;
+            let type = model.__entity[dirtyFields[column]].type;
 
             if(model.__entity[dirtyFields[column]].relationshipType === "belongsTo"){
                 type = "belongsTo";
@@ -982,7 +980,7 @@ class SQLLiteEngine {
                     // case above. Run the toDatabase transformer here too so that
                     // fields with a serializer (e.g. JSON text columns) get their
                     // object values turned into scalars before they reach better-sqlite3.
-                    var rawValue = model["_" + dirtyFields[column]];
+                    let rawValue = model["_" + dirtyFields[column]];
                     if (rawValue === undefined) {
                         rawValue = model[dirtyFields[column]];
                     }
@@ -1010,9 +1008,9 @@ class SQLLiteEngine {
 
 
     _buildDeleteObject(currentModel){
-        var primaryKey = currentModel.__Key === undefined ? tools.getPrimaryKeyObject(currentModel.__entity) : currentModel.__Key;
-        var value = currentModel.__value === undefined ? currentModel[primaryKey] : currentModel.__value;
-        var tableName = currentModel.__tableName === undefined ? currentModel.__entity.__name : currentModel.__tableName;
+        const primaryKey = currentModel.__Key === undefined ? tools.getPrimaryKeyObject(currentModel.__entity) : currentModel.__Key;
+        const value = currentModel.__value === undefined ? currentModel[primaryKey] : currentModel.__value;
+        const tableName = currentModel.__tableName === undefined ? currentModel.__entity.__name : currentModel.__tableName;
         return {tableName: tableName, primaryKey : primaryKey, value : value};
     }
 
@@ -1116,14 +1114,14 @@ class SQLLiteEngine {
 
        // return columns and value strings
     _buildSQLInsertObject(fields, modelEntity){
-        var $that = this;
-        var columns = null;
-        var values = null;
-        for (var column in modelEntity) {
+        const $that = this;
+        let columns = null;
+        let values = null;
+        for (let column in modelEntity) {
             // column1 = value1, column2 = value2, ...
             if(column.indexOf("__") === -1 ){
                 // call the get method if avlable
-                var fieldColumn = "";
+                let fieldColumn = "";
                 // check if get function is avaliable if so use that
                 fieldColumn = fields[column];
 
@@ -1140,11 +1138,11 @@ class SQLLiteEngine {
                             fieldColumn = `'${$that._santizeSingleQuotes(fieldColumn, { entityName: modelEntity.__name, fieldName: column })}'`;
                         break;
                         case "time" :
-                            fieldColumn = fieldColumn;
+                            // time values are inserted as-is (no quoting transform)
                         break;
                     }
 
-                    var relationship = modelEntity[column].relationshipType
+                    const relationship = modelEntity[column].relationshipType
                     if(relationship === "belongsTo"){
                         column = modelEntity[column].foreignKey
                     }
@@ -1159,7 +1157,7 @@ class SQLLiteEngine {
                         case "belongsTo" :
                             var fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column );
                             if( Object.keys(fieldObject).length > 0){
-                                var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
+                                const primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
                                 fieldColumn = fieldObject[primaryKey];
                                 column = modelEntity[column].foreignKey;
                                 // Use bracket-quoted identifiers for SQLite column names
@@ -1185,14 +1183,14 @@ class SQLLiteEngine {
      * This prevents SQL injection by separating SQL structure from values
      */
     _buildSQLInsertObjectParameterized(fields, modelEntity){
-        var $that = this;
-        var columnNames = [];
-        var params = [];
+        const $that = this;
+        const columnNames = [];
+        const params = [];
 
-        for (var column in modelEntity) {
+        for (const column in modelEntity) {
             // Skip internal properties
             if(column.indexOf("__") === -1 ){
-                var fieldColumn = fields[column];
+                let fieldColumn = fields[column];
 
                 // 🔥 FIX: For belongsTo relationships, also check the foreignKey field name
                 // Users can set either orgRole.User = obj OR orgRole.user_id = 2
@@ -1225,7 +1223,7 @@ class SQLLiteEngine {
                     // Convert to database-specific format (e.g., boolean → 1/0 for SQLite)
                     fieldColumn = $that._convertValueForDatabase(fieldColumn, modelEntity[column].type);
 
-                    var relationship = modelEntity[column].relationshipType;
+                    const relationship = modelEntity[column].relationshipType;
                     var actualColumn = relationship === "belongsTo" ? modelEntity[column].foreignKey : column;
 
                     // Add column name and parameter
@@ -1237,7 +1235,7 @@ class SQLLiteEngine {
                         case "belongsTo":
                             var fieldObject = tools.findTrackedObject(fields.__context.__trackedEntities, column);
                             if(Object.keys(fieldObject).length > 0){
-                                var primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
+                                const primaryKey = tools.getPrimaryKeyObject(fieldObject.__entity);
                                 fieldColumn = fieldObject[primaryKey];
                                 var actualColumn = modelEntity[column].foreignKey;
                                 columnNames.push(`[${actualColumn}]`);
@@ -1253,7 +1251,7 @@ class SQLLiteEngine {
 
         if(columnNames.length > 0){
             // Create placeholders: ?, ?, ?, ...
-            var placeholders = params.map(() => '?').join(', ');
+            const placeholders = params.map(() => '?').join(', ');
             return {
                 tableName: modelEntity.__name,
                 columns: columnNames.join(', '),
@@ -1271,15 +1269,15 @@ class SQLLiteEngine {
             return value.replace(/'/g, "''");
         }
         else{
-            var details = context || {};
-            var entityName = details.entityName || 'UnknownEntity';
-            var fieldName = details.fieldName || 'UnknownField';
-            var valueType = (value === null) ? 'null' : (value === undefined ? 'undefined' : typeof value);
-            var preview;
+            const details = context || {};
+            const entityName = details.entityName || 'UnknownEntity';
+            const fieldName = details.fieldName || 'UnknownField';
+            const valueType = (value === null) ? 'null' : (value === undefined ? 'undefined' : typeof value);
+            let preview;
             try{ preview = (value === null || value === undefined) ? String(value) : JSON.stringify(value); }
             catch(_){ preview = '[unserializable]'; }
             if(preview && preview.length > 120){ preview = preview.substring(0, 120) + '…'; }
-            var message = `Field is not a string: entity=${entityName}, field=${fieldName}, type=${valueType}, value=${preview}`;
+            const message = `Field is not a string: entity=${entityName}, field=${fieldName}, type=${valueType}, value=${preview}`;
             console.error(message);
             throw new Error(message);
         }
@@ -1288,7 +1286,7 @@ class SQLLiteEngine {
     // converts any object into SQL parameter select string
     _convertEntityToSelectParameterString(obj, entityName){
         // todo: loop throgh object and append string with comma to 
-        var mainString = "";
+        let mainString = "";
         const entries = Object.keys(obj);
 
         for (const [name] of entries) {
