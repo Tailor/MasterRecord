@@ -392,6 +392,31 @@ class EntityTrackerModel {
             }
         }
 
+        // Make internal metadata (`__*`) and helper/hook methods
+        // non-enumerable. They are attached by plain assignment / object
+        // literal above, which makes them enumerable own properties — so
+        // `{ ...entity }` / `Object.assign({}, entity)` would copy them.
+        // Two concrete bugs that causes:
+        //   1. The copied `toJSON` runs on the spread object and rebuilds
+        //      output from the original columns only, silently dropping any
+        //      key the caller added (`{ ...w, role }` serialized without
+        //      `role`).
+        //   2. `__context` (the whole DB context) leaks into the spread and
+        //      makes `JSON.stringify` throw on its circular structure.
+        // Column accessors are defined with `enumerable: true` and stay
+        // enumerable; relationship getters are already non-enumerable.
+        for (const key of Object.keys(modelClass)) {
+            const desc = Object.getOwnPropertyDescriptor(modelClass, key);
+            // Only touch DATA properties (internals + methods). Skip accessor
+            // properties — those are the column getters (defined enumerable +
+            // non-configurable, so redefining them throws), including the FTS
+            // `__rank` column, which should stay enumerable/serializable.
+            if (!desc || !('value' in desc)) continue;
+            if (key.startsWith('__') || typeof desc.value === 'function') {
+                Object.defineProperty(modelClass, key, { enumerable: false });
+            }
+        }
+
         return modelClass;
     }
 

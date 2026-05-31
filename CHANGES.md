@@ -1,5 +1,21 @@
 # MasterRecord Changelog
 
+## v1.1.8 — entity internals/methods are non-enumerable (fixes spread/JSON data loss)
+
+**Bug:** entity instances exposed their internals (`__entity`, `__context`, `__ID`, `__dirtyFields`, `__state`, `__name`) and helper methods (`toJSON`, `toObject`, `save`, `delete`, `reload`, `clone`) as **enumerable** own properties (attached by object literal / plain assignment). So spreading or `Object.assign`-ing an entity:
+
+```js
+const w = await ctx.Workspace.where(x => x.id == $$, id).single();
+const out = { ...w, role: 'owner' };
+JSON.stringify(out);   // before: {"id":28,"name":"..."} — `role` silently dropped
+```
+
+Two failure modes: (1) the **copied `toJSON`** ran on the plain object and rebuilt output from the original columns only, silently discarding any key the caller added; (2) `__context` (the whole DB context) leaked into the copy and could make `JSON.stringify` throw on its circular structure. `Object.keys(entity)` also returned methods + internals.
+
+**Fix:** internals and helper/hook methods are now defined non-enumerable in both entity-construction paths — `Entity/entityTrackerModel.build()` (queried entities) and `QueryLanguage/queryMethods.new()` (new entities). Column accessors stay enumerable (and the FTS `__rank` column too). `{ ...entity, extra }` now serializes correctly and `Object.keys(entity)` returns only columns.
+
+**Engine coverage:** the fix is in shared, engine-agnostic hydration code — all entities (SQLite, MySQL, Postgres) are built through the same `build()` / `new()`. (Regression test runs on SQLite; the code path is identical for the other engines.)
+
 ## v1.1.7 — clear remaining safe lint errors (0 errors)
 
 Follow-up to 1.1.6. ESLint now reports **0 errors** (192 `no-var`/`no-redeclare` warnings remain, intentionally deferred — see below). No runtime behavior changes; full test suite green (same single pre-existing `count-no-from-audit` failure).

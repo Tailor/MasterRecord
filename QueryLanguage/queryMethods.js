@@ -968,6 +968,21 @@ class queryMethods{
             }
         }
 
+        // Make internal metadata (`__*`) and helper/hook methods
+        // non-enumerable so that `{ ...entity }` / `Object.assign` copy only
+        // column values — see the matching note in entityTrackerModel.build().
+        // Without this, the copied `toJSON` silently drops caller-added keys
+        // on serialize and `__context` leaks (circular JSON).
+        for (const key of Object.keys(newEntity)) {
+            const desc = Object.getOwnPropertyDescriptor(newEntity, key);
+            // Only DATA properties (internals + methods); skip accessor
+            // (column) getters, which are non-configurable.
+            if (!desc || !('value' in desc)) continue;
+            if (key.startsWith('__') || typeof desc.value === 'function') {
+                Object.defineProperty(newEntity, key, { enumerable: false });
+            }
+        }
+
         return newEntity;
     }
 
