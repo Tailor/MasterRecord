@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.2.5 — documentation catch-up
+
+Docs-only. Brought `docs/MIGRATIONS_GUIDE.md` up to date with the 1.2.x work that was previously only in this changelog:
+
+- New **Indexes** section (`createIndex` / `createCompositeIndex`, incl. `unique`).
+- New **Partial / filtered indexes** section (`where`) with the per-engine matrix (Postgres/SQLite native, MySQL throws).
+- New **Reliability & observability** section: self-contained generated migrations, loud-failure semantics (no silent no-ops), and the `[masterrecord:migration]` DDL logging + `MR_SILENT_MIGRATIONS` env var (which was undocumented).
+
+No code changes.
+
 ## v1.2.4 — partial / filtered indexes (enterprise parity)
 
 Adds a `where` option to `createIndex` and `createCompositeIndex`, bringing masterrecord to parity with EF Core (`HasFilter`), TypeORM/Sequelize (`where`), Rails (`:where`) and Django (`condition`). The canonical use is **one-default-per-scope** — at most one `is_default = 1` per `scope_id`, enforced by the database:

@@ -9,6 +9,9 @@ Complete guide for database migrations and seed data with MySQL, SQLite, and Pos
 - [Quick Start](#quick-start)
 - [Database Support](#database-support)
 - [Creating Migrations](#creating-migrations)
+  - [Indexes](#indexes)
+  - [Partial / filtered indexes](#partial--filtered-indexes-where)
+- [Reliability & observability](#reliability--observability)
 - [Seed Data](#seed-data)
 - [Migration Commands](#migration-commands)
 - [Examples](#examples)
@@ -240,6 +243,69 @@ class RenameUsernameColumn extends masterrecord.schema {
 
 export default RenameUsernameColumn;
 ```
+
+### Indexes
+
+```javascript
+import masterrecord from 'masterrecord';
+
+class AddIndexes extends masterrecord.schema {
+    async up(table) {
+        await this.init(table);
+
+        // Single-column index (add `unique: true` for a unique index)
+        await this.createIndex({ tableName: 'User', columnName: 'email', indexName: 'idx_user_email', unique: true });
+
+        // Composite index
+        await this.createCompositeIndex({ tableName: 'Order', columns: ['organization_id', 'created_at'], indexName: 'idx_org_created' });
+    }
+
+    async down(table) {
+        await this.init(table);
+        await this.dropIndex({ tableName: 'User', indexName: 'idx_user_email' });
+        await this.dropCompositeIndex({ tableName: 'Order', indexName: 'idx_org_created' });
+    }
+}
+
+export default AddIndexes;
+```
+
+#### Partial / filtered indexes (`where`)
+
+Add a `where` predicate to index/enforce uniqueness over only the matching rows — e.g. **one default per scope**, or unique email among non-deleted rows:
+
+```javascript
+// at most one is_default = 1 per scope_id (DB-enforced)
+await this.createCompositeIndex({
+    tableName: 'Setting',
+    columns: ['scope_id'],
+    indexName: 'one_default_per_scope',
+    unique: true,
+    where: 'is_default = 1',          // raw SQL predicate (not user input)
+});
+
+// unique email only among rows that aren't soft-deleted
+await this.createIndex({
+    tableName: 'User', columnName: 'email', indexName: 'uniq_active_email',
+    unique: true, where: 'deleted_at IS NULL',
+});
+```
+
+| Engine | `where` support |
+| --- | --- |
+| PostgreSQL | native partial index |
+| SQLite | native partial index (3.8+) |
+| MySQL | **not supported** — masterrecord throws at migration time (MySQL has no partial indexes). Enforce the invariant in the write path or via a generated column. |
+
+You can also declare these on the entity/context (`this.compositeIndex(Model, ['scope_id'], { unique: true, where: 'is_default = 1' })`) and `add-migration` will generate the call for you.
+
+## Reliability & observability
+
+Migrations are designed to fail loudly and be observable — there are no silent no-ops:
+
+- **Generated migrations are self-contained.** `add-migration` bakes the full column spec into each `addColumn`/`dropColumn` (`await this.addColumn({ tableName, name, type, … })`), so a migration replays deterministically on every database regardless of how far the committed snapshot has advanced.
+- **Loud failures.** `addColumn`/`dropColumn` throw on an incomplete operand; introspection (`tableExists`/`getTableInfo`) throws on a real error instead of masquerading as “table absent”; MySQL throws on partial-index `where`. A failed step aborts the migration rather than marking it applied.
+- **Observable DDL.** Every statement run by a migration is logged as `[masterrecord:migration] …`, **including in production**. Set `MR_SILENT_MIGRATIONS=true` to suppress it.
 
 ## Seed Data
 
