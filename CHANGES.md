@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.2.2 — deterministic migration snapshots (no transient `tableName` leak)
+
+The generated `*_contextSnapShot.json` could differ run-to-run for an unchanged schema, producing noisy git diffs and occasional spurious "schema changed" detections.
+
+**Root cause:** `buildUpObject()` attached a transient `tableName` to column objects in place (`columnInfo.new[column].tableName = item.name`). Because `cleanEntities()` shallow-copies, those column objects are shared with the schema serialized into the snapshot — so `tableName` leaked in, but only onto the columns that happened to change that run.
+
+**Fix:**
+- `buildUpObject()` now tags a **copy** (`{ ...col, tableName }`) instead of mutating the shared column object — the migration template/query-builder still gets the `tableName` it needs, but the schema definitions stay clean.
+- `createSnapShot()` normalizes the schema before writing (strips any transient `tableName` from column defs), so the persisted snapshot is deterministic regardless of upstream mutation.
+
+Result: two consecutive snapshot generations of an unchanged schema are now **byte-identical**. New test: `test/snapshot-determinism.test.js`.
+
+> Note: the related *live-timestamp* non-determinism (a `created_at`-style snapshot value changing each run) is **not** a masterrecord bug — it comes from a model/seed using a JS-evaluated default (`Date.now()`/`new Date()`), which is re-evaluated per context build. Pin it with a SQL default (`default('CURRENT_TIMESTAMP')`) or set it in a `beforeSave` hook.
+
 ## v1.2.1 — Postgres multi-schema support (configurable schema / search_path)
 
 Closes the gap noted in 1.2.0: a table living in a schema outside the connection's `search_path` was read as "absent" during migrations. You can now target a schema explicitly:

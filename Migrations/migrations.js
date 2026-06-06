@@ -409,6 +409,30 @@ class Migrations{
         return newEntity;
     }
 
+    // Produce a clean, snapshot-safe copy of the schema: shallow-copy each
+    // entity and each column definition, dropping the transient `tableName`
+    // key (attached at migration-build time). Functions on column defs
+    // (transform/validators/get/set) are not JSON-serializable and are
+    // already dropped by JSON.stringify, so omitting them here is harmless.
+    #normalizeSchemaForSnapshot(entities){
+        if (!Array.isArray(entities)) return entities;
+        return entities.map((entity) => {
+            if (!entity || typeof entity !== 'object') return entity;
+            const cleanEntity = {};
+            for (const key of Object.keys(entity)) {
+                const value = entity[key];
+                if (value && typeof value === 'object' && !Array.isArray(value)) {
+                    const { tableName, ...rest } = value; // drop transient tableName
+                    void tableName;
+                    cleanEntity[key] = rest;
+                } else {
+                    cleanEntity[key] = value;
+                }
+            }
+            return cleanEntity;
+        });
+    }
+
     createSnapShot(snap){
         // Place migrations alongside the Context file by default:
         // <ContextDir>/db/migrations/<context>_contextSnapShot.json
@@ -433,11 +457,18 @@ class Migrations{
             ? snap.context.getOrderedSeedData()
             : snap.contextSeedData || {};
 
+        // Normalize the schema before serializing so the snapshot is
+        // DETERMINISTIC: strip the transient `tableName` field that the
+        // migration builder may have attached to column objects. It is not
+        // part of the schema definition (a column's table is implied by its
+        // parent entity's __name), and leaking it produced run-to-run diffs.
+        const normalizedSchema = this.#normalizeSchemaForSnapshot(snap.contextEntities);
+
         const content = {
             contextLocation: relContextLocation,
             migrationFolder: relMigrationFolder,
             snapShotLocation: relSnapshotLocation,
-            schema : snap.contextEntities,
+            schema : normalizedSchema,
             seedData: orderedSeedData,
             seedConfig: snap.contextSeedConfig || {}
         };
@@ -468,14 +499,21 @@ class Migrations{
                         tableObj[item.name] = columnInfo.new;
                     });
 
+                    // NOTE: `tableName` is a transient field the migration
+                    // template/query-builder needs to know which table a
+                    // column belongs to. It must be attached to a COPY — the
+                    // source column objects are shared (cleanEntities shallow-
+                    // copies them) with the schema that gets serialized into
+                    // the snapshot. Mutating them in place leaked `tableName`
+                    // into the snapshot non-deterministically (only on the
+                    // columns that happened to change that run), producing
+                    // noisy diffs and spurious "schema changed" detections.
                     item.newColumns.forEach(function (column, _ind) {
-                        columnInfo.new[column].tableName = item.name;
-                        tableObj[column] = columnInfo.new[column];
+                        tableObj[column] = { ...columnInfo.new[column], tableName: item.name };
                     });
 
                     item.deletedColumns.forEach(function (column, _ind) {
-                        columnInfo.old[column].tableName = item.name;
-                        tableObj[column] = columnInfo.old[column];
+                        tableObj[column] = { ...columnInfo.old[column], tableName: item.name };
                     });
 
                     item.updatedColumns.forEach(function (column, _ind) {
@@ -483,8 +521,7 @@ class Migrations{
                     });
 
                     if(item.new === null){
-                        columnInfo.old.tableName = item.name;
-                        tableObj["new"] = columnInfo.old;
+                        tableObj["new"] = { ...columnInfo.old, tableName: item.name };
                     }
                 
                     tableObj.___table = item;
