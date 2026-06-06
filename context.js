@@ -1369,9 +1369,12 @@ class context {
             throw new Error('compositeIndex: model must be entity class or table name');
         }
 
-        // Validate columns
-        if (!Array.isArray(columns) || columns.length < 2) {
-            throw new Error('compositeIndex: columns must be array with at least 2 columns');
+        // Validate columns. A single column is allowed when a partial/unique
+        // filter is in play (e.g. one-default-per-scope: unique on [scope_id]
+        // WHERE is_default) — that's a legitimate filtered index, matching
+        // EF Core's HasIndex(...).HasFilter(...).IsUnique().
+        if (!Array.isArray(columns) || columns.length < 1) {
+            throw new Error('compositeIndex: columns must be a non-empty array');
         }
 
         // Auto-generate name if not provided
@@ -1383,6 +1386,9 @@ class context {
             name: indexName,
             unique: options.unique || false
         };
+        // Partial/filtered index predicate (Postgres/SQLite); raw SQL.
+        // MySQL throws at migration time (no partial-index support).
+        if (options.where) indexDef.where = options.where;
 
         // Store in context for later merging with entity-defined indexes
         if (!this.__contextCompositeIndexes) {

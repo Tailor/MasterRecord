@@ -119,12 +119,14 @@ export default ${this.name};
     }
 
     createCompositeIndex(type, indexInfo){
-        const indexInfoStr = JSON.stringify({
+        const baked = {
             tableName: indexInfo.tableName,
             columns: indexInfo.columns,
             indexName: indexInfo.indexName,
             unique: indexInfo.unique
-        });
+        };
+        if (indexInfo.where) baked.where = indexInfo.where; // partial/filtered index
+        const indexInfoStr = JSON.stringify(baked);
 
         if(type === "up"){
             this.#up += os.EOL + `     await this.createCompositeIndex(${indexInfoStr});`

@@ -246,10 +246,18 @@ class migrationMySQLQuery {
     }
 
     createIndex(indexInfo){
+        // MySQL has no partial/filtered indexes — fail loudly rather than
+        // silently emit a non-filtered index (which would enforce the wrong
+        // constraint). Enforce the invariant in the write path, or use a
+        // generated column. Postgres and SQLite support `where` natively.
+        if (indexInfo.where) {
+            throw new Error(`masterrecord: MySQL does not support partial/filtered indexes (the \`where\` option on index '${indexInfo.indexName}'). Enforce this invariant in the write path (e.g. a transactional clear-then-set), or use a generated column. Postgres and SQLite support partial indexes natively.`);
+        }
         const indexName = indexInfo.indexName === true
             ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
             : indexInfo.indexName;
-        return `CREATE INDEX \`${indexName}\` ON \`${indexInfo.tableName}\`(\`${indexInfo.columnName}\`)`;
+        const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
+        return `CREATE ${uniqueKeyword}INDEX \`${indexName}\` ON \`${indexInfo.tableName}\`(\`${indexInfo.columnName}\`)`;
     }
 
     dropIndex(indexInfo){
@@ -260,6 +268,9 @@ class migrationMySQLQuery {
     }
 
     createCompositeIndex(indexInfo){
+        if (indexInfo.where) {
+            throw new Error(`masterrecord: MySQL does not support partial/filtered indexes (the \`where\` option on index '${indexInfo.indexName}'). Enforce this invariant in the write path (e.g. a transactional clear-then-set), or use a generated column. Postgres and SQLite support partial indexes natively.`);
+        }
         const columns = indexInfo.columns.map(c => `\`${c}\``).join(', ');
         const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
         return `CREATE ${uniqueKeyword}INDEX \`${indexInfo.indexName}\` ON \`${indexInfo.tableName}\`(${columns})`;

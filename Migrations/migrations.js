@@ -306,12 +306,14 @@ class Migrations{
                     );
 
                     if (!exists) {
-                        item.newCompositeIndexes.push({
+                        const info = {
                             tableName: item.name,
                             columns: newIdx.columns,
                             indexName: newIdx.name,
                             unique: newIdx.unique
-                        });
+                        };
+                        if (newIdx.where) info.where = newIdx.where; // partial/filtered index
+                        item.newCompositeIndexes.push(info);
                     }
                 });
             }

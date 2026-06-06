@@ -1,5 +1,26 @@
 # MasterRecord Changelog
 
+## v1.2.4 — partial / filtered indexes (enterprise parity)
+
+Adds a `where` option to `createIndex` and `createCompositeIndex`, bringing masterrecord to parity with EF Core (`HasFilter`), TypeORM/Sequelize (`where`), Rails (`:where`) and Django (`condition`). The canonical use is **one-default-per-scope** — at most one `is_default = 1` per `scope_id`, enforced by the database:
+
+```javascript
+// declarative (context)
+this.compositeIndex(Setting, ['scope_id'], { unique: true, where: 'is_default = 1' });
+
+// or in a migration
+await this.createCompositeIndex({ tableName: 'Setting', columns: ['scope_id'], indexName: 'one_default', unique: true, where: 'is_default = 1' });
+// single-column: await this.createIndex({ tableName, columnName, indexName, unique: true, where });
+```
+
+- **PostgreSQL / SQLite:** native partial index (`CREATE [UNIQUE] INDEX … WHERE <predicate>`).
+- **MySQL:** has no partial indexes — masterrecord **throws** at migration time with a clear message (rather than silently emitting a non-filtered index that would enforce the wrong constraint). Enforce the invariant in the write path or via a generated column. This matches how EF Core / Rails / Django behave on MySQL.
+- `where` flows through the full pipeline: entity `static compositeIndexes`, `context.compositeIndex()`, the snapshot diff, and the generated (self-contained) migration. `compositeIndex()` now also accepts a single column.
+- `createIndex` (single column) gained `unique` support along the way.
+- `where` is a raw, developer-authored SQL predicate (like identifiers) — not for user input.
+
+New tests: `test/partial-index.test.js` — builder output (PG/SQLite emit `WHERE`, MySQL throws), an end-to-end SQLite test proving a second default per scope is rejected, and a declarative round-trip. Suite green; 0 lint errors.
+
 ## v1.2.3 — self-contained incremental migrations (fixes silent addColumn no-op across DBs)
 
 **Bug:** an incremental `addColumn` migration could silently no-op on a second database (column never added, migration still recorded as applied). Reproduced and root-caused on prod MySQL.

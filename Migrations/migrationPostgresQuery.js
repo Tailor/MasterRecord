@@ -243,7 +243,11 @@ class migrationPostgresQuery {
         const indexName = indexInfo.indexName === true
             ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
             : indexInfo.indexName;
-        return `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${indexInfo.tableName}"("${indexInfo.columnName}")`;
+        const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
+        // Partial/filtered index — Postgres supports `WHERE <predicate>`.
+        // `where` is a raw, developer-authored SQL predicate (not user input).
+        const whereClause = indexInfo.where ? ` WHERE ${indexInfo.where}` : '';
+        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS "${indexName}" ON "${indexInfo.tableName}"("${indexInfo.columnName}")${whereClause}`;
     }
 
     dropIndex(indexInfo){
@@ -256,7 +260,8 @@ class migrationPostgresQuery {
     createCompositeIndex(indexInfo){
         const columns = indexInfo.columns.map(c => `"${c}"`).join(', ');
         const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
-        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS "${indexInfo.indexName}" ON "${indexInfo.tableName}"(${columns})`;
+        const whereClause = indexInfo.where ? ` WHERE ${indexInfo.where}` : '';
+        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS "${indexInfo.indexName}" ON "${indexInfo.tableName}"(${columns})${whereClause}`;
     }
 
     dropCompositeIndex(indexInfo){

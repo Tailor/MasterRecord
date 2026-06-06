@@ -2175,6 +2175,46 @@ class User {
 - **Single index**: Column queried independently (`WHERE email = ?`)
 - **Composite index**: Columns queried together (`WHERE last_name = ? AND first_name = ?`)
 
+### Partial / Filtered Indexes
+
+Add a `where` predicate to index on (and enforce uniqueness over) only the rows that match — the same capability as EF Core's `HasFilter`, TypeORM/Sequelize `where`, Rails `:where`, and Django `condition`.
+
+The canonical use is **one-default-per-scope** — at most one `is_default = 1` row per `scope_id`, enforced by the database:
+
+```javascript
+// Declaratively, on the context:
+class AppContext extends context {
+    onConfig() {
+        this.dbset(Setting);
+        this.compositeIndex(Setting, ['scope_id'], {
+            unique: true,
+            where: 'is_default = 1',   // raw SQL predicate
+            name: 'one_default_per_scope',
+        });
+    }
+}
+
+// Or in a hand-written migration:
+await this.createCompositeIndex({
+    tableName: 'Setting',
+    columns: ['scope_id'],
+    indexName: 'one_default_per_scope',
+    unique: true,
+    where: 'is_default = 1',
+});
+// single-column form: this.createIndex({ tableName, columnName, indexName, unique: true, where })
+```
+
+Other common uses: unique email among non-deleted rows (`where: 'deleted_at IS NULL'`), indexing only active records (`where: 'status = \'active\''`).
+
+| Engine | Behavior |
+| --- | --- |
+| PostgreSQL | native partial index (`CREATE UNIQUE INDEX … WHERE …`) |
+| SQLite | native partial index (3.8+) |
+| MySQL | **not supported** — MySQL has no partial indexes. masterrecord **throws** at migration time (rather than silently creating a non-filtered index that would enforce the wrong constraint). Enforce the invariant in the write path (a transactional clear-then-set) or use a generated column. |
+
+> `where` is a **raw SQL predicate** authored by you (like table/column names), not a place for user input.
+
 ---
 
 ## Seed Data

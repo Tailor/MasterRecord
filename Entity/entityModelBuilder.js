@@ -84,7 +84,7 @@ class EntityModelBuilder {
                 };
             }
 
-            // Object: { columns: [...], name?, unique? }
+            // Object: { columns: [...], name?, unique?, where? }
             if (!index.columns || !Array.isArray(index.columns)) {
                 throw new Error(`Composite index must have 'columns' array`);
             }
@@ -92,11 +92,15 @@ class EntityModelBuilder {
             const name = index.name ||
                 `idx_${tableName.toLowerCase()}_${index.columns.join('_')}`;
 
-            return {
+            const normalized = {
                 columns: index.columns,
                 name: name,
                 unique: index.unique || false
             };
+            // Partial/filtered index predicate (Postgres/SQLite). Raw SQL,
+            // developer-authored. Carried through to migration generation.
+            if (index.where) normalized.where = index.where;
+            return normalized;
         });
     }
 

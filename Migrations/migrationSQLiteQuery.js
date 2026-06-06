@@ -221,7 +221,12 @@ class migrationSQLiteQuery {
         const indexName = indexInfo.indexName === true
             ? `idx_${indexInfo.tableName.toLowerCase()}_${indexInfo.columnName.toLowerCase()}`
             : indexInfo.indexName;
-        return `CREATE INDEX IF NOT EXISTS ${indexName} ON ${indexInfo.tableName}(${indexInfo.columnName})`;
+        const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
+        // Partial/filtered index — SQLite supports `WHERE <predicate>` (3.8+).
+        // `where` is a raw, developer-authored SQL predicate (like the table/
+        // column identifiers), not user input.
+        const whereClause = indexInfo.where ? ` WHERE ${indexInfo.where}` : '';
+        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS ${indexName} ON ${indexInfo.tableName}(${indexInfo.columnName})${whereClause}`;
     }
 
     dropIndex(indexInfo){
@@ -234,7 +239,8 @@ class migrationSQLiteQuery {
     createCompositeIndex(indexInfo){
         const columns = indexInfo.columns.join(', ');
         const uniqueKeyword = indexInfo.unique ? 'UNIQUE ' : '';
-        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS ${indexInfo.indexName} ON ${indexInfo.tableName}(${columns})`;
+        const whereClause = indexInfo.where ? ` WHERE ${indexInfo.where}` : '';
+        return `CREATE ${uniqueKeyword}INDEX IF NOT EXISTS ${indexInfo.indexName} ON ${indexInfo.tableName}(${columns})${whereClause}`;
     }
 
     dropCompositeIndex(indexInfo){
