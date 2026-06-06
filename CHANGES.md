@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.2.6 — idempotent addColumn (skip-if-exists)
+
+`schema.addColumn` now **skips if the column already exists**, symmetric with `dropColumn`'s skip-if-gone and `createTable`'s `IF NOT EXISTS`. None of SQLite/MySQL support `ADD COLUMN IF NOT EXISTS`, so it probes the live schema via `getTableInfo` (which throws on a real introspection error — so a genuine failure still aborts loudly; only a clean "already present" result short-circuits, with a `[masterrecord:migration]` skip log).
+
+Effect: re-running a migration, or applying one to a database that already has part of the schema, is now safe — the per-migration guards added in 1.2.3 become belt-and-suspenders rather than load-bearing. (belongsTo FK columns are matched by their `foreignKey` name.)
+
+New test: idempotent-addColumn case in `test/migration-self-contained.test.js`. Suite green; 0 lint errors.
+
 ## v1.2.5 — documentation catch-up
 
 Docs-only. Brought `docs/MIGRATIONS_GUIDE.md` up to date with the 1.2.x work that was previously only in this changelog:

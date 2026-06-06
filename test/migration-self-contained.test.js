@@ -91,3 +91,17 @@ test('#2 dropColumn throws (no silent no-op) on an incomplete/undefined operand'
     await assert.rejects(() => sch.dropColumn(undefined), /incomplete column definition/);
     await assert.rejects(() => sch.dropColumn({ tableName: 'X' }), /incomplete column definition/);
 });
+
+test('#3 addColumn is idempotent — re-running skips when the column already exists (SQLite)', async () => {
+    const ctx = new TokenCtx();
+    ctx._SQLEngine.db.exec('DROP TABLE IF EXISTS Conv2; CREATE TABLE Conv2 (id INTEGER PRIMARY KEY);');
+    const sch = new schemaCls(TokenCtx);
+    await sch._ensureReady();
+
+    await sch.addColumn({ tableName: 'Conv2', name: 'token', type: 'string' });   // adds
+    await sch.addColumn({ tableName: 'Conv2', name: 'token', type: 'string' });   // must NOT throw — skip-if-exists
+
+    const cols = (await ctx._SQLEngine.getTableInfo('Conv2')).map(c => c.name);
+    assert.equal(cols.filter(c => c === 'token').length, 1, 'column must be added exactly once (idempotent)');
+    await ctx.close();
+});

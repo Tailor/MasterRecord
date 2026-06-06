@@ -304,6 +304,7 @@ You can also declare these on the entity/context (`this.compositeIndex(Model, ['
 Migrations are designed to fail loudly and be observable — there are no silent no-ops:
 
 - **Generated migrations are self-contained.** `add-migration` bakes the full column spec into each `addColumn`/`dropColumn` (`await this.addColumn({ tableName, name, type, … })`), so a migration replays deterministically on every database regardless of how far the committed snapshot has advanced.
+- **Idempotent column ops.** `addColumn` skips if the column already exists (symmetric with `dropColumn`'s skip-if-gone and `createTable`'s `IF NOT EXISTS`), so re-running a migration — or applying one to a database that already has part of the schema — is safe. The existence check uses live introspection, which throws on a real error, so a genuine failure still aborts loudly.
 - **Loud failures.** `addColumn`/`dropColumn` throw on an incomplete operand; introspection (`tableExists`/`getTableInfo`) throws on a real error instead of masquerading as “table absent”; MySQL throws on partial-index `where`. A failed step aborts the migration rather than marking it applied.
 - **Observable DDL.** Every statement run by a migration is logged as `[masterrecord:migration] …`, **including in production**. Set `MR_SILENT_MIGRATIONS=true` to suppress it.
 

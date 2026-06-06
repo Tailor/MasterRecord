@@ -239,6 +239,27 @@ class schema{
             throw new Error('masterrecord: addColumn — no database dialect is active (context not initialized).');
         }
 
+        // Idempotency: skip if the column already exists — symmetric with
+        // dropColumn's skip-if-gone and createTable's IF NOT EXISTS. None of
+        // SQLite/MySQL support `ADD COLUMN IF NOT EXISTS`, so probe the live
+        // schema instead. getTableInfo throws on a real introspection error
+        // (1.2.0), so a genuine failure still aborts loudly; only a clean
+        // "column already present" result short-circuits. This makes
+        // re-running a migration safe and reduces the per-migration guards to
+        // belt-and-suspenders.
+        const _engine = this.context._SQLEngine;
+        if (_engine && typeof _engine.getTableInfo === 'function') {
+            const dbColumn = (table.relationshipType === 'belongsTo' && table.foreignKey) ? table.foreignKey : table.name;
+            const existingCols = await _engine.getTableInfo(table.tableName);
+            const alreadyExists = Array.isArray(existingCols) && existingCols.some(c => c && c.name === dbColumn);
+            if (alreadyExists) {
+                if (process.env.MR_SILENT_MIGRATIONS !== 'true') {
+                    console.log(`[masterrecord:migration] addColumn skipped — ${table.tableName}.${dbColumn} already exists`);
+                }
+                return;
+            }
+        }
+
         if(this.context.isSQLite){
                                 var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.addColum(table);
