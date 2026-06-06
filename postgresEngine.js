@@ -281,13 +281,20 @@ class postgresEngine {
      * migration tracker can call it uniformly across all three drivers.
      */
     async tableExists(tableName) {
+        // A genuinely-absent table yields zero rows -> false. A real failure
+        // (connection/permission/information_schema error) MUST throw — never
+        // disguise an error as "table absent", or schema.createTable() silently
+        // blind-creates (a no-op on an existing table) and skips column syncs.
+        // NOTE: scoped to the connection's search_path via current_schemas();
+        // a table living in a schema outside the search_path reads as absent.
+        let result;
         try {
             const sql = `SELECT 1 FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_name = $1 LIMIT 1`;
-            const result = await this._runWithParams(sql, [tableName]);
-            return !!(result && result.rows && result.rows.length > 0);
-        } catch (_) {
-            return false;
+            result = await this._runWithParams(sql, [tableName]);
+        } catch (err) {
+            throw new Error(`masterrecord: could not determine whether table '${tableName}' exists (PostgreSQL introspection failed): ${err.message}`);
         }
+        return !!(result && result.rows && result.rows.length > 0);
     }
 
     /**
@@ -317,8 +324,8 @@ class postgresEngine {
             `;
             const result = await this._runWithParams(sql, [tableName]);
             return (result && result.rows) ? result.rows : [];
-        } catch (_) {
-            return [];
+        } catch (err) {
+            throw new Error(`masterrecord: could not read columns for table '${tableName}' (PostgreSQL introspection failed): ${err.message}`);
         }
     }
 
@@ -977,14 +984,21 @@ class postgresEngine {
      * Used by migration schema for non-parameterized DDL queries.
      */
     _execute(query, params) {
-        return this._runWithParams(query, params || []);
+        // Migration/DDL path — flag it so the statement is always logged
+        // (migrations must be observable in production).
+        return this._runWithParams(query, params || [], { migration: true });
     }
 
-    async _runWithParams(query, params = []) {
+    async _runWithParams(query, params = [], opts = {}) {
         try {
-            if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                console.debug("[SQL]", query);
-                console.debug("[Params]", params);
+            // Migration DDL (opts.migration) is always logged so production
+            // migrations are observable; runtime queries stay behind the
+            // dev/LOG_SQL gate.
+            const isMigration = opts.migration === true;
+            if (isMigration ? process.env.MR_SILENT_MIGRATIONS !== 'true'
+                            : (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production')) {
+                console.log(isMigration ? "[masterrecord:migration]" : "[SQL]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
+                if (params && params.length) console.log(isMigration ? "[masterrecord:migration] params" : "[Params]", params);
             }
 
             const client = await this.pool.connect();

@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.2.0 — reliable schema introspection + observable migrations (fixes silent column-skip)
+
+**Bug:** adding a column to an existing table could silently no-op on MySQL/Postgres — the column was never added, with no error. Root cause: `tableExists()` and `getTableInfo()` wrapped everything in `catch (_) { return false / [] }`. Any real introspection failure (a connection/permission/`INFORMATION_SCHEMA` error, or — on Postgres — a `search_path` mismatch) was disguised as *"table absent."* `schema.createTable()` then took its blind `CREATE TABLE IF NOT EXISTS` branch, which is a no-op on an existing table, so `syncTable()` (the code that adds the missing column) never ran. Compounded by migration DDL only being logged when `NODE_ENV !== 'production'`, the whole thing was invisible in prod. SQLite was unaffected in practice because its introspection is a local `PRAGMA` that essentially never errors.
+
+**Fix (all three engines + shared schema layer):**
+- **Introspection no longer lies.** `tableExists()` / `getTableInfo()` now distinguish a *genuinely-absent* table (zero rows → `false` / `[]`) from a *real failure* (now **throws** with a descriptive `masterrecord: … introspection failed: …` message). A failed introspection therefore aborts the migration loudly instead of silently routing to a no-op create.
+- **Migrations are observable in production.** DDL run via `_execute` is always logged as `[masterrecord:migration] …` (independent of `NODE_ENV`; set `MR_SILENT_MIGRATIONS=true` to opt out). Runtime queries keep their existing dev-only `[SQL]` logging.
+- Removed the stale `// todo need to work on add column for mysql` — `addColumn()` already works on every engine and now fails loudly on error.
+
+**Postgres note:** introspection is scoped to the connection's `search_path` (`current_schemas(false)`); a table in a schema outside the search_path still reads as absent. Surfacing/handling non-default schemas is a separate feature, but real errors now throw rather than masquerading as absence.
+
+New tests: `test/schema-sync-introspection.test.js` (createTable syncs a missing column on an existing table; introspection throws on real failure vs `[]`/`false` on genuine absence). Verified on SQLite; the same code paths apply to MySQL/Postgres.
+
 ## v1.1.9 — docs: correct the seed-data section
 
 README "Seed Data" docs described a code path that doesn't exist. Corrected to match what `add-migration` actually generates (verified against `Migrations/migrationTemplate.js`):

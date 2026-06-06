@@ -104,10 +104,14 @@ test('Postgres getTableInfo returns rows shaped like SQLite/MySQL counterparts',
     }
 });
 
-test('Postgres getTableInfo returns [] on error', async () => {
+test('Postgres getTableInfo THROWS on a real introspection error (no swallow)', async () => {
+    // Previously this swallowed the error and returned [], which made
+    // schema.createTable() mistake an introspection failure for "table has
+    // no columns" / "table absent" and silently skip column syncs. A real
+    // failure must now propagate so the migration aborts loudly.
     const engine = new PostgresEngine();
     engine._runWithParams = async () => { throw new Error('boom'); };
-    assert.deepEqual(await engine.getTableInfo('Whatever'), []);
+    await assert.rejects(() => engine.getTableInfo('Whatever'), /introspection failed/);
 });
 
 // ---- SQLite end-to-end: dropColumn twice in a row must not throw ----

@@ -215,7 +215,9 @@ class schema{
     
     // create obj to convert into create sql
     async addColumn(table){
-        // todo need to work on add column for mysql
+        // Adds a column on all three engines. Each engine's _execute throws on
+        // failure (no silent swallow), so a failed ADD COLUMN aborts the
+        // migration loudly rather than being skipped.
         if(table){
             if(this.context.isSQLite){
                                 var queryBuilder = new sqliteQuery();

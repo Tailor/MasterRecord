@@ -237,25 +237,31 @@ class MySQLEngine {
      * Introspection: Check if table exists
      */
     async tableExists(tableName) {
+        // A genuinely-absent table yields zero rows -> false. A real failure
+        // (connection/permission/INFORMATION_SCHEMA error) MUST throw — never
+        // disguise an error as "table absent", or schema.createTable() silently
+        // blind-creates (a no-op on an existing table) and skips column syncs.
+        let res;
         try {
             const sql = `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`;
-            const res = await this._runWithParams(sql, [tableName]);
-            return Array.isArray(res) ? res.length > 0 : !!res?.length;
-        } catch (_) {
-            return false;
+            res = await this._runWithParams(sql, [tableName]);
+        } catch (err) {
+            throw new Error(`masterrecord: could not determine whether table '${tableName}' exists (MySQL introspection failed): ${err.message}`);
         }
+        return Array.isArray(res) ? res.length > 0 : !!res?.length;
     }
 
     /**
-     * Introspection: Get table column information
+     * Introspection: Get table column information.
+     * Genuinely-absent table -> [] (zero rows); real failures throw.
      */
     async getTableInfo(tableName) {
         try {
             const sql = `SELECT COLUMN_NAME as name, COLUMN_DEFAULT as dflt_value, IS_NULLABLE as is_nullable, DATA_TYPE as data_type FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`;
             const res = await this._runWithParams(sql, [tableName]);
             return res || [];
-        } catch (_) {
-            return [];
+        } catch (err) {
+            throw new Error(`masterrecord: could not read columns for table '${tableName}' (MySQL introspection failed): ${err.message}`);
         }
     }
 
@@ -999,17 +1005,24 @@ class MySQLEngine {
      * Used by migration schema for non-parameterized DDL queries.
      */
     _execute(query, params) {
-        return this._runWithParams(query, params || []);
+        // Migration/DDL path — flag it so the statement is always logged
+        // (migrations must be observable in production).
+        return this._runWithParams(query, params || [], { migration: true });
     }
 
     /**
      * Execute parameterized query with mysql2/promise
      */
-    async _runWithParams(query, params = []) {
+    async _runWithParams(query, params = [], opts = {}) {
         try {
-            if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                console.debug("[SQL]", query);
-                console.debug("[Params]", params);
+            // Migration DDL (opts.migration) is always logged so production
+            // migrations are observable; runtime queries stay behind the
+            // dev/LOG_SQL gate to avoid noise.
+            const isMigration = opts.migration === true;
+            if (isMigration ? process.env.MR_SILENT_MIGRATIONS !== 'true'
+                            : (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production')) {
+                console.log(isMigration ? "[masterrecord:migration]" : "[SQL]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
+                if (params && params.length) console.log(isMigration ? "[masterrecord:migration] params" : "[Params]", params);
             }
 
             const [results] = await this.pool.execute(query, params);

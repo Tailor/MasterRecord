@@ -143,29 +143,40 @@ class SQLLiteEngine {
 
     // Introspection helpers
     async tableExists(tableName){
+        // A genuinely-absent table returns no row -> false. A real failure
+        // (locked/corrupt db, etc.) MUST throw — never disguise an error as
+        // "table absent", or schema.createTable() silently blind-creates and
+        // skips column syncs with no error.
         try{
             // Use parameterized query to prevent SQL injection
             const sql = `SELECT name FROM sqlite_master WHERE type='table' AND name=?`;
             const row = this.db.prepare(sql).get(tableName);
-            return Promise.resolve(!!row);
-        }catch(_){ return Promise.resolve(false); }
+            return !!row;
+        }catch(err){
+            throw new Error(`masterrecord: could not determine whether table '${tableName}' exists (SQLite introspection failed): ${err.message}`);
+        }
     }
 
     async getTableInfo(tableName){
+        // Security: Validate table name to prevent SQL injection — PRAGMA
+        // can't be parameterized. An invalid name is a programming error and
+        // must throw, not be swallowed into an empty column list.
+        if (!tableName || typeof tableName !== 'string') {
+            throw new Error('Invalid table name: must be a non-empty string');
+        }
+        // Allow only alphanumeric characters, underscores; must start with letter/underscore
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+            throw new Error(`Invalid table name format: ${tableName}`);
+        }
         try{
-            // Security: Validate table name to prevent SQL injection
-            // PRAGMA statements don't support parameterized queries
-            if (!tableName || typeof tableName !== 'string') {
-                throw new Error('Invalid table name: must be a non-empty string');
-            }
-            // Allow only alphanumeric characters, underscores, and must start with letter/underscore
-            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
-                throw new Error(`Invalid table name format: ${tableName}`);
-            }
-            const sql = `PRAGMA table_info(${tableName})`;
-            const rows = this.db.prepare(sql).all();
-            return Promise.resolve(rows || []);
-        }catch(_){ return Promise.resolve([]); }
+            // PRAGMA on a non-existent table returns an empty list (not an
+            // error), so a genuinely-absent table is [] — only real failures
+            // throw.
+            const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
+            return rows || [];
+        }catch(err){
+            throw new Error(`masterrecord: could not read columns for table '${tableName}' (SQLite introspection failed): ${err.message}`);
+        }
     }
 
     async getCount(queryObject, entity, _context){
@@ -1300,16 +1311,18 @@ class SQLLiteEngine {
         if (params && params.length > 0) {
             return this._executeWithParams(query, params);
         }
-        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-            console.debug("[SQL]", query);
+        // Migration/DDL path — always log so migrations are observable in
+        // production (the gated [SQL] debug log only fires in dev).
+        if (process.env.MR_SILENT_MIGRATIONS !== 'true') {
+            console.log("[masterrecord:migration]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
         }
         return this.db.exec(query);
     }
 
     _executeWithParams(query, params = []){
-        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-            console.debug("[SQL]", query);
-            console.debug("[Params]", params);
+        if (process.env.MR_SILENT_MIGRATIONS !== 'true') {
+            console.log("[masterrecord:migration]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
+            if (params && params.length) console.log("[masterrecord:migration] params", params);
         }
         return this.db.prepare(query).run(...params);
     }
