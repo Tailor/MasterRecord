@@ -1,5 +1,24 @@
 # MasterRecord Changelog
 
+## v1.2.1 — Postgres multi-schema support (configurable schema / search_path)
+
+Closes the gap noted in 1.2.0: a table living in a schema outside the connection's `search_path` was read as "absent" during migrations. You can now target a schema explicitly:
+
+```javascript
+await db.env({ type: 'postgres', /* … */, schema: 'tenant1' });
+// or: searchPath: 'tenant1,public'
+```
+
+- The schema is applied to **every pooled connection** via libpq's `search_path` startup option (`PostgresSyncConnect` sets `options: '-c search_path=…'`). Introspection (`current_schemas`), migrations/DDL, and runtime queries then all resolve to it — no per-identifier qualification, matching how Knex's `searchPath` works.
+- On connect, `CREATE SCHEMA IF NOT EXISTS "<schema>"` runs so a fresh deploy self-creates the schema before any table lands in it.
+- `schema: 'x'` expands to search_path `x,public`; use `searchPath` for an explicit ordered list (first entry = where new tables are created).
+- Schema/searchPath identifiers are strictly validated (letters/digits/underscore, non-leading digit) — invalid names throw at connect rather than being interpolated into the connection string or `CREATE SCHEMA`.
+- Backward compatible: with neither option set, behavior is unchanged.
+
+All Postgres engine connections (initial connect + post-create retry) honor the option; the admin pool used to `CREATE DATABASE` intentionally doesn't need it.
+
+New tests: `test/postgres-search-path.test.js` (resolution + injection-safe validation). Verified by unit test; end-to-end relies on the standard libpq `options` parameter (no live Postgres in CI here).
+
 ## v1.2.0 — reliable schema introspection + observable migrations (fixes silent column-skip)
 
 **Bug:** adding a column to an existing table could silently no-op on MySQL/Postgres — the column was never added, with no error. Root cause: `tableExists()` and `getTableInfo()` wrapped everything in `catch (_) { return false / [] }`. Any real introspection failure (a connection/permission/`INFORMATION_SCHEMA` error, or — on Postgres — a `search_path` mismatch) was disguised as *"table absent."* `schema.createTable()` then took its blind `CREATE TABLE IF NOT EXISTS` branch, which is a no-op on an existing table, so `syncTable()` (the code that adds the missing column) never ran. Compounded by migration DDL only being logged when `NODE_ENV !== 'production'`, the whole thing was invisible in prod. SQLite was unaffected in practice because its introspection is a local `PRAGMA` that essentially never errors.

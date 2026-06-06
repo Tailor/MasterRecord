@@ -16,6 +16,44 @@ class PostgresSyncConnect {
     }
 
     /**
+     * Resolve an optional Postgres schema / search_path from the connection
+     * config into a safe `search_path` value (multi-schema support).
+     *
+     * - `config.searchPath`: explicit, comma-separated list (first entry is
+     *   where new tables are created). e.g. `'tenant1,public'`.
+     * - `config.schema`: single schema; expands to `'<schema>,public'`.
+     * - neither: returns nulls → default Postgres behavior (unchanged).
+     *
+     * Every identifier is validated against a strict pattern because the
+     * result is interpolated into a connection `options` string and a
+     * `CREATE SCHEMA` statement (neither can be parameterized). An invalid
+     * name throws rather than risking injection.
+     *
+     * @returns {{ searchPath: string|null, primarySchema: string|null }}
+     */
+    static resolveSearchPath(config = {}) {
+        const validIdent = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+        if (config.searchPath) {
+            const parts = String(config.searchPath).split(',').map(s => s.trim()).filter(Boolean);
+            if (parts.length === 0) return { searchPath: null, primarySchema: null };
+            for (const p of parts) {
+                if (!validIdent.test(p)) {
+                    throw new Error(`PostgreSQL: invalid searchPath entry '${p}' (allowed: letters, digits, underscore; must not start with a digit)`);
+                }
+            }
+            return { searchPath: parts.join(','), primarySchema: parts[0] };
+        }
+        if (config.schema) {
+            const s = String(config.schema).trim();
+            if (!validIdent.test(s)) {
+                throw new Error(`PostgreSQL: invalid schema name '${config.schema}' (allowed: letters, digits, underscore; must not start with a digit)`);
+            }
+            return { searchPath: `${s},public`, primarySchema: s };
+        }
+        return { searchPath: null, primarySchema: null };
+    }
+
+    /**
      * Initialize PostgreSQL connection
      * @param {Object} config - Connection configuration
      * @param {string} config.host - Database host (default: 'localhost')
@@ -38,6 +76,9 @@ class PostgresSyncConnect {
             throw new Error('PostgreSQL: password is required');
         }
 
+        // Multi-schema support: resolve an optional schema / search_path.
+        const { searchPath, primarySchema } = PostgresSyncConnect.resolveSearchPath(config);
+
         this.config = {
             host: config.host || 'localhost',
             port: config.port || 5432,
@@ -51,6 +92,16 @@ class PostgresSyncConnect {
             // Enable better error messages
             application_name: 'MasterRecord',
         };
+        this.schema = primarySchema;
+
+        // Apply the search_path to EVERY pooled connection via the libpq
+        // `options` startup parameter. This is the robust, standard approach
+        // (same as Knex's searchPath): introspection (current_schemas), DDL,
+        // and runtime queries then all resolve to the configured schema with
+        // no per-identifier qualification needed.
+        if (searchPath) {
+            this.config.options = `-c search_path=${searchPath}`;
+        }
 
         // Create connection pool
         this.pool = new Pool(this.config);
@@ -58,11 +109,23 @@ class PostgresSyncConnect {
         // Test connection
         try {
             const client = await this.pool.connect();
-            console.log(`PostgreSQL connected to ${config.database} at ${config.host}:${config.port}`);
+            console.log(`PostgreSQL connected to ${config.database} at ${config.host}:${config.port}${primarySchema ? ` (schema: ${primarySchema})` : ''}`);
             client.release();
         } catch (err) {
             console.error('PostgreSQL connection failed:', err.message);
             throw err;
+        }
+
+        // Ensure the target schema exists so a fresh deploy self-creates it
+        // before any CREATE TABLE lands in it. (search_path may reference a
+        // not-yet-existing schema harmlessly; this makes it real.)
+        if (primarySchema && primarySchema !== 'public') {
+            try {
+                await this.pool.query(`CREATE SCHEMA IF NOT EXISTS "${primarySchema}"`);
+            } catch (err) {
+                console.error(`PostgreSQL: failed to ensure schema "${primarySchema}" exists:`, err.message);
+                throw err;
+            }
         }
 
         // Initialize engine

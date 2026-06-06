@@ -102,6 +102,32 @@ await db.saveChanges();
 
 ## Advanced Features
 
+### Schemas (multi-schema / search_path)
+
+By default MasterRecord uses the connection's default `search_path` (typically `public`). To put your tables in a specific Postgres schema — for multi-tenant deployments, or when your tables don't live in the default schema — set `schema` (or `searchPath`) in the connection config:
+
+```javascript
+await db.env({
+    type: 'postgres',
+    host: 'localhost',
+    database: 'your_database',
+    user: 'your_user',
+    password: 'your_password',
+    schema: 'tenant1',          // tables created/queried in "tenant1"
+    // or, for an explicit list (first entry is where new tables are created):
+    // searchPath: 'tenant1,public'
+});
+```
+
+How it works:
+- The schema is applied to **every pooled connection** via libpq's `search_path` startup option, so introspection, migrations (DDL), and runtime queries all resolve to it — no per-query schema qualification needed.
+- On connect, MasterRecord runs `CREATE SCHEMA IF NOT EXISTS "<schema>"`, so a fresh deploy self-creates the schema before any table is created in it.
+- `schema: 'x'` expands to a search_path of `x,public` (so shared objects in `public` remain reachable). Use `searchPath` to control the full list/order.
+
+Identifiers are validated (letters, digits, underscore; not starting with a digit) — an invalid schema name throws at connect rather than being interpolated into SQL.
+
+> Without this option, behavior is unchanged. (This closes the prior gap where a table in a non-search-path schema was misread as "absent" during migrations.)
+
 ### Transactions
 
 ```javascript
