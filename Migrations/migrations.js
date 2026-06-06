@@ -550,6 +550,33 @@ class Migrations{
         return false;
     }
 
+    // Resolve a column's full, JSON-safe definition (for baking a
+    // self-contained add/drop into a generated migration). Looks the column
+    // up by its DB name (or belongsTo foreignKey) in the entity and copies
+    // the DDL-relevant fields plus an explicit tableName. Functions
+    // (transform/validators/get/set) are intentionally omitted — they aren't
+    // needed for DDL and aren't serializable.
+    #columnLiteral(entity, columnName, tableName){
+        let def = null;
+        for (const key of Object.keys(entity || {})) {
+            const d = entity[key];
+            if (d && typeof d === 'object') {
+                if (d.name === columnName) { def = d; break; }
+                if (d.relationshipType === 'belongsTo' && d.foreignKey === columnName) { def = d; break; }
+            }
+        }
+        if (!def) {
+            // Should not happen for a detected column; keep minimal + let the
+            // schema layer's loud guard catch any incompleteness at apply time.
+            return { tableName, name: columnName };
+        }
+        const spec = { tableName, name: def.name, type: def.type };
+        for (const k of ['nullable', 'default', 'unique', 'auto', 'primary', 'typeSize', 'relationshipType', 'foreignKey', 'foreignTable']) {
+            if (def[k] !== undefined && def[k] !== null) spec[k] = def[k];
+        }
+        return spec;
+    }
+
     template(name, oldSchema, newSchema, newSeedData = {}, seedConfig = {}, currentEnv = null){
         const MT = new MigrationTemplate(name);
         // Determine current environment if not provided
@@ -557,6 +584,7 @@ class Migrations{
             currentEnv = process.env.NODE_ENV || process.env.master || 'development';
         }
         const tables = this.#buildMigrationObject(oldSchema, newSchema, newSeedData);
+        const self = this;
 
         tables.forEach(function (item, _index) {
             // (Whole-table create/drop is handled below via item.newTables /
@@ -570,15 +598,21 @@ class Migrations{
                 MT.dropTable("down", item.name);
             });
 
-            // add new columns for table
+            // Add new columns. Bake the FULL column spec into the generated
+            // migration (self-contained) instead of `table.<col>`, which was
+            // re-derived from a live snapshot↔entities diff at apply time and
+            // silently no-op'd on any database whose diff was empty (snapshot
+            // already advanced by the first DB migrated).
             item.newColumns.forEach(function (column, _index) {
-                MT.addColumn("up", column, item.name);
-                MT.dropColumn("down", column, item.name);
+                const spec = self.#columnLiteral(item.new, column, item.name);
+                MT.addColumn("up", spec);
+                MT.dropColumn("down", spec);
             });
 
             item.deletedColumns.forEach(function (column, _index) {
-                MT.dropColumn("up", column, item.name);
-                MT.addColumn("down",column, item.name);
+                const spec = self.#columnLiteral(item.old, column, item.name);
+                MT.dropColumn("up", spec);
+                MT.addColumn("down", spec);
             });
 
             item.updatedColumns.forEach(function (column, _index) {

@@ -215,38 +215,63 @@ class schema{
     
     // create obj to convert into create sql
     async addColumn(table){
-        // Adds a column on all three engines. Each engine's _execute throws on
-        // failure (no silent swallow), so a failed ADD COLUMN aborts the
-        // migration loudly rather than being skipped.
-        if(table){
-            if(this.context.isSQLite){
+        // Ensure the async DB init (MySQL/Postgres) has completed before we
+        // read dialect flags / run DDL — matches createTable(), which always
+        // did this. (addColumn/dropColumn previously skipped it.)
+        await this._ensureReady();
+
+        // FAIL LOUDLY instead of silently skipping. An older generated
+        // migration re-derives its column from a live diff (`table.<col>`) at
+        // apply time; when the committed snapshot is already AHEAD of THIS
+        // database the diff is empty and `table` is undefined — which used to
+        // hit a silent `if(table){…}` guard, mark the migration applied, and
+        // never add the column. (Newer migrations bake the full spec inline,
+        // so this only guards legacy/edge cases.)
+        if(!table || !table.tableName || !table.name || !table.type){
+            throw new Error(
+                `masterrecord: addColumn received an incomplete column definition (${JSON.stringify(table)}). ` +
+                `This usually means the committed snapshot is already ahead of this database, so the migration ` +
+                `could not re-derive the column from the diff. Regenerate the migration (it now bakes the full ` +
+                `column spec inline) or apply it against a database whose snapshot matches.`
+            );
+        }
+        if(!this.context.isSQLite && !this.context.isMySQL && !this.context.isPostgres){
+            throw new Error('masterrecord: addColumn — no database dialect is active (context not initialized).');
+        }
+
+        if(this.context.isSQLite){
                                 var queryBuilder = new sqliteQuery();
-                // Fixed: Use addColum (consistent with MySQL/PostgreSQL) instead of alterColumn
-                // This allows explicit column definitions to work, not just CLI-generated migrations
-                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 await this.context._execute(query);
             }
 
             if(this.context.isMySQL){
                                 var queryBuilder = new sqlquery();
-                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 await this.context._execute(query);
             }
 
             if(this.context.isPostgres){
                                 var queryBuilder = new postgresQuery();
-                // Note: No need to set table.realDataType - columnMapping handles type conversion internally
                 var query = queryBuilder.addColum(table);
                 await this.context._execute(query);
             }
-        }
 
         // add column to database
     }
 
     async dropColumn(table){
+        await this._ensureReady();
+        // Fail loudly rather than silently skipping (see addColumn) — a drift
+        // between the committed snapshot and this database can leave the
+        // migration's re-derived `table.<col>` undefined.
+        if(!table || !table.tableName || !table.name){
+            throw new Error(
+                `masterrecord: dropColumn received an incomplete column definition (${JSON.stringify(table)}). ` +
+                `The committed snapshot may be ahead of this database. Regenerate the migration (it now bakes the ` +
+                `full column spec inline) or apply it against a database whose snapshot matches.`
+            );
+        }
         if(table){
             if(this.fullTable){
                 // SQLite doesn't support `IF EXISTS` on DROP COLUMN, so

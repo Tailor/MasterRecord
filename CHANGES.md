@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.2.3 — self-contained incremental migrations (fixes silent addColumn no-op across DBs)
+
+**Bug:** an incremental `addColumn` migration could silently no-op on a second database (column never added, migration still recorded as applied). Reproduced and root-caused on prod MySQL.
+
+**Mechanism:** `update-database` does not run the literal op in the migration file — it calls `buildUpObject(committedSnapshot.schema, currentEntities)` and passes the result as `table` to `up(table)`. The generated `await this.addColumn(table.public_token)` therefore depended on `table.public_token` being populated, which only happens when that column is in the **snapshot↔entities diff** (`item.newColumns`). The committed snapshot is shared and gets advanced by whichever DB you migrate first (e.g. dev); every subsequent DB (e.g. prod) then diffs to **empty** for that column → `table.public_token` is `undefined` → `schema.addColumn(undefined)` hit its silent `if(table){…}` guard → nothing ran, migration marked applied. `createTable` was immune because `buildUpObject` populates every table regardless of diff; only incremental column ops were affected.
+
+**Fixes:**
+1. **Self-contained generation.** `add-migration` now bakes the full column spec inline — `await this.addColumn({ tableName, name, type, … })` instead of `await this.addColumn(table.public_token)`. Migrations replay deterministically on every database, independent of snapshot state (the standard Rails/Knex/TypeORM model). Applies to `addColumn` and the symmetric `dropColumn` (incl. up/down).
+2. **Fail loudly.** `schema.addColumn` / `dropColumn` now throw a descriptive error on an incomplete/undefined operand ("…snapshot is ahead of this database…") instead of silently skipping — so legacy `table.<col>`-style migrations can never silently lose a column again.
+3. **Readiness symmetry.** `addColumn` / `dropColumn` now `await this._ensureReady()` (like `createTable`), and throw if no dialect is active — closing the related (theoretical) async-init gap.
+
+New tests: `test/migration-self-contained.test.js` (generation bakes a literal; self-contained add applies despite an empty diff; loud throw on incomplete operand). Suite green (same single pre-existing failure); 0 lint errors.
+
+> Existing already-generated migrations keep working; if one uses the old `table.<col>` form and hits the empty-diff case, it now **throws loudly** (fix #2) instead of silently skipping — regenerate it to get the self-contained form.
+
 ## v1.2.2 — deterministic migration snapshots (no transient `tableName` leak)
 
 The generated `*_contextSnapShot.json` could differ run-to-run for an unchanged schema, producing noisy git diffs and occasional spurious "schema changed" detections.

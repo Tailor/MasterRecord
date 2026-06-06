@@ -54,16 +54,17 @@ export default ${this.name};
         }
     }
 
-    addColumn(type, name, _parent){
-        if(type === "up"){
-            this.#up += os.EOL + `     await this.addColumn(table.${name});`
-        }
-        else{
-            this.#down += os.EOL + `     await this.addColumn(table.${name});`
-        }
+    // Bake the resolved column spec inline so the migration is self-contained
+    // and replays deterministically on every database — independent of the
+    // committed snapshot's state at apply time. (Previously emitted
+    // `table.<col>`, re-derived from a live diff, which silently no-op'd when
+    // the snapshot was already ahead of the target DB.)
+    addColumn(type, spec){
+        const stmt = `     await this.addColumn(${JSON.stringify(spec)});`;
+        if(type === "up"){ this.#up += os.EOL + stmt; }
+        else{ this.#down += os.EOL + stmt; }
     }
-    //this.addColumn(table.${parent}.${name});`
-   
+
     dropTable(type, name){
         if(type === "up"){
             this.#down += os.EOL + `    await this.dropTable(table.${name});`
@@ -73,13 +74,10 @@ export default ${this.name};
         }
     }
 
-    dropColumn(type, name, _parent){
-        if(type === "up"){
-            this.#up += os.EOL + `     await this.dropColumn(table.${name});`
-        }
-        else{
-            this.#down += os.EOL + `     await this.dropColumn(table.${name});`
-        }
+    dropColumn(type, spec){
+        const stmt = `     await this.dropColumn(${JSON.stringify(spec)});`;
+        if(type === "up"){ this.#up += os.EOL + stmt; }
+        else{ this.#down += os.EOL + stmt; }
     }
 
     createIndex(type, indexInfo){
