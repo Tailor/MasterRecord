@@ -1,5 +1,16 @@
 # MasterRecord Changelog
 
+## v1.1.9 — docs: correct the seed-data section
+
+README "Seed Data" docs described a code path that doesn't exist. Corrected to match what `add-migration` actually generates (verified against `Migrations/migrationTemplate.js`):
+
+- Context-level `this.dbset(T).seed({…})` compiles to idempotent **`this.seed('T', …)`** calls — not `table.T.create({…})` (which is not a real method and never emitted).
+- **Both** routes (context-level and hand-written `this.seed()`) are idempotent (`INSERT OR IGNORE` / `INSERT IGNORE` / `ON CONFLICT DO NOTHING`); the old docs wrongly claimed context-level seeds were non-idempotent and had to be removed after the first run.
+- Removed the false "triggers lifecycle hooks / validators" benefit — generated seeds are raw parameterized INSERTs and do **not** run `beforeSave`/`afterSave`/validators (added a note to use `context.Entity.new()` + `save()` when you need those).
+- Fixed the upsert example to the real generated form (`this.context.T.where(...).single()` + `existing.save()` + `this.seed(...)`).
+
+Docs-only; no code changes.
+
 ## v1.1.8 — entity internals/methods are non-enumerable (fixes spread/JSON data loss)
 
 **Bug:** entity instances exposed their internals (`__entity`, `__context`, `__ID`, `__dirtyFields`, `__state`, `__name`) and helper methods (`toJSON`, `toObject`, `save`, `delete`, `reload`, `clone`) as **enumerable** own properties (attached by object literal / plain assignment). So spreading or `Object.assign`-ing an entity:

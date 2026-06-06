@@ -2215,16 +2215,17 @@ class AppContext extends context {
 
 ### Automatic Migration Generation
 
-When you define seed data in the context, MasterRecord generates migration code using the ORM:
+When you define seed data on the context, `add-migration` compiles it into idempotent `this.seed(...)` calls in the generated migration:
 
 ```javascript
 // Your context definition triggers this migration
 class Migration_20250205_123456 extends masterrecord.schema {
     async up(table) {
-        this.init(table);
+        await this.init(table);
 
-        // Generated ORM create calls
-        await table.User.create({
+        // Generated idempotent seed calls — INSERT OR IGNORE (SQLite) /
+        // INSERT IGNORE (MySQL) / ON CONFLICT DO NOTHING (PostgreSQL)
+        await this.seed('User', {
             user_name: 'admin',
             first_name: 'System',
             last_name: 'Administrator',
@@ -2235,32 +2236,24 @@ class Migration_20250205_123456 extends masterrecord.schema {
             availability_status: 'online'
         });
 
-        await table.Post.create({
-            title: 'Welcome',
-            content: 'Hello world',
-            author_id: 1
-        });
-
-        await table.Post.create({
-            title: 'Getting Started',
-            content: 'Tutorial',
-            author_id: 1
-        });
+        await this.seed('Post', { title: 'Welcome', content: 'Hello world', author_id: 1 });
+        await this.seed('Post', { title: 'Getting Started', content: 'Tutorial', author_id: 1 });
     }
 
     async down(table) {
-        this.init(table);
+        await this.init(table);
         // Seed data typically not removed in down migrations
     }
 }
 ```
 
-### Benefits of ORM-Based Seeding
+### Benefits of context-level seed
 
-1. **Lifecycle Hooks**: Triggers `beforeSave` and `afterSave` hooks
-2. **Validation**: Uses entity field definitions and validators
-3. **Type Safety**: Ensures fields match entity schema
-4. **Maintainable**: Changes to entity structure reflected automatically
+1. **Declarative**: seed data lives with your context definition and is versioned alongside the schema.
+2. **Idempotent**: the generated `this.seed()` calls use the engine's insert-or-ignore form, so re-running migrations never duplicates rows or errors on an existing key.
+3. **Environment-aware**: scope seeds with `.when(env)`, and use upsert / `seedFactory` for generated data.
+
+> **Note:** generated seeds are raw parameterized INSERTs (via `this.seed()`), so they do **not** run entity lifecycle hooks (`beforeSave`/`afterSave`) or validators. If you need those to run on seeded rows, insert them through `context.Entity.new()` + `save()` in application code instead.
 
 ### Manual Seed Methods (Advanced)
 
@@ -2294,44 +2287,37 @@ class Migration_20250205_123456 extends masterrecord.schema {
 
 ### Idempotency
 
-**ORM approach** (context-level seed):
-- Generates plain `create()` calls
-- Fails if primary key exists (user must remove seed data after first migration)
-- Best for one-time initial setup data
-
-**Manual approach** (idempotent):
-- Uses database-specific INSERT OR IGNORE syntax
+**Both** routes are idempotent — context-level seed compiles to `this.seed()`, and `this.seed()` emits the engine's insert-or-ignore form:
 - SQLite: `INSERT OR IGNORE INTO`
 - MySQL: `INSERT IGNORE INTO`
 - PostgreSQL: `INSERT ... ON CONFLICT DO NOTHING`
-- Best for repeatable migrations and re-seeding
 
-Example:
+Re-running a migration never creates duplicates or throws on an existing primary key, so you do **not** need to remove seed data after the first run.
+
 ```javascript
-// Context-level (runs once)
+// Context-level (declarative) — generated into a this.seed() migration
 this.dbset(User).seed({ id: 1, name: 'admin' });
-// After first migration, remove or comment out seed data
 
-// Manual (repeatable)
+// Manual (in a migration) — identical idempotent behavior
 class Migration_xyz extends masterrecord.schema {
     async up(table) {
-        this.init(table);
-        // Can run multiple times without error
-        this.seed('User', { id: 1, name: 'admin' });
+        await this.init(table);
+        await this.seed('User', { id: 1, name: 'admin' }); // safe to re-run
     }
 }
 ```
 
+Idempotency relies on a primary key or unique constraint on the target table — that's what the engine's ignore/conflict clause keys on.
+
 ### Best Practices
 
-1. **Use context-level seed** for one-time initial setup (admin users, default categories)
-   - Remove seed data from context after first successful migration
-   - Or comment out after initial setup
-2. **Use manual seed methods** for repeatable/idempotent seeding
-3. **Use manual bulkSeed** for large datasets (1000+ records) - more performant
-4. **Keep seed data minimal** - only essential bootstrap data
-5. **Use fixtures/factories** for test data, not seed methods
-6. **Don't delete seed data** in down migrations (can cause referential integrity issues)
+1. **Use context-level seed** for declarative bootstrap data (admin users, default categories, lookup tables) you want versioned with the schema.
+2. **Use manual `this.seed()` / `this.bulkSeed()`** when you want the seed written explicitly in a specific migration; `bulkSeed` is one INSERT, so prefer it for large datasets.
+3. **Both are idempotent** — safe to leave in place and re-run; no need to delete after the first deploy.
+4. **Keep seed data minimal** - only essential bootstrap data.
+5. **Use fixtures/factories** for test data, not seed methods.
+6. **Don't delete seed data** in down migrations (can cause referential integrity issues).
+7. If you need lifecycle hooks/validators to run on seeded rows, insert via `context.Entity.new()` + `save()` in app code rather than `seed()`.
 
 ### Example: Multi-Tenant Seed Data
 
@@ -2394,15 +2380,15 @@ class AppContext extends context {
 **Generated Migration:**
 ```javascript
 async up(table) {
-    this.init(table);
-    await table.User.create({ id: 1, name: 'admin', email: 'admin@example.com' });
+    await this.init(table);
+    await this.seed('User', { id: 1, name: 'admin', email: 'admin@example.com' });
 }
 
 async down(table) {
-    this.init(table);
+    await this.init(table);
     // Auto-generated rollback (reverse order for FK safety)
     try {
-        const record = await table.User.findById(1);
+        const record = await this.context.User.findById(1);
         if (record) await record.delete();
     } catch (e) {
         console.warn('Seed rollback: User id=1 not found');
@@ -2554,7 +2540,7 @@ const factoryRecords = [
     // ... 8 more
 ];
 for (const record of factoryRecords) {
-    await table.User.create(record);
+    await this.seed('User', record);
 }
 ```
 
@@ -2613,16 +2599,16 @@ class AppContext extends context {
 **Generated Migration:**
 ```javascript
 async up(table) {
-    this.init(table);
+    await this.init(table);
 
     // Check-then-update pattern (database-agnostic)
     {
-        const existing = await table.User.where(r => r.email == 'admin@example.com').single();
+        const existing = await this.context.User.where(r => r.email == 'admin@example.com').single();
         if (existing) {
             existing.name = 'Administrator';
             await existing.save();
         } else {
-            await table.User.create({ email: 'admin@example.com', name: 'Administrator' });
+            await this.seed('User', { email: 'admin@example.com', name: 'Administrator' });
         }
     }
 }
