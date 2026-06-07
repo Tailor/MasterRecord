@@ -275,6 +275,14 @@ class postgresEngine {
         return await this._runWithParams(query, params);
     }
 
+    // Engine-agnostic raw query backing the public ctx.query()/ctx.execute().
+    // Normalizes pg's result object to an array of rows for row-returning
+    // statements; for writes returns the driver result.
+    async query(query, params = []) {
+        const result = await this._runWithParams(query, params);
+        return (result && Array.isArray(result.rows)) ? result.rows : result;
+    }
+
     /**
      * Introspection: Check if a table exists in the current Postgres schema.
      * Mirrors the SQLite/MySQL engines so migration code and the CLI's

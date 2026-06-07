@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.2.7 — public engine-agnostic raw-SQL escape hatch (`ctx.query` / `ctx.execute`)
+
+Adds a public, portable raw-SQL API so apps stop reaching into `ctx.db` (the raw, engine-specific driver). `ctx.db.prepare()` is better-sqlite3's synchronous API; mysql2/pg have no `.prepare()`, so code written against `ctx.db` "works on SQLite, breaks on MySQL." The only engine-agnostic path was the private `context._execute` (the migration/DDL path, which logs as a migration and doesn't return rows on SQLite).
+
+- **`ctx.query(sql, params)`** (alias **`ctx.execute(sql, params)`**) — runs raw SQL on SQLite/MySQL/Postgres and returns an **array of row objects** for row-returning statements; executes writes (returns the driver's write result). Placeholders are engine-native (`?` for SQLite/MySQL, `$1,$2,…` for Postgres). Each engine gained a matching `query()` method (SQLite uses `stmt.reader` to pick `all()` vs `run()`; pg normalizes `result.rows`).
+- **DX guard (loud-failure parity):** on MySQL/Postgres, `ctx.db.prepare()` (and `.pragma()`) now throw a descriptive error pointing to `ctx.query()` instead of the generic "is not a function". `ctx.db` is never used internally (the engines hold their own pool), so this only affects user-facing access; every real driver method is forwarded untouched. SQLite's `ctx.db` is the real better-sqlite3 handle and is unaffected.
+
+This closes the entire "works on SQLite, breaks on MySQL" class for legitimate raw-SQL cases (e.g. cross-context FK updates the query builder can't express). Prefer the ORM where possible; `ctx.query()` is the escape hatch.
+
+New test: `test/raw-query-escape-hatch.test.js`. Docs: README "Raw SQL Queries" + API reference updated; TROUBLESHOOTING gains a "`ctx.db.prepare is not a function`" entry. Suite green; 0 lint errors.
+
+> Verified executing on SQLite (rows/writes/params). The MySQL/Postgres `query()` and the `ctx.db` guard share the same code shape but aren't run against live servers here.
+
 ## v1.2.6 — idempotent addColumn (skip-if-exists)
 
 `schema.addColumn` now **skips if the column already exists**, symmetric with `dropColumn`'s skip-if-gone and `createTable`'s `IF NOT EXISTS`. None of SQLite/MySQL support `ADD COLUMN IF NOT EXISTS`, so it probes the live schema via `getTableInfo` (which throws on a real introspection error — so a genuine failure still aborts loudly; only a clean "already present" result short-circuits, with a `[masterrecord:migration]` skip log).

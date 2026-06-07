@@ -1368,25 +1368,24 @@ masterrecord update-database-all
 
 ### Raw SQL Queries
 
-When you need full control:
+For SQL the query builder can't express, use the **engine-agnostic** escape hatch `db.query(sql, params)` (alias `db.execute(sql, params)`). It works the same on SQLite, MySQL, and PostgreSQL and returns an **array of row objects** for row-returning statements:
 
 ```javascript
-// ⚠️ Advanced: Direct SQL execution (using internal API)
-// For complex queries not supported by the query builder
-// Note: This is an internal API. Prefer using the query builder when possible.
-
-// PostgreSQL parameterized query
-const users = await db._SQLEngine.exec(
-    'SELECT * FROM "User" WHERE age > $1 AND status = $2',
+// SELECT → array of rows (all engines)
+const users = await db.query(
+    'SELECT * FROM "User" WHERE age > $1 AND status = $2',   // Postgres: $1,$2
     [25, 'active']
 );
+// SQLite / MySQL use ? placeholders:
+const users = await db.query('SELECT * FROM User WHERE age > ? AND status = ?', [25, 'active']);
 
-// MySQL parameterized query
-const users = db._SQLEngine.exec(
-    'SELECT * FROM User WHERE age > ? AND status = ?',
-    [25, 'active']
-);
+// Writes — reads naturally as execute() (works on every engine)
+await db.execute('UPDATE Step SET run_id = ? WHERE id = ?', ['run_x', 1]);
 ```
+
+> **Do not reach into `db.db`.** That is the *raw, engine-specific driver* — `db.db.prepare()` is better-sqlite3's synchronous API and does **not** exist on mysql2/pg, so code written against it works on SQLite and breaks on MySQL/Postgres. (On a non-SQLite engine, `db.db.prepare()` now throws a descriptive error pointing you here.) Prefer the ORM (`db.User.where(...).toList()`); use `db.query()` only when you must.
+
+Placeholders are engine-native (`?` for SQLite/MySQL, `$1,$2,…` for Postgres) — `query()` passes them straight through, so a raw statement is as portable as the SQL you write. For fully portable code, prefer the query builder.
 
 ## API Reference
 
@@ -1409,6 +1408,10 @@ context.attach(entity)                        // Attach and mark as modified
 context.attach(entity, { field: value })      // Attach with specific changes
 context.attachAll([entity1, entity2])         // Attach multiple entities
 await context.update('Entity', id, changes)   // Update by primary key
+
+// Engine-agnostic raw SQL (escape hatch — prefer the query builder)
+await context.query(sql, params)              // raw SQL → array of rows (all engines)
+await context.execute(sql, params)            // alias; reads naturally for writes
 
 // Cache management
 context.getCacheStats()              // Get cache statistics

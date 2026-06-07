@@ -233,6 +233,13 @@ class MySQLEngine {
         return await this._runWithParams(query, params);
     }
 
+    // Engine-agnostic raw query backing the public ctx.query()/ctx.execute().
+    // mysql2 returns an array of rows for SELECT and a ResultSetHeader for
+    // writes.
+    async query(query, params = []) {
+        return await this._runWithParams(query, params);
+    }
+
     /**
      * Introspection: Check if table exists
      */

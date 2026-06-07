@@ -1342,6 +1342,20 @@ class SQLLiteEngine {
         return this.db.prepare(query).run(...params);
     }
 
+    // Engine-agnostic raw query backing the public ctx.query()/ctx.execute().
+    // Returns an array of rows for row-returning statements (SELECT / PRAGMA /
+    // RETURNING); for writes returns better-sqlite3's run info
+    // ({ changes, lastInsertRowid }). `stmt.reader` tells the two apart.
+    query(query, params = []){
+        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
+            console.debug("[SQL]", query);
+            if (params && params.length) console.debug("[Params]", params);
+        }
+        const stmt = this.db.prepare(query);
+        const args = Array.isArray(params) ? params : (params === undefined ? [] : [params]);
+        return stmt.reader ? stmt.all(...args) : stmt.run(...args);
+    }
+
     setDB(db, type){
        this.db = db;
        this.dbType = type; // this will let us know which type of sqlengine to use.

@@ -887,8 +887,8 @@ class context {
                 // MySQL is async - caller must await env()
                 // Store promise so migration schema can await it
                 this._initPromise = (async () => {
-                    this.db = await this.__mysqlInit(options, 'mysql2');
-                    // Note: engine is already set in __mysqlInit
+                    this.db = this.#guardRawDriverHandle(await this.__mysqlInit(options, 'mysql2'), 'MySQL');
+                    // Note: engine is already set in __mysqlInit (uses the real pool)
                     return this;
                 })();
                 // Prevent unhandled rejection crash — _ensureReady() will re-throw on query
@@ -910,8 +910,8 @@ class context {
                 // PostgreSQL is async - caller must await env()
                 // Store promise so migration schema can await it
                 this._initPromise = (async () => {
-                    this.db = await this.__postgresInit(options, 'pg');
-                    // Note: engine is already set in __postgresInit
+                    this.db = this.#guardRawDriverHandle(await this.__postgresInit(options, 'pg'), 'PostgreSQL');
+                    // Note: engine is already set in __postgresInit (uses the real pool)
                     return this;
                 })();
                 // Prevent unhandled rejection crash — _ensureReady() will re-throw on query
@@ -2002,6 +2002,79 @@ class context {
             return this._SQLEngine._execute(query, params);
         }
         return this._SQLEngine._execute(query);
+    }
+
+    /**
+     * Engine-agnostic raw-SQL escape hatch.
+     *
+     * Prefer the ORM (`ctx.Model.where(...).toList()`, `.add()`,
+     * `saveChanges()`) — it's portable across SQLite/MySQL/Postgres. Use this
+     * only for SQL the query builder can't express. Unlike reaching into
+     * `ctx.db` (which is the raw, engine-specific driver — e.g. better-sqlite3's
+     * synchronous `prepare()`, which doesn't exist on mysql2/pg), `query()`
+     * works the same on every engine.
+     *
+     * Returns an array of row objects for row-returning statements
+     * (SELECT / RETURNING) on all three engines. For write statements
+     * (INSERT/UPDATE/DELETE/DDL) it executes and returns the driver's write
+     * result (shape varies by engine — prefer the ORM when you need a portable
+     * result). Use `?` placeholders for SQLite/MySQL and `$1,$2,…` for Postgres.
+     *
+     * @param {string} sql - SQL with parameter placeholders
+     * @param {Array} [params] - Bind values
+     * @returns {Promise<Array<object>|*>}
+     *
+     * @example
+     * const rows = await ctx.query('SELECT * FROM "User" WHERE age > $1', [25]); // pg
+     * await ctx.execute('UPDATE Step SET run_id = ? WHERE id = ?', ['run_x', 1]); // sqlite/mysql
+     */
+    async query(sql, params = []) {
+        if (this._initPromise) { await this._initPromise; }   // MySQL/Postgres async init
+        if (!this._SQLEngine) {
+            throw new DatabaseConnectionError(
+                'Cannot run query: database engine not initialized. Ensure you have awaited env() before querying.',
+                this.isMySQL ? 'MySQL' : this.isPostgres ? 'PostgreSQL' : 'SQLite'
+            );
+        }
+        return this._SQLEngine.query(sql, params || []);
+    }
+
+    /**
+     * Alias of {@link query} — read naturally for write statements
+     * (`await ctx.execute('UPDATE …', [...])`). Both run raw SQL on any engine.
+     */
+    async execute(sql, params = []) {
+        return this.query(sql, params);
+    }
+
+    /**
+     * Wrap a non-SQLite raw driver handle (mysql2 / pg pool) so that calling
+     * a SQLite-only method on `ctx.db` fails with guidance instead of the
+     * generic "X is not a function". Apps commonly reach for
+     * `ctx.db.prepare()` (better-sqlite3's API); on MySQL/Postgres `ctx.db`
+     * is the raw driver/pool and has no such method.
+     *
+     * The Proxy forwards every real pool method (bound to the real pool, so
+     * driver internals keep working) and only intercepts the SQLite-specific
+     * names. `ctx.db` is never used internally — the engines hold their own
+     * pool reference — so this only affects user-facing access.
+     * @private
+     */
+    #guardRawDriverHandle(pool, engineLabel) {
+        if (!pool || typeof pool !== 'object') return pool;
+        const sqliteOnly = new Set(['prepare', 'pragma']);
+        return new Proxy(pool, {
+            get(target, prop) {
+                if (typeof prop === 'string' && sqliteOnly.has(prop)) {
+                    throw new Error(
+                        `masterrecord: ctx.db on ${engineLabel} is the raw ${engineLabel} driver, which has no .${prop}() — that's SQLite-only. ` +
+                        `Use the engine-agnostic ctx.query(sql, params) / ctx.execute(sql, params), or the ORM (ctx.Model.where()…).`
+                    );
+                }
+                const value = target[prop];
+                return typeof value === 'function' ? value.bind(target) : value;
+            }
+        });
     }
 
     /**

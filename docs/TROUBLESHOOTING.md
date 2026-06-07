@@ -305,4 +305,19 @@ step.created_at = String(Date.now());  // ← stored as a plain JS prop, INSERT 
 
 **Fix:** restart the Node process. There is no library-level fix; this is how Node module loading works.
 
-Until restart, the workaround is to set the field via raw SQL through `ctx.db` (e.g. `ctx.db.prepare('INSERT INTO Step (...) VALUES (...)').run(...)`) — or, for fields that exist in the DB but not the class definition, lazy-load the entity (which iterates the DB row's actual columns and creates setters for them on the instance, even if the class doesn't declare them).
+Until restart, the workaround is to set the field via the engine-agnostic raw escape hatch — `await ctx.execute('INSERT INTO Step (...) VALUES (?, ?)', [...])` (works on every engine) — or, for fields that exist in the DB but not the class definition, lazy-load the entity (which iterates the DB row's actual columns and creates setters for them on the instance, even if the class doesn't declare them).
+
+---
+
+## `TypeError: ctx.db.prepare is not a function` (MySQL / Postgres)
+
+`ctx.db` is the **raw, engine-specific driver**. On SQLite it's a better-sqlite3 database (which has `.prepare()/.get()/.run()/.all()`); on MySQL it's a mysql2 pool and on Postgres a pg pool — neither has `.prepare()`. Code written against `ctx.db.prepare(...)` therefore works on SQLite and throws on MySQL/Postgres.
+
+**Fix:** use the engine-agnostic raw-SQL escape hatch (since v1.2.7):
+
+```javascript
+const rows = await ctx.query('SELECT * FROM "User" WHERE id = $1', [id]);   // returns rows, all engines
+await ctx.execute('UPDATE "User" SET name = ? WHERE id = ?', ['Alice', id]);
+```
+
+Better still, prefer the ORM (`ctx.User.where(u => u.id == $$, id).single()`), which is portable by construction. On a non-SQLite engine, `ctx.db.prepare()` now throws a descriptive error pointing you to `ctx.query()`.
