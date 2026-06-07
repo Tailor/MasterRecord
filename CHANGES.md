@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.2.10 — batch/single insert parity (.set() setters, defaults, timestamps, relationships)
+
+**Bug:** masterrecord had two INSERT write paths that didn't agree. A **single** insert (1 entity) routed through `insertManager`, which applies `.set()` setters, default values, auto timestamps, `belongsTo` FK resolution and validation. A **batch** insert (≥2 entities) called `engine.bulkInsert(entities)` **directly**, bypassing `insertManager` entirely. So saving ≥2 entities at once handed the raw, un-transformed model values straight to the engine — e.g. a field whose `.set()` maps a label to an int (`"operator"→2`) reached an INTEGER column as the string `"operator"`, the engine's type validator threw, and the whole batch **fell back to slow per-row inserts**. Correct data landed (via the fallback), but it was noisy and defeated the batch optimization. The batch path also **silently dropped child-relationship rows** (`hasMany`/`hasOne`/`hasManyThrough`), which only the per-entity path inserts.
+
+**Fix (engine-agnostic — applies to SQLite/MySQL/Postgres):**
+- `insertManager` now exposes **`prepareInsertModel(entity)`** — the exact `clearAllProto → validateEntity (normalize: .set/defaults/timestamps) → belongsToInsert` pipeline that `runQueries` uses, minus the execute. `runQueries` was refactored to call it, so single and batch share **one** normalization source of truth.
+- The context **batch path now runs every entity through `prepareInsertModel`** before building the bulk INSERT, so the fast path produces byte-for-byte identical column values to the single path (and inserts the clean, *set-once* model — no double transform).
+- Entities carrying **assigned child-relationship data** are detected (`_batchEntityHasChildren`, own-keys only so no lazy getter is triggered) and routed through the full single-insert path so their children are inserted instead of dropped. The remaining flat entities still get one fast batched insert.
+- The existing fallback-to-per-row-on-error safety net is preserved.
+
+New test: `test/batch-insert-set-transform.test.js` — batch applies `.set()` and uses the fast path (no fallback), single/batch store identical values, `prepareInsertModel` returns a clean set-once model, and the child-routing predicate. Full suite **641/641, 0 lint errors**. Verified executing on SQLite; the fix lives in engine-agnostic code (`context.js` + `insertManager.js`), so all three engines share it.
+
 ## v1.2.9 — alterColumn type changes (SQLite rebuild + affinity-aware no-op)
 
 **Bug:** `alterColumn` on SQLite emitted invalid SQL (`near ")"`). SQLite has no `ALTER`/`MODIFY COLUMN`, and `schema.alterColumn`'s builder path was handed an empty/missing table schema, producing `CREATE TABLE x ()`. Additionally, `string→text` is a no-op on SQLite (both TEXT affinity) yet it still attempted a rebuild.

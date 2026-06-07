@@ -1701,6 +1701,41 @@ class context {
     }
 
     /**
+     * Detect whether a tracked entity carries child-relationship data
+     * (hasMany / hasOne / hasManyThrough) that was explicitly assigned by the
+     * caller. Such entities can't be expressed as a single flat row, so the
+     * batch-insert path routes them through the full single-insert path (which
+     * inserts the children too) instead of the flat bulk path.
+     *
+     * Only OWN enumerable keys are inspected so we never trigger a lazy
+     * relationship getter (those live on the prototype) — an unset relationship
+     * accessor is correctly treated as "no children".
+     *
+     * @private
+     * @param {object} entity - Tracked entity
+     * @returns {boolean} True if the entity has assigned child-relationship data
+     */
+    _batchEntityHasChildren(entity) {
+        const modelEntity = entity.__entity;
+        if (!modelEntity) {
+            return false;
+        }
+        for (const key of Object.keys(entity)) {
+            const def = modelEntity[key];
+            if (!def) {
+                continue;
+            }
+            if (def.type === 'hasMany' || def.type === 'hasOne' || def.type === 'hasManyThrough') {
+                const value = entity[key];
+                if (value !== undefined && value !== null && typeof value === 'object') {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Process batch insert operations
      *
      * @private
@@ -1719,28 +1754,67 @@ class context {
             const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
             await insert.init(entities[0]);
         } else {
-            // Batch insert - 100x faster for multiple records
-            try {
-                const results = await this._SQLEngine.bulkInsert(entities);
+            // Batch insert. Two write paths used to disagree: the single-insert
+            // path runs each entity through insertManager (which applies .set()
+            // setters, default values, auto timestamps, belongsTo FK resolution
+            // and validation), while the batch path handed RAW model values
+            // straight to the engine. So a label that a .set() maps to an int
+            // (e.g. "operator" -> 2) reached an INTEGER column as a string, the
+            // whole batch threw, and it fell back to slow per-row inserts —
+            // defeating the batch optimization. We now run every batched entity
+            // through the SAME normalization pipeline before building the bulk
+            // INSERT, so the fast path produces identical column values.
+            //
+            // Entities carrying child-relationship data (hasMany / hasOne /
+            // hasManyThrough) cannot be expressed as a single flat row, so they
+            // go through the full single-insert path which inserts their children
+            // too — otherwise the flat bulk path would silently drop them.
+            const relationalEntities = [];
+            const flatEntities = [];
+            for (const entity of entities) {
+                if (this._batchEntityHasChildren(entity)) {
+                    relationalEntities.push(entity);
+                } else {
+                    flatEntities.push(entity);
+                }
+            }
 
-                // Set auto-increment IDs back on entities
-                for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    const result = results[i];
+            // Children-bearing entities: full single path (row + children).
+            for (const entity of relationalEntities) {
+                const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                await insert.init(entity);
+            }
 
-                    if (result && result.id) {
-                        const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
-                        if (entity.__entity[primaryKey]?.auto === true) {
-                            entity[primaryKey] = result.id;
+            // Flat entities: normalize each, then one fast batched insert.
+            if (flatEntities.length > 0) {
+                try {
+                    const manager = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                    const preparedModels = [];
+                    for (const entity of flatEntities) {
+                        preparedModels.push(await manager.prepareInsertModel(entity));
+                    }
+
+                    const results = await this._SQLEngine.bulkInsert(preparedModels);
+
+                    // Set auto-increment IDs back on the original tracked entities
+                    for (let i = 0; i < flatEntities.length; i++) {
+                        const entity = flatEntities[i];
+                        const result = results[i];
+
+                        if (result && result.id) {
+                            const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
+                            if (entity.__entity[primaryKey]?.auto === true) {
+                                entity[primaryKey] = result.id;
+                            }
                         }
                     }
-                }
-            } catch (error) {
-                console.error('[Context] Bulk insert failed, falling back to individual inserts:', error.message);
-                // Fallback to individual inserts
-                for (const entity of entities) {
-                    const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                    await insert.init(entity);
+                } catch (error) {
+                    console.error('[Context] Bulk insert failed, falling back to individual inserts:', error.message);
+                    // Fallback to individual inserts
+                    for (const entity of flatEntities) {
+                        const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                        await insert.init(entity);
+                    }
                 }
             }
         }

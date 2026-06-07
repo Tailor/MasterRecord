@@ -81,6 +81,64 @@ class InsertManager {
      * @throws {InsertManagerError} If validation fails or relationships are invalid
      */
     async runQueries(currentModel) {
+        const modelEntity = currentModel.__entity;
+
+        // Build the clean, normalized insert model (applies .set setters, defaults,
+        // auto timestamps and resolves belongsTo FKs). Throws if validation fails.
+        const cleanCurrentModel = await this.prepareInsertModel(currentModel);
+
+        const SQL = await this._SQLEngine.insert(cleanCurrentModel);
+        const primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
+
+        // use returned insert id directly; avoid redundant post-insert SELECT
+        if (currentModel.__entity[primaryKey].auto === true) {
+            currentModel[primaryKey] = SQL.id;
+        }
+
+        const proto = Object.getPrototypeOf(currentModel);
+        const props = Object.getOwnPropertyNames(proto);
+        const cleanPropList = tools.returnEntityList(props, modelEntity);
+        const modelKeys = Object.keys(currentModel);
+        const mergedArray = [...new Set(modelKeys.concat(cleanPropList))];
+
+        // loop through model properties
+        for (const property of mergedArray) {
+            const propertyModel = currentModel[property];
+            const entityProperty = modelEntity[property] ? modelEntity[property] : {};
+
+            if (entityProperty.type === RELATIONSHIP_TYPES.HAS_ONE) {
+                await this._processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL);
+            }
+
+            if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY) {
+                await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
+            }
+
+            if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY_THROUGH) {
+                await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY_THROUGH);
+            }
+        }
+    }
+
+    /**
+     * Prepare a tracked entity for an INSERT *without* executing it.
+     *
+     * Resets validation state, builds a clean (prototype-free) model, runs the
+     * full normalization the single-insert path depends on — legacy .set()
+     * setters, default values, auto timestamps — and resolves belongsTo foreign
+     * keys. Returns the clean model ready to hand to the engine.
+     *
+     * Shared by {@link runQueries} (single insert) and the context batch-insert
+     * path so both produce byte-for-byte identical column values. Before this was
+     * extracted, the batch path bypassed this entirely: a label that a .set() maps
+     * to an int reached an INTEGER column as a raw string, the whole batch threw,
+     * and it silently fell back to slow per-row inserts.
+     *
+     * @param {object} currentModel - Tracked entity to insert
+     * @returns {Promise<object>} Clean, normalized model for the engine
+     * @throws {InsertManagerError} If the entity fails validation
+     */
+    async prepareInsertModel(currentModel) {
         // Reset validation state for this operation to avoid stale errors
         if (this._errorModel) {
             this._errorModel.isValid = true;
@@ -90,42 +148,7 @@ class InsertManager {
         const cleanCurrentModel = tools.clearAllProto(currentModel);
         this.validateEntity(cleanCurrentModel, currentModel, currentModel.__entity);
 
-        if (this._errorModel.isValid) {
-            const modelEntity = currentModel.__entity;
-            // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
-            currentModel = await this.belongsToInsert(currentModel, modelEntity);
-            const SQL = await this._SQLEngine.insert(cleanCurrentModel);
-            const primaryKey = tools.getPrimaryKeyObject(currentModel.__entity);
-
-            // use returned insert id directly; avoid redundant post-insert SELECT
-            if (currentModel.__entity[primaryKey].auto === true) {
-                currentModel[primaryKey] = SQL.id;
-            }
-
-            const proto = Object.getPrototypeOf(currentModel);
-            const props = Object.getOwnPropertyNames(proto);
-            const cleanPropList = tools.returnEntityList(props, modelEntity);
-            const modelKeys = Object.keys(currentModel);
-            const mergedArray = [...new Set(modelKeys.concat(cleanPropList))];
-
-            // loop through model properties
-            for (const property of mergedArray) {
-                const propertyModel = currentModel[property];
-                const entityProperty = modelEntity[property] ? modelEntity[property] : {};
-
-                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_ONE) {
-                    await this._processHasOneRelationship(propertyModel, entityProperty, property, currentModel, SQL);
-                }
-
-                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY) {
-                    await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY);
-                }
-
-                if (entityProperty.type === RELATIONSHIP_TYPES.HAS_MANY_THROUGH) {
-                    await this._processArrayRelationship(propertyModel, entityProperty, property, currentModel, SQL, RELATIONSHIP_TYPES.HAS_MANY_THROUGH);
-                }
-            }
-        } else {
+        if (!this._errorModel.isValid) {
             const messages = this._errorModel.errors;
             const combinedError = messages.join('; and ');
             throw new InsertManagerError(combinedError, {
@@ -133,6 +156,10 @@ class InsertManager {
                 entity: currentModel.__entity ? currentModel.__entity.__name : 'unknown'
             });
         }
+
+        // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
+        await this.belongsToInsert(currentModel, currentModel.__entity);
+        return cleanCurrentModel;
     }
 
     /**
