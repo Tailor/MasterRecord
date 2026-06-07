@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## Tooling — cross-engine integration tests + CI (no package change)
+
+Closes the long-standing verification caveat ("executed on SQLite; MySQL/Postgres verified by code-reading"). Each engine's `bulkInsert` is structurally different (SQLite loops single inserts; MySQL builds one multi-row `VALUES` + `insertId`; Postgres multi-row `VALUES … RETURNING`), so "green on SQLite" does not prove "green on MySQL/Postgres".
+
+- **`test/integration/cross-engine.test.js`** — runs the real write/DDL paths against a live server: batch/single `.set()` parity (1.2.10), multi-row `bulkInsert` + auto-PK retrieval, and an executed `alterColumn` type change (1.2.9). Gated on `MR_TEST_MYSQL_URL` / `MR_TEST_PG_URL`; unset → skipped, so the default `npm test` stays SQLite-only and offline.
+- **`.github/workflows/test.yml`** — CI matrix (Node 20/22) with `mysql:8` + `postgres:16` service containers wired to those env vars, so every push executes all three engines. Runs lint + the full suite.
+- **`docker-compose.test.yml`** — spin the same databases up locally to run the integration suite on your machine.
+
+None of this ships in the npm tarball (`test/`, `.github/`, compose file are outside the `files` allowlist) — it's repo tooling only, so no version bump.
+
 ## v1.2.10 — batch/single insert parity (.set() setters, defaults, timestamps, relationships)
 
 **Bug:** masterrecord had two INSERT write paths that didn't agree. A **single** insert (1 entity) routed through `insertManager`, which applies `.set()` setters, default values, auto timestamps, `belongsTo` FK resolution and validation. A **batch** insert (≥2 entities) called `engine.bulkInsert(entities)` **directly**, bypassing `insertManager` entirely. So saving ≥2 entities at once handed the raw, un-transformed model values straight to the engine — e.g. a field whose `.set()` maps a label to an int (`"operator"→2`) reached an INTEGER column as the string `"operator"`, the engine's type validator threw, and the whole batch **fell back to slow per-row inserts**. Correct data landed (via the fallback), but it was noisy and defeated the batch optimization. The batch path also **silently dropped child-relationship rows** (`hasMany`/`hasOne`/`hasManyThrough`), which only the per-entity path inserts.

@@ -1,0 +1,37 @@
+# Local databases for the cross-engine integration suite.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   export MR_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/masterrecord_test
+#   export MR_TEST_PG_URL=postgres://mr:mrpw@127.0.0.1:5432/masterrecord_test
+#   npm test          # SQLite unit tests + live MySQL/Postgres integration tests
+#   docker compose -f docker-compose.test.yml down -v
+#
+# Without those env vars, `npm test` runs SQLite-only and the integration tests skip.
+
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: masterrecord_test
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpw"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: masterrecord_test
+      POSTGRES_USER: mr
+      POSTGRES_PASSWORD: mrpw
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mr -d masterrecord_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 15

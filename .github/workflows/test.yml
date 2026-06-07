@@ -1,0 +1,66 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} · sqlite + mysql + postgres
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+
+    # Live databases so the cross-engine integration suite executes for real
+    # (test/integration/cross-engine.test.js). Without these env vars the
+    # integration tests skip; here they point at the service containers below.
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: masterrecord_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: masterrecord_test
+          POSTGRES_USER: mr
+          POSTGRES_PASSWORD: mrpw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U mr -d masterrecord_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      MR_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/masterrecord_test
+      MR_TEST_PG_URL: postgres://mr:mrpw@127.0.0.1:5432/masterrecord_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Test (SQLite unit + MySQL/Postgres integration)
+        run: npm test
