@@ -1212,6 +1212,22 @@ class SQLLiteEngine {
                     fieldColumn = fields[modelEntity[column].foreignKey];
                 }
 
+                // Auto-increment primary keys are assigned by the database, so
+                // they must never be emitted in the INSERT unless the caller
+                // set an explicit value. An unset auto PK surfaces either as
+                // undefined/null (an unread `.new()` getter) or as the schema-
+                // definition function `id(db){…}` (when the row is a class
+                // instance). A function is also never a valid value for any
+                // column. Skip in those cases so the batched-insert path
+                // behaves like the single-insert path instead of failing type
+                // validation with "Expected integer, got function".
+                const _columnDef = modelEntity[column];
+                const _isAutoPrimaryKey = _columnDef && _columnDef.primary === true && _columnDef.auto === true;
+                if (typeof fieldColumn === 'function' ||
+                    (_isAutoPrimaryKey && (fieldColumn === undefined || fieldColumn === null))) {
+                    continue;
+                }
+
                 if (fieldColumn !== undefined && fieldColumn !== null) {
                     // 🔥 Apply toDatabase transformer FIRST — transformers may turn
                     // objects into scalars (e.g. JSON.stringify), so running them

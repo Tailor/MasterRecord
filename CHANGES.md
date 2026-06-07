@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.2.8 — batched-insert auto-increment PK handling
+
+**Bug:** the batched-insert path could fail with `Type mismatch for <Entity>.id: Expected integer, got function` for an unset auto-increment primary key, then fall back to individual inserts (which handled it). The INSERT builder (`_buildSQLInsertObjectParameterized`, shared by single + batch inserts) only skipped the auto-PK when its value was `undefined`/`null`. When the unset PK surfaced as its **schema-definition function** (`id(db){…}`, e.g. when the row is a class instance rather than a `.new()` data instance), the builder fell through to the type validator and threw.
+
+**Fix (all three engines):** an auto-increment primary key is database-assigned and is now **never emitted in the INSERT unless the caller set an explicit value** — "unset" is recognized whether it surfaces as `undefined`, `null`, or a function. A function value is treated as never-valid for any column (a leaked schema method/getter) and skipped. Single- and batched-insert paths share the builder, so both behave identically; an explicitly-set PK value is still honored.
+
+New test: `test/bulk-insert-autopk.test.js` — builder excludes a function-valued auto-PK (and an `undefined` one), honors an explicit value, and an end-to-end `bulkCreate` assigns auto IDs across a batch with no fallback. Verified on SQLite; the MySQL/Postgres builders received the identical change.
+
 ## v1.2.7 — public engine-agnostic raw-SQL escape hatch (`ctx.query` / `ctx.execute`)
 
 Adds a public, portable raw-SQL API so apps stop reaching into `ctx.db` (the raw, engine-specific driver). `ctx.db.prepare()` is better-sqlite3's synchronous API; mysql2/pg have no `.prepare()`, so code written against `ctx.db` "works on SQLite, breaks on MySQL." The only engine-agnostic path was the private `context._execute` (the migration/DDL path, which logs as a migration and doesn't return rows on SQLite).
