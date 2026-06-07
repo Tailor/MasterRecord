@@ -23,11 +23,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(__dirname, 'fixtures', 'count-no-from');
 const envDir = path.join(fixturesDir, 'config', 'environments');
 const dbDir = path.join(fixturesDir, 'db');
-const dbFile = path.join(dbDir, 'countctx.sqlite');
 
 fs.mkdirSync(envDir, { recursive: true });
 fs.mkdirSync(dbDir, { recursive: true });
-if (fs.existsSync(dbFile)) fs.rmSync(dbFile);
+// NOTE: don't try to delete the db file by a guessed name — masterrecord
+// derives it as `<contextName>.sqlite` (here: countfromctx.sqlite). The
+// setup below resets the table via the live connection instead, so the test
+// is deterministic regardless of the on-disk filename or prior runs.
 
 fs.writeFileSync(
     path.join(envDir, 'env.countfrom.json'),
@@ -59,8 +61,12 @@ class CountFromCtx extends context {
 
 {
     const ctx = new CountFromCtx();
+    // DROP first so the row count is exactly 4 on every run (the fixture db
+    // file persists across runs; without this the table accumulated rows and
+    // count() correctly returned the growing total, failing the == 4 assert).
     ctx._SQLEngine.db.exec(`
-        CREATE TABLE IF NOT EXISTS Thing (
+        DROP TABLE IF EXISTS Thing;
+        CREATE TABLE Thing (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             label TEXT
         );
