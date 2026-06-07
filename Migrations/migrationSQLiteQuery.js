@@ -67,6 +67,14 @@ class migrationSQLiteQuery {
         return `${colName} ${type}${nullName}${defaultClause}${unique}${primaryKey}${auto}`;
     }
 
+    // Public accessor for the resolved SQLite column type (affinity) of a
+    // masterrecord type. Used by schema.syncTable to decide whether a column's
+    // type actually changes at SQLite's affinity level — e.g. string and text
+    // both resolve to TEXT, so string -> text is a no-op (no rebuild needed).
+    resolveColumnType(type){
+        return this.#typeManager(type);
+    }
+
     #typeManager(type){
         switch(type) {
             case "string":

@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.2.9 — alterColumn type changes (SQLite rebuild + affinity-aware no-op)
+
+**Bug:** `alterColumn` on SQLite emitted invalid SQL (`near ")"`). SQLite has no `ALTER`/`MODIFY COLUMN`, and `schema.alterColumn`'s builder path was handed an empty/missing table schema, producing `CREATE TABLE x ()`. Additionally, `string→text` is a no-op on SQLite (both TEXT affinity) yet it still attempted a rebuild.
+
+**Fix:**
+- **SQLite** `alterColumn` now reconciles the table to its entity definition via `syncTable`'s proven rebuild (rename → recreate with the new schema → copy common columns → drop old). It is a **no-op when the type is unchanged at SQLite's affinity level** (`string→text`, `int→bigint`), and performs a **data-preserving rebuild on a real change** (e.g. `integer→text`).
+- **`needRebuildSQLite`** now compares the **resolved SQLite affinity** of the desired vs existing column type, catching *any* real type change. The previous check hardcoded only boolean/string/integer and missed most.
+- **MySQL** (`MODIFY COLUMN`) and **Postgres** (`ALTER COLUMN … TYPE`) keep their native type-change DDL — verified to emit correct SQL.
+- `alterColumn` now `await this._ensureReady()` (parity with the other schema methods) and throws a clear error if the entity schema can't be resolved on SQLite (instead of emitting broken DDL).
+
+New test: `test/alter-column-type.test.js` — SQLite `string→text` no-op (data intact), SQLite `integer→text` rebuild (column becomes TEXT, rows preserved), and MySQL/Postgres SQL output. Verified executing on SQLite; MySQL/Postgres via SQL-string assertions (no live servers here). Full suite 613/613, 0 lint errors.
+
 ## v1.2.8 — batched-insert auto-increment PK handling
 
 **Bug:** the batched-insert path could fail with `Type mismatch for <Entity>.id: Expected integer, got function` for an unset auto-increment primary key, then fall back to individual inserts (which handled it). The INSERT builder (`_buildSQLInsertObjectParameterized`, shared by single + batch inserts) only skipped the auto-PK when its value was `undefined`/`null`. When the unset PK surfaced as its **schema-definition function** (`id(db){…}`, e.g. when the row is a class instance rather than a `.new()` data instance), the builder fell through to the type validator and threw.

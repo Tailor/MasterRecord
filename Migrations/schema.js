@@ -454,6 +454,7 @@ class schema{
 
         const needRebuildSQLite = () => {
             if(!this.context.isSQLite) return false;
+            const sqliteBuilder = new sqliteQuery();
             const byName = {};
             for(const row of existing){ byName[row.name] = row; }
             for(const d of desiredCols){
@@ -461,8 +462,6 @@ class schema{
                 if(!row) continue;
                 const notnull = row.notnull === 1;
                 const desiredNotNull = d.col.nullable === false;
-                const desiredType = d.col.type;
-                const existingType = (row.type || '').toLowerCase();
                 // compare default (normalize quotes)
                 const exDefRaw = row.dflt_value == null ? null : String(row.dflt_value);
                 let exDef = exDefRaw;
@@ -472,10 +471,16 @@ class schema{
                 const dsDef = d.col.default == null ? null : String(d.col.default);
                 if(desiredNotNull !== notnull) return true;
                 if(exDef !== dsDef) return true;
-                // rough type differences that require rebuild
-                if((desiredType === 'boolean' && existingType !== 'integer') ||
-                   (desiredType === 'string' && existingType !== 'text') ||
-                   (desiredType === 'integer' && existingType !== 'integer')){
+                // Type change at SQLite's AFFINITY level. Compare the resolved
+                // SQLite type of the desired column to the existing column's
+                // declared type. This catches ANY real change (integer->text,
+                // float->text, …) — the previous hardcoded boolean/string/
+                // integer checks missed most — while treating same-affinity
+                // changes (string->text, both TEXT; int->bigint, both INTEGER)
+                // as a no-op so we don't rebuild unnecessarily.
+                const desiredResolved = sqliteBuilder.resolveColumnType(d.col.type).toUpperCase();
+                const existingResolved = String(row.type || '').toUpperCase();
+                if(existingResolved && desiredResolved !== existingResolved){
                     return true;
                 }
             }
@@ -582,16 +587,28 @@ class schema{
 
    //"dbo.People", "Location"
     async alterColumn(table){
+        await this._ensureReady();
         if(table){
             if(this.fullTable){
                 if(this.context.isSQLite){
-                                        var queryBuilder = new sqliteQuery();
-                    const tableSchema = (this._tableObj && this._tableObj[table.tableName]) || this.fullTable.new;
-                    const queryObj = queryBuilder.alterColumn(tableSchema, table);
-                    for (const key in queryObj) {
-                        var query = queryObj[key];
-                        await this.context._execute(query);
+                    // SQLite has no ALTER/MODIFY COLUMN — a type change needs a
+                    // full table rebuild (rename → recreate with new schema →
+                    // copy common columns → drop old). Reconcile the table to
+                    // its entity definition via syncTable, which performs that
+                    // rebuild and is a no-op when the type is unchanged at
+                    // SQLite's affinity level (e.g. string -> text, both TEXT).
+                    // (The previous builder.alterColumn path emitted invalid
+                    // SQL — "near )" — when handed an empty/missing schema.)
+                    const entity = (this.context.__entities || []).find(e => e && e.__name === table.tableName)
+                        || (this._tableObj && this._tableObj[table.tableName])
+                        || (this.fullTable && this.fullTable[table.tableName]);
+                    if (!entity || !entity.__name) {
+                        throw new Error(
+                            `masterrecord: alterColumn could not resolve the full schema for table '${table.tableName}' ` +
+                            `to rebuild it on SQLite. Ensure the context registers this entity (dbset).`
+                        );
                     }
+                    await this.syncTable(entity);
                 }
 
                 if(this.context.isMySQL){
