@@ -30,7 +30,9 @@ MasterRecord migrations let you:
 ### 1. Set up your context
 
 ```javascript
-// app/models/context.js
+// app/models/AppContext.js
+// Name the file after the context class so `masterrecord enable-migrations AppContext`
+// can find it (the CLI resolves the context by file name: *AppContext.js).
 import context from 'masterrecord/context';
 import User from './User.js';
 import Post from './Post.js';

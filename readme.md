@@ -234,7 +234,9 @@ await db.saveChanges();  // ✅ Batch save
 ### 1. Create a Context
 
 ```javascript
-// app/models/context.js
+// app/models/AppContext.js
+// Name the file after the context class so the `masterrecord` migration CLI can
+// resolve it: `masterrecord enable-migrations AppContext` looks for *AppContext.js.
 import context from 'masterrecord/context';
 import User from './User.js';
 import Post from './Post.js';
@@ -266,14 +268,13 @@ export default AppContext;
 
 ```javascript
 // app/models/User.js
+// Each field is a METHOD that receives the schema builder (db).
 class User {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
-        this.name = { type: 'string', nullable: false };
-        this.email = { type: 'string', nullable: false, unique: true };
-        this.age = { type: 'integer', nullable: true };
-        this.created_at = { type: 'timestamp', default: 'CURRENT_TIMESTAMP' };
-    }
+    id(db) { db.integer().primary().auto(); }
+    name(db) { db.string().notNullable(); }
+    email(db) { db.string().notNullable().unique(); }
+    age(db) { db.integer(); }              // nullable by default
+    created_at(db) { db.datetime(); }
 }
 
 export default User;
@@ -295,7 +296,7 @@ masterrecord update-database AppContext
 ### 4. Query Your Data
 
 ```javascript
-import AppContext from './app/models/context.js';
+import AppContext from './app/models/AppContext.js';
 const db = new AppContext();
 
 // Create (Active Record style)
@@ -398,17 +399,20 @@ await db.saveChanges();  // SQLite now has async API wrapper
 
 ### Environment Files
 
-Store configurations in JSON files:
+Store configurations in JSON files **keyed by the context class name** (so one file
+can hold settings for multiple contexts):
 
 ```json
 // config/environments/env.development.json
 {
-    "type": "postgres",
-    "host": "localhost",
-    "port": 5432,
-    "database": "myapp_dev",
-    "user": "postgres",
-    "password": "dev_password"
+    "AppContext": {
+        "type": "postgres",
+        "host": "localhost",
+        "port": 5432,
+        "database": "myapp_dev",
+        "user": "postgres",
+        "password": "dev_password"
+    }
 }
 ```
 
@@ -433,43 +437,31 @@ node app.js
 
 ### Basic Entity
 
+Each field is a method on the class that receives the schema builder (`db`) and
+chains type + modifiers:
+
 ```javascript
 class User {
-    constructor() {
-        // Primary key with auto-increment
-        this.id = {
-            type: 'integer',
-            primary: true,
-            auto: true
-        };
+    // Primary key with auto-increment
+    id(db) { db.integer().primary().auto(); }
 
-        // Required string field
-        this.name = {
-            type: 'string',
-            nullable: false
-        };
+    // Required string field
+    name(db) { db.string().notNullable(); }
 
-        // Optional field with default
-        this.status = {
-            type: 'string',
-            nullable: true,
-            default: 'active'
-        };
+    // Optional field with a default value
+    status(db) { db.string().default('active'); }
 
-        // Unique constraint
-        this.email = {
-            type: 'string',
-            unique: true
-        };
+    // Unique constraint
+    email(db) { db.string().unique(); }
 
-        // Timestamp
-        this.created_at = {
-            type: 'timestamp',
-            default: 'CURRENT_TIMESTAMP'
-        };
-    }
+    // Timestamp (stored as TEXT on SQLite; set it in app code or a beforeSave hook)
+    created_at(db) { db.datetime(); }
 }
 ```
+
+> **Note:** fields are *methods*, not assigned object literals. MasterRecord reads
+> the class's prototype methods to build the schema; plain `this.x = {...}`
+> properties in the constructor are ignored.
 
 ### Field Types
 
@@ -493,34 +485,24 @@ class User {
 
 ### Relationships
 
+Relationships are declared with the `hasMany` / `hasOne` / `belongsTo` builder
+methods. `belongsTo('User')` automatically creates the `user_id` foreign-key column.
+
 ```javascript
 class User {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
-        this.name = { type: 'string' };
+    id(db) { db.integer().primary().auto(); }
+    name(db) { db.string(); }
 
-        // One-to-many: User has many Posts
-        this.Posts = {
-            type: 'hasMany',
-            model: 'Post',
-            foreignKey: 'user_id'
-        };
-    }
+    // One-to-many: User has many Posts (foreign key inferred as user_id on Post)
+    Posts(db) { db.hasMany('Post'); }
 }
 
 class Post {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
-        this.title = { type: 'string' };
-        this.user_id = { type: 'integer' };
+    id(db) { db.integer().primary().auto(); }
+    title(db) { db.string(); }
 
-        // Many-to-one: Post belongs to User
-        this.User = {
-            type: 'belongsTo',
-            model: 'User',
-            foreignKey: 'user_id'
-        };
-    }
+    // Many-to-one: Post belongs to a User (creates the user_id column)
+    User(db) { db.belongsTo('User'); }
 }
 ```
 
@@ -528,23 +510,18 @@ class Post {
 
 Store complex JavaScript types in simple database columns:
 
+Use `.set(fn)` to transform a value on its way **into** the database and `.get(fn)`
+to transform it on the way **out**:
+
 ```javascript
 class User {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
+    id(db) { db.integer().primary().auto(); }
 
-        // Store arrays as JSON strings
-        this.tags = {
-            type: 'string',
-            transform: {
-                toDatabase: (value) => {
-                    return Array.isArray(value) ? JSON.stringify(value) : value;
-                },
-                fromDatabase: (value) => {
-                    return value ? JSON.parse(value) : [];
-                }
-            }
-        };
+    // Store arrays as JSON strings transparently
+    tags(db) {
+        db.string()
+          .set((value) => (Array.isArray(value) ? JSON.stringify(value) : value))
+          .get((value) => (value ? JSON.parse(value) : []));
     }
 }
 
@@ -922,26 +899,20 @@ await db.saveChanges();
 
 ```javascript
 class Post {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
+    id(db) { db.integer().primary().auto(); }
 
-        // Store array as JSON
-        this.tags = {
-            type: 'string',
-            transform: {
-                toDatabase: (v) => Array.isArray(v) ? JSON.stringify(v) : v,
-                fromDatabase: (v) => v ? JSON.parse(v) : []
-            }
-        };
+    // Store array as JSON in a TEXT column
+    tags(db) {
+        db.string()
+          .set((v) => (Array.isArray(v) ? JSON.stringify(v) : v))
+          .get((v) => (v ? JSON.parse(v) : []));
+    }
 
-        // PostgreSQL JSONB (native JSON support)
-        this.metadata = {
-            type: 'jsonb',  // PostgreSQL only
-            transform: {
-                toDatabase: (v) => JSON.stringify(v || {}),
-                fromDatabase: (v) => typeof v === 'string' ? JSON.parse(v) : v
-            }
-        };
+    // Native JSON column (JSON/JSONB on Postgres & MySQL, TEXT on SQLite)
+    metadata(db) {
+        db.json()
+          .set((v) => JSON.stringify(v || {}))
+          .get((v) => (typeof v === 'string' ? JSON.parse(v) : v));
     }
 }
 ```
@@ -1575,17 +1546,10 @@ If your entity has cascade delete rules, they will be applied automatically:
 
 ```javascript
 class User {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
+    id(db) { db.integer().primary().auto(); }
 
-        // Posts will be deleted when user is deleted
-        this.Posts = {
-            type: 'hasMany',
-            model: 'Post',
-            foreignKey: 'user_id',
-            cascade: true  // Enable cascade delete
-        };
-    }
+    // hasMany cascades by default — call .stopCascadeOnDelete() to opt out
+    Posts(db) { db.hasMany('Post'); }
 }
 
 const user = await db.User.findById(1);
@@ -1749,25 +1713,18 @@ Add lifecycle hooks to your entity definitions to execute logic before/after dat
 import bcrypt from 'bcrypt';
 
 class User {
-    constructor() {
-        this.id = { type: 'integer', primary: true, auto: true };
-        this.email = { type: 'string' };
-        this.password = { type: 'string' };
-        this.created_at = { type: 'timestamp' };
-        this.updated_at = { type: 'timestamp' };
-        this.role = { type: 'string' };
-    }
+    id(db) { db.integer().primary().auto(); }
+    email(db) { db.string(); }
+    password(db) { db.string(); }
+    created_at(db) { db.datetime(); }
+    updated_at(db) { db.datetime(); }
+    role(db) { db.string(); }
 
-    // Hash password before saving
+    // Hash the password (when changed) and stamp timestamps before saving.
     beforeSave() {
-        // Only hash if password was changed
         if (this.__dirtyFields.includes('password')) {
             this.password = bcrypt.hashSync(this.password, 10);
         }
-    }
-
-    // Set timestamps automatically
-    beforeSave() {
         if (this.__state === 'insert') {
             this.created_at = new Date();
         }
@@ -3110,7 +3067,7 @@ schema.bulkSeed(tableName, dataArray)
 ### Complete CRUD Example
 
 ```javascript
-import AppContext from './app/models/context.js';
+import AppContext from './app/models/AppContext.js';
 
 async function demo() {
     const db = new AppContext();

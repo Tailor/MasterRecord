@@ -759,76 +759,91 @@ class context {
             }
             const contextName = this.__name;
 
-            // Try multiple base roots for robustness
-            const candidateRoots = [process.cwd(), appRoot.path, __dirname];
-            let file = null;
-            const searchErrors = [];
+            // The config can be supplied two ways:
+            //   1. An inline config object:  this.env({ type: 'sqlite', connection: './db/' })
+            //   2. A folder path to load env.<NODE_ENV>.json (keyed by context name):
+            //      this.env('config/environments')
+            let options;
+            let rootFolder;
 
-            // Performance: Use for...of instead of index-based loop (more readable, same speed)
-            for (const candidateRoot of candidateRoots) {
-                try {
-                    file = this.__findSettings(candidateRoot, rootFolderLocationOrConfig, envType);
-                    if (file) break;
-                } catch (error) {
-                    searchErrors.push(`${candidateRoot}: ${error.message}`);
+            if (rootFolderLocationOrConfig && typeof rootFolderLocationOrConfig === 'object') {
+                // (1) Inline configuration — use it directly, no file lookup.
+                options = rootFolderLocationOrConfig;
+                rootFolder = process.cwd();
+            } else {
+                // (2) Folder path — locate and read env.<NODE_ENV>.json.
+                // Try multiple base roots for robustness
+                const candidateRoots = [process.cwd(), appRoot.path, __dirname];
+                let file = null;
+                const searchErrors = [];
+
+                // Performance: Use for...of instead of index-based loop (more readable, same speed)
+                for (const candidateRoot of candidateRoots) {
+                    try {
+                        file = this.__findSettings(candidateRoot, rootFolderLocationOrConfig, envType);
+                        if (file) break;
+                    } catch (error) {
+                        searchErrors.push(`${candidateRoot}: ${error.message}`);
+                    }
                 }
-            }
 
-            if (!file && searchErrors.length > 0) {
-                console.log('[Context] Config search errors:', searchErrors.join('; '));
-            }
-            // If still not found and an absolute path was provided, try directly
-            if (!file && path.isAbsolute(rootFolderLocationOrConfig)) {
-                const directFolder = rootFolderLocationOrConfig;
-                const envFileA = path.join(directFolder, `env.${envType}.json`);
-                const envFileB = path.join(directFolder, `${envType}.json`);
-                const picked = fs.existsSync(envFileA) ? envFileA : (fs.existsSync(envFileB) ? envFileB : null);
-
-                if (picked) {
-                    // Smart root folder detection for plugin paths
-                    // If the env file is in a bb-plugins/<plugin-name>/config/environments/ structure,
-                    // we should set rootFolder to the project root, not the plugin's config folder
-                    let detectedRoot = path.dirname(path.dirname(picked));
-
-                    // Check if we're in a bb-plugins structure
-                    const pickedParts = picked.split(path.sep);
-                    const pluginsIndex = pickedParts.findIndex(part => part === 'bb-plugins');
-
-                    if (pluginsIndex !== -1 && pluginsIndex + 3 < pickedParts.length) {
-                        // We're in bb-plugins/<plugin-name>/config/environments/...
-                        // Set rootFolder to the project root (parent of bb-plugins)
-                        const projectRootParts = pickedParts.slice(0, pluginsIndex);
-                        detectedRoot = projectRootParts.join(path.sep) || path.sep;
-                    }
-
-                    file = { file: picked, rootFolder: detectedRoot };
+                if (!file && searchErrors.length > 0) {
+                    console.log('[Context] Config search errors:', searchErrors.join('; '));
                 }
-            }
+                // If still not found and an absolute path was provided, try directly
+                if (!file && path.isAbsolute(rootFolderLocationOrConfig)) {
+                    const directFolder = rootFolderLocationOrConfig;
+                    const envFileA = path.join(directFolder, `env.${envType}.json`);
+                    const envFileB = path.join(directFolder, `${envType}.json`);
+                    const picked = fs.existsSync(envFileA) ? envFileA : (fs.existsSync(envFileB) ? envFileB : null);
 
-            if (!file) {
-                throw new ConfigurationError(
-                    `Environment configuration not found for '${envType}'`,
-                    {
-                        searchPath: rootFolderLocationOrConfig,
-                        environment: envType,
-                        attemptedRoots: candidateRoots
+                    if (picked) {
+                        // Smart root folder detection for plugin paths
+                        // If the env file is in a bb-plugins/<plugin-name>/config/environments/ structure,
+                        // we should set rootFolder to the project root, not the plugin's config folder
+                        let detectedRoot = path.dirname(path.dirname(picked));
+
+                        // Check if we're in a bb-plugins structure
+                        const pickedParts = picked.split(path.sep);
+                        const pluginsIndex = pickedParts.findIndex(part => part === 'bb-plugins');
+
+                        if (pluginsIndex !== -1 && pluginsIndex + 3 < pickedParts.length) {
+                            // We're in bb-plugins/<plugin-name>/config/environments/...
+                            // Set rootFolder to the project root (parent of bb-plugins)
+                            const projectRootParts = pickedParts.slice(0, pluginsIndex);
+                            detectedRoot = projectRootParts.join(path.sep) || path.sep;
+                        }
+
+                        file = { file: picked, rootFolder: detectedRoot };
                     }
-                );
-            }
+                }
 
-            // Always use absolute file path to avoid module root ambiguity on global installs/Windows
-            const settingsPath = path.isAbsolute(file.file) ? file.file : path.resolve(file.rootFolder, file.file);
-            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const options = settings[contextName];
+                if (!file) {
+                    throw new ConfigurationError(
+                        `Environment configuration not found for '${envType}'`,
+                        {
+                            searchPath: rootFolderLocationOrConfig,
+                            environment: envType,
+                            attemptedRoots: candidateRoots
+                        }
+                    );
+                }
 
-            if (!options || typeof options !== 'object') {
-                throw new ConfigurationError(
-                    `Configuration missing settings for context '${contextName}'`,
-                    {
-                        configFile: settingsPath,
-                        availableContexts: Object.keys(settings)
-                    }
-                );
+                // Always use absolute file path to avoid module root ambiguity on global installs/Windows
+                const settingsPath = path.isAbsolute(file.file) ? file.file : path.resolve(file.rootFolder, file.file);
+                const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+                options = settings[contextName];
+                rootFolder = file.rootFolder;
+
+                if (!options || typeof options !== 'object') {
+                    throw new ConfigurationError(
+                        `Configuration missing settings for context '${contextName}'`,
+                        {
+                            configFile: settingsPath,
+                            availableContexts: Object.keys(settings)
+                        }
+                    );
+                }
             }
 
             const type = String(options.type || '').toLowerCase();
@@ -849,7 +864,7 @@ class context {
                 this.isPostgres = false;
 
                 // Resolve database path using extracted method
-                const dbPath = this._resolveDatabasePath(options.connection, file.rootFolder, contextName);
+                const dbPath = this._resolveDatabasePath(options.connection, rootFolder, contextName);
 
                 // Ensure database directory exists
                 const dbDir = path.dirname(dbPath);

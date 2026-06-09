@@ -93,8 +93,60 @@ class EntityModel {
         return this;
     }
 
+    // Date/time columns. All resolve to TEXT on SQLite, native types on
+    // MySQL/Postgres. Store ISO-8601 strings (or epoch numbers) in them.
+    date(){
+        this.obj.type = "date";
+        return this;
+    }
+
+    datetime(){
+        this.obj.type = "datetime";
+        return this;
+    }
+
+    timestamp(){
+        this.obj.type = "timestamp";
+        return this;
+    }
+
     boolean(){
         this.obj.type = "boolean";
+        return this;
+    }
+
+    // Numeric columns beyond integer: REAL on SQLite, native on MySQL/Postgres.
+    float(){
+        this.obj.type = "float";
+        return this;
+    }
+
+    decimal(){
+        this.obj.type = "decimal";
+        return this;
+    }
+
+    bigint(){
+        this.obj.type = "bigint";
+        return this;
+    }
+
+    // Stored as TEXT/JSON depending on engine. Pair with .get()/.set() (or a
+    // transformer) to (de)serialize objects automatically.
+    json(){
+        this.obj.type = "json";
+        return this;
+    }
+
+    // Universally-unique identifier column (TEXT on SQLite).
+    uuid(){
+        this.obj.type = "uuid";
+        return this;
+    }
+
+    // Raw binary column (BLOB).
+    binary(){
+        this.obj.type = "binary";
         return this;
     }
 

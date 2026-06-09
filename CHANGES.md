@@ -1,5 +1,30 @@
 # MasterRecord Changelog
 
+## v1.3.0 — full builder type set + inline `env()` config
+
+**Added — builder convenience type methods.** Every column type the engines'
+DDL mappers already supported but the entity builder didn't expose now has a
+method: `date()`, `datetime()`, `timestamp()`, `float()`, `decimal()`, `bigint()`,
+`json()`, `uuid()`, `binary()`. Previously only `string/text/integer/time/boolean`
+had methods and everything else required the generic `.type('…')`. Each resolves to
+a valid SQL column type on SQLite, MySQL, and Postgres (verified end-to-end).
+
+**Fixed — `context.env()` inline configuration object.** `env()` is documented (its
+JSDoc `@example` and the README) to accept an inline config object —
+`this.env({ type: 'sqlite', connection: './db/' })` — but it always treated its
+argument as a folder path and threw `The "path" argument must be of type string` for
+objects. `env()` now branches: an object is used directly as the config; a string
+still resolves to `env.<NODE_ENV>.json` (keyed by context class name). No change to
+the file-path behavior.
+
+**Docs.** README + MIGRATIONS_GUIDE corrected: entity fields are builder **methods**
+(`id(db){ db.integer().primary().auto(); }`), not constructor object-literals (the
+schema builder reads prototype methods and ignores `this.x = {…}` properties); env
+JSON files are keyed by the context class name; the context file is named after the
+context class so the migration CLI (`enable-migrations AppContext`) can resolve it.
+
+Tests: `test/builder-type-methods.test.js`, `test/env-inline-config.test.js`.
+
 ## Tooling — cross-engine integration tests + CI (no package change)
 
 Closes the long-standing verification caveat ("executed on SQLite; MySQL/Postgres verified by code-reading"). Each engine's `bulkInsert` is structurally different (SQLite loops single inserts; MySQL builds one multi-row `VALUES` + `insertId`; Postgres multi-row `VALUES … RETURNING`), so "green on SQLite" does not prove "green on MySQL/Postgres".
