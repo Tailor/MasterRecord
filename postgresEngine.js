@@ -120,40 +120,53 @@ class postgresEngine {
     async bulkInsert(entities) {
         if (!entities || entities.length === 0) return [];
 
-        // Group by table name
-        const byTable = {};
-        for (const entity of entities) {
-            const tableName = entity.__entity.__name;
-            if (!byTable[tableName]) byTable[tableName] = [];
-            byTable[tableName].push(entity);
+        // Build each row's SQL object up front, keeping its ORIGINAL index so
+        // the returned array aligns with the input order — the contract
+        // context._processBatchInserts relies on when writing ids back.
+        const rows = entities.map((entity, index) => ({
+            index,
+            entity,
+            sql: this._buildSQLInsertObjectParameterized(entity, entity.__entity),
+        }));
+
+        // One multi-value INSERT can only serve rows that share the SAME
+        // column list. The builder skips unset optional columns and auto PKs,
+        // so a batch can be heterogeneous; reusing the first row's columns for
+        // every row produced malformed statements (or, when the counts
+        // happened to match, values landing in the wrong columns). Sub-group
+        // by table + exact column signature and emit one statement per group.
+        // No NULL-padding to a column union — that would override DB-level
+        // column defaults.
+        const groups = new Map();
+        for (const row of rows) {
+            const key = `${row.sql.tableName} ${row.sql.columns}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(row);
         }
 
-        const results = [];
-        for (const tableName in byTable) {
-            const tableEntities = byTable[tableName];
-            const primaryKey = tools.getPrimaryKeyObject(tableEntities[0].__entity);
+        const results = new Array(entities.length);
+        for (const group of groups.values()) {
+            const first = group[0].sql;
+            const primaryKey = tools.getPrimaryKeyObject(group[0].entity.__entity);
 
-            // Build multi-value INSERT
-            const first = this._buildSQLInsertObjectParameterized(tableEntities[0], tableEntities[0].__entity);
-            const allParams = [...first.params];
-            let paramIndex = first.params.length + 1;
-            const valueGroups = [`(${first.placeholders})`];
-
-            for (let i = 1; i < tableEntities.length; i++) {
-                const sqlObj = this._buildSQLInsertObjectParameterized(tableEntities[i], tableEntities[i].__entity);
-                // Renumber placeholders
-                const placeholders = sqlObj.params.map(() => `$${paramIndex++}`).join(', ');
+            // Renumber $n placeholders per statement (each group restarts at $1).
+            const valueGroups = [];
+            const allParams = [];
+            let paramIndex = 1;
+            for (const row of group) {
+                const placeholders = row.sql.params.map(() => `$${paramIndex++}`).join(', ');
                 valueGroups.push(`(${placeholders})`);
-                allParams.push(...sqlObj.params);
+                allParams.push(...row.sql.params);
             }
 
             const query = `INSERT INTO ${this._q(first.tableName)} (${first.columns}) VALUES ${valueGroups.join(', ')} RETURNING ${this._q(primaryKey)}`;
             const result = await this._runWithParams(query, allParams);
 
-            // PostgreSQL returns rows with the primary key values
-            // Convert to consistent format: { id: value }
-            for (const row of result.rows) {
-                results.push({ id: row[primaryKey] });
+            // RETURNING preserves the VALUES order within a single statement,
+            // so row k of the result belongs to group[k].
+            for (let i = 0; i < group.length; i++) {
+                const row = result.rows[i];
+                results[group[i].index] = { id: row ? row[primaryKey] : undefined };
             }
         }
 

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { globSync } from 'glob';
-import { resolveMigrationsDirectory } from './pathUtils.js';
+import { resolveMigrationsDirectory, toPosixPath } from './pathUtils.js';
 import Migration from './migrations.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,6 +28,21 @@ async function __loadUserModule(filePath) {
 }
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+
+// Snapshots written on Windows before 1.3.1 can contain backslash-relative
+// paths (e.g. "..\\..\\userContext.js"). On POSIX a backslash is a literal
+// filename character, so path.resolve() builds a bogus specifier and the
+// dynamic import of the context dies with ERR_INVALID_MODULE_SPECIFIER
+// before any migration runs. Normalize every path-bearing field on load so
+// already-committed snapshots keep working without regeneration.
+function __normalizeSnapshotPaths(snapshot){
+  if (snapshot && typeof snapshot === 'object') {
+    for (const key of ['contextLocation', 'migrationFolder', 'snapShotLocation']) {
+      if (typeof snapshot[key] === 'string') snapshot[key] = toPosixPath(snapshot[key]);
+    }
+  }
+  return snapshot;
+}
 
 // Extract numeric timestamp from migration filename (e.g., 1737999999999_name_migration.js)
 function __getMigrationTimestamp(file){
@@ -189,7 +204,7 @@ program.option('-V', 'output the version');
       }
       let contextSnapshot;
       try{
-        contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+        contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
@@ -295,7 +310,7 @@ program.option('-V', 'output the version');
         }
         let contextSnapshot = null;
         try{
-          contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+          contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
         }catch(_){
           console.log(`Error - Cannot read context snapshot at '${file}'.`);
           return;
@@ -402,7 +417,7 @@ program.option('-V', 'output the version');
 
          let contextSnapshot;
          try{
-           contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+           contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
          }catch(err){
            console.error(`\n❌ Error - Cannot load context snapshot`);
            console.error(`\nFile: ${file}`);
@@ -619,7 +634,7 @@ program.option('-V', 'output the version');
        }
        let contextSnapshot;
        try{
-         contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+         contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
        }catch(_){
          console.log(`Error - Cannot read context snapshot at '${file}'.`);
          return;
@@ -744,7 +759,7 @@ program.option('-V', 'output the version');
          }
       let contextSnapshot;
          try{
-           contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+           contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
          }catch(_){
            console.log(`Error - Cannot read context snapshot at '${file}'.`);
            return;
@@ -835,7 +850,7 @@ program.option('-V', 'output the version');
       }
       let contextSnapshot;
       try{
-        contextSnapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+        contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${file}'.`);
         return;
@@ -885,7 +900,7 @@ program.option('-V', 'output the version');
 
       let contextSnapshot;
       try{
-        contextSnapshot = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
+        contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(snapshotFile, 'utf8')));
       }catch(_){
         console.log(`Error - Cannot read context snapshot at '${snapshotFile}'.`);
         return;
@@ -1000,7 +1015,7 @@ program.option('-V', 'output the version');
         try{
           const snapFile = path.resolve(executedLocation, snapRel);
           let cs;
-          try{ cs = JSON.parse(fs.readFileSync(snapFile, 'utf8')); }catch(_){ continue; }
+          try{ cs = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(snapFile, 'utf8'))); }catch(_){ continue; }
           const snapDir = path.dirname(snapFile);
           const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
           const migBase = path.resolve(snapDir, cs.migrationFolder || '.');
@@ -1086,7 +1101,7 @@ program.option('-V', 'output the version');
       for(const snapRel of snapshotFiles){
         const snapFile = path.resolve(executedLocation, snapRel);
         let cs;
-        try{ cs = JSON.parse(fs.readFileSync(snapFile, 'utf8')); }catch(_){ continue; }
+        try{ cs = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(snapFile, 'utf8'))); }catch(_){ continue; }
         const snapDir = path.dirname(snapFile);
         const contextAbs = path.resolve(snapDir, cs.contextLocation || '');
         let migBase = path.resolve(snapDir, cs.migrationFolder || '.');

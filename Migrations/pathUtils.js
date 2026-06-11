@@ -70,4 +70,22 @@ function isInMigrationsDirectory(filePath) {
     return normalized.includes('/db/migrations') || normalized.includes('\\db\\migrations');
 }
 
-export { resolveMigrationsDirectory, isInMigrationsDirectory };
+/**
+ * Convert a path to POSIX separators (every backslash → forward slash).
+ *
+ * Snapshot files store RELATIVE paths that must work on every platform.
+ * `path.relative()` emits backslashes on Windows; on Linux a backslash is a
+ * literal filename character, so resolving such a value produces a bogus
+ * specifier and the dynamic `import()` of the context dies with
+ * ERR_INVALID_MODULE_SPECIFIER before any migration runs. Forward slashes
+ * are valid path separators on every platform Node supports (including
+ * Windows), so normalizing is always safe.
+ *
+ * @param {string} p - Path that may contain backslash separators
+ * @returns {string} The same path with forward slashes only
+ */
+function toPosixPath(p) {
+    return typeof p === 'string' ? p.replace(/\\/g, '/') : p;
+}
+
+export { resolveMigrationsDirectory, isInMigrationsDirectory, toPosixPath };

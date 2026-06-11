@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import * as diff from 'deep-object-diff';
 import { globSync } from 'glob';
 import MigrationTemplate from './migrationTemplate.js';
-import { resolveMigrationsDirectory } from './pathUtils.js';
+import { resolveMigrationsDirectory, toPosixPath } from './pathUtils.js';
 
 // https://blog.tekspace.io/code-first-multiple-db-context-migration/
 
@@ -449,8 +449,13 @@ class Migrations{
 
         const snapshotPath = path.join(migrationsDirectory, `${snap.contextFileName}_contextSnapShot.json`);
 
-        // Store relative paths (portable): values are relative to the snapshot file directory (migrationsDirectory)
-        const relContextLocation = path.relative(migrationsDirectory, snap.file);
+        // Store relative paths (portable): values are relative to the snapshot file
+        // directory (migrationsDirectory). path.relative() emits backslashes on
+        // Windows, which are literal characters on POSIX — normalize to forward
+        // slashes so a snapshot generated on Windows deploys cleanly on Linux.
+        // (migrationFolder is the literal '.' and snapShotLocation a basename, so
+        // neither can carry a separator today.)
+        const relContextLocation = toPosixPath(path.relative(migrationsDirectory, snap.file));
         const relMigrationFolder = '.'; // the snapshot sits inside migrationsDirectory
         const relSnapshotLocation = path.basename(snapshotPath);
 

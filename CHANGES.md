@@ -1,5 +1,43 @@
 # MasterRecord Changelog
 
+## v1.3.1 — portable snapshots + heterogeneous batch inserts
+
+**Fixed — Windows-generated migration snapshots broke Linux deploys (critical).**
+`createSnapShot` stored `contextLocation` straight from `path.relative()`, which
+emits backslashes on Windows. On Linux a backslash is a literal filename
+character, so the CLI's `path.resolve()` built a bogus specifier and the ESM
+import of the context died with `ERR_INVALID_MODULE_SPECIFIER` **before any
+migration ran** — a backend container crash-looped at boot even with a fully
+up-to-date database. Fix on both ends: `Migrations/pathUtils.js` gains
+`toPosixPath()` (every `\` → `/`; forward slashes are valid on all platforms
+Node supports, so Windows behavior is unchanged); the snapshot **writer**
+normalizes `contextLocation` before serializing, and every CLI **read** site
+normalizes on load — so already-committed backslash snapshots in user repos
+work without regeneration.
+
+**Fixed — `bulkInsert` built one INSERT from heterogeneous rows (MySQL +
+Postgres).** The multi-row INSERT took its column list from the FIRST entity
+but appended EACH entity's own placeholder group. Batched rows with different
+populated field sets (the builder skips unset optional columns and auto-PKs)
+produced a malformed statement — MySQL `ER_WRONG_VALUE_COUNT_ON_ROW` — and the
+context silently fell back to slow per-row inserts on every such batch; worse,
+rows whose column COUNT matched while the column SET differed would have landed
+values in the wrong columns. Now rows are sub-grouped by identical column
+signature and ONE multi-value INSERT is emitted per signature (no NULL-padding
+to a column union — an omitted column keeps its DB-level `DEFAULT`, pinned by a
+new integration test). Postgres `$n` placeholders renumber per statement, and
+results map back to entities in their **original input order** — the contract
+`context._processBatchInserts` relies on, which also fixes a latent id
+misalignment when one batch spanned multiple tables. SQLite is unaffected (it
+loops single inserts in a transaction).
+
+**Tests.** Cross-engine integration tests now quote table identifiers per
+engine (`user` is reserved in Postgres, and unquoted DDL case-folds to a
+different relation than the engine's quoted writes), and every test body runs
+in `try/finally` so `ctx.close()` always releases the pool — a failing test can
+no longer hang the `node --test` runner. New `[engine] heterogeneous batch
+stays on the bulk path` test pins the bulkInsert fix on both live engines.
+
 ## v1.3.0 — full builder type set + inline `env()` config
 
 **Added — builder convenience type methods.** Every column type the engines'
