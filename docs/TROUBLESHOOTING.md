@@ -321,3 +321,28 @@ await ctx.execute('UPDATE "User" SET name = ? WHERE id = ?', ['Alice', id]);
 ```
 
 Better still, prefer the ORM (`ctx.User.where(u => u.id == $$, id).single()`), which is portable by construction. On a non-SQLite engine, `ctx.db.prepare()` now throws a descriptive error pointing you to `ctx.query()`.
+
+## `ERR_INVALID_MODULE_SPECIFIER` on Linux after generating migrations on Windows
+
+A migration snapshot generated on Windows before **1.3.1** stored `contextLocation`
+with backslashes (e.g. `"..\\..\\AppContext.js"`). On Linux a backslash is a literal
+filename character, so the CLI's `path.resolve()` built a bogus module specifier and
+the ESM import of the context failed **before any migration ran** — a deploy could
+crash-loop at boot even with a fully up-to-date database.
+
+**Fix:** upgrade to `masterrecord@1.3.1`. The snapshot writer now stores POSIX
+separators, and every CLI read site normalizes on load — so already-committed
+backslash snapshots keep working without regeneration.
+
+## "Bulk insert failed, falling back to individual inserts" in the logs
+
+Before **1.3.1**, saving a batch whose rows populated *different* column sets (some
+rows leave optional fields unset, and auto-PKs are always skipped) emitted one
+multi-row INSERT built from the FIRST row's column list — malformed for the rest
+(MySQL `ER_WRONG_VALUE_COUNT_ON_ROW`) — and the context silently fell back to slow
+per-row inserts. Rows whose column COUNT matched but column SET differed could even
+land values in the wrong columns.
+
+**Fix:** upgrade to `masterrecord@1.3.1`. Heterogeneous batches are sub-grouped by
+column signature, one multi-value INSERT per signature, omitted columns keep their
+database `DEFAULT`, and ids map back to entities in their original input order.

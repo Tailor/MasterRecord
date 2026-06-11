@@ -49,7 +49,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "test": "node --test test/ Migrations/pathUtils.test.js",
+    "test": "node --test test/*.test.js test/integration/*.test.js Migrations/pathUtils.test.js",
     "lint": "eslint . --fix",
     "lint:check": "eslint ."
   },
