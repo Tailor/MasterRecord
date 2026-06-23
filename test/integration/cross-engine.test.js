@@ -29,6 +29,7 @@ import { mysqlTarget, postgresTarget } from './engineTargets.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { default: context } = await import('../../context.js');
 const { default: schemaCls } = await import('../../Migrations/schema.js');
+const { instantiateReadyContext } = await import('../../Migrations/contextInit.js');
 
 const ROLE_MAP = { operator: 2, administrator: 1 };
 
@@ -249,6 +250,50 @@ for (const eng of ENGINES) {
             assert.equal(row.body, 'hello', 'data must be preserved across the type change');
         } finally {
             await ctx.close();
+        }
+    });
+
+    test(`[${eng.name}] migration bootstrap AUTO-CREATES a missing database`, { skip }, async () => {
+        const autoDb = `mr_autocreate_${eng.name}`;
+        const autoTarget = { ...eng.target, database: autoDb };
+
+        // Admin connection (to the existing test DB) to drop/inspect the throwaway DB.
+        const admin = (await buildCtx(eng, [User], 'autocreate_admin')).ctx;
+        try {
+            await admin.query(`DROP DATABASE IF EXISTS ${autoDb}`);
+
+            // Point a context at the NON-EXISTENT database and bootstrap it the
+            // way the migration CLI does. Before 1.3.2 this threw "Unknown
+            // database" / "does not exist" and never created it.
+            const master = `xeng_${eng.name}_autocreate`;
+            const envDir = path.join(__dirname, 'fixtures', master, 'config', 'environments');
+            fs.mkdirSync(envDir, { recursive: true });
+            const ctxName = `XCtx_${eng.name}_autocreate`;
+            fs.writeFileSync(path.join(envDir, `env.${master}.json`), JSON.stringify({ [ctxName]: autoTarget }));
+            process.env.master = master;
+            const Cls = { [ctxName]: class extends context {
+                constructor() { super(); this.env(envDir); this.dbset(User); }
+            } }[ctxName];
+
+            const ctx = await instantiateReadyContext(Cls);
+            try {
+                assert.equal(ctx._ready, true, 'bootstrapped context must be ready');
+                // The database now exists and is usable.
+                await ctx.query(`CREATE TABLE ${qt(eng, 'User')} (id ${eng.pkDdl}, role INTEGER NOT NULL)`);
+                const rows = await ctx.query(`SELECT COUNT(*) AS c FROM ${qt(eng, 'User')}`);
+                assert.equal(Number(rows[0].c), 0, 'auto-created database must be queryable');
+            } finally {
+                await ctx.close();
+            }
+
+            // Confirm via the admin connection that the database really exists.
+            const exists = eng.name === 'mysql'
+                ? await admin.query(`SELECT SCHEMA_NAME AS n FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${autoDb}'`)
+                : await admin.query(`SELECT datname AS n FROM pg_database WHERE datname = '${autoDb}'`);
+            assert.equal(exists.length, 1, 'database must have been auto-created');
+        } finally {
+            try { await admin.query(`DROP DATABASE IF EXISTS ${autoDb}`); } catch { /* best effort cleanup */ }
+            await admin.close();
         }
     });
 }

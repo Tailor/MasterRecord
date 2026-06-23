@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { globSync } from 'glob';
 import { resolveMigrationsDirectory, toPosixPath } from './pathUtils.js';
 import Migration from './migrations.js';
+import { instantiateReadyContext } from './contextInit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -473,12 +474,12 @@ program.option('-V', 'output the version');
          console.log(`\n🔍 Instantiating Context (this will create the database if it doesn't exist)...`);
 
          try{
-           contextInstance = new ContextCtor();
-           // MySQL/Postgres initialize asynchronously — wait for the pool
-           // before we can run any migration queries against it.
-           if (contextInstance && contextInstance._initPromise) {
-             await contextInstance._initPromise;
-           }
+           // Route through the schema layer so a missing MySQL/Postgres
+           // database is AUTO-CREATED (and the connection retried) before any
+           // migration runs — honoring the message printed just above. Awaiting
+           // the raw _initPromise here used to just report "Unknown database"
+           // and exit without ever creating it.
+           contextInstance = await instantiateReadyContext(ContextCtor);
          }catch(err){
            console.error(`\n❌ Error - Failed to instantiate Context`);
            console.error(`\nContext file: ${contextAbs}`);
@@ -792,7 +793,9 @@ program.option('-V', 'output the version');
          }
          var contextInstance;
          try{
-           contextInstance = new ContextCtor();
+           // Auto-create a missing MySQL/Postgres database (and await async
+           // init) via the schema layer before applying migrations.
+           contextInstance = await instantiateReadyContext(ContextCtor);
          }catch(err){
            console.error(`\n❌ Error - Failed to construct Context from '${contextAbs}'`);
            console.error(`\nThis usually happens when:`);
@@ -1030,9 +1033,16 @@ program.option('-V', 'output the version');
           }
           let contextInstance;
           try{
+            // Generating a migration only needs entity metadata, not a live DB.
+            // Schema-only mode skips connection/init — matching `add-migration`
+            // (without it, add-migration-all needlessly required a reachable
+            // database and would hit the missing-DB init path on MySQL/Postgres).
+            process.env.MASTERRECORD_SCHEMA_ONLY = '1';
             contextInstance = new ContextCtor();
+            delete process.env.MASTERRECORD_SCHEMA_ONLY;
             contextInstances.push(contextInstance);
           }catch(err){
+            delete process.env.MASTERRECORD_SCHEMA_ONLY;
             console.error(`⚠️  Skipping ${path.basename(contextAbs)}: failed to construct Context`);
             console.error(`   Details: ${err.message}`);
             continue;
@@ -1147,7 +1157,9 @@ program.option('-V', 'output the version');
           }
           var contextInstance;
           try{
-            contextInstance = new ContextCtor();
+            // Auto-create a missing MySQL/Postgres database (and await async
+            // init) via the schema layer before applying migrations.
+            contextInstance = await instantiateReadyContext(ContextCtor);
             contextInstances.push(contextInstance);
           }catch(err){
             console.error(`⚠️  Skipping ${entry.ctxName}: failed to construct Context`);

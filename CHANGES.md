@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.3.2 — migration CLI auto-creates a missing MySQL/Postgres database
+
+**Bug (critical for first deploys):** `update-database` printed *"Instantiating Context (this will create the database if it doesn't exist)…"*, but it `await`ed the raw `context._initPromise` directly. When the target database didn't exist, that promise rejected with `Unknown database 'X'` (MySQL) / `database "X" does not exist` (Postgres), and the catch block merely reported failure and exited — it **never invoked the auto-create** (`_createDatabaseFromConfig` + retry) that lives in `schema._ensureReady()`. So a first-time deploy against an empty server failed with a confusing error despite the CLI claiming it would create the database. (Confirmed present through 1.3.1.)
+
+**Fix:**
+- New shared bootstrap `Migrations/contextInit.js` → `instantiateReadyContext(ContextCtor)` routes context construction through `schema._ensureReady()`, which auto-creates a missing MySQL/Postgres database and retries the connection. It marks the returned context `_ready` so later `_execute()`/`query()` calls don't re-await the now-settled (rejected) original init promise. SQLite is unaffected (the driver creates the file on open).
+- `update-database`, `update-database-restart`, and `update-database-all` now use it. `update-database-restart`/`-all` additionally never awaited async MySQL/Postgres init at all — also fixed.
+
+**Deep-dive findings (fixed in the same release):**
+- `context.query()` blindly awaited `_initPromise`, so after the auto-create retry swapped in a live engine it could still re-throw the stale rejection. It now goes through `_ensureReady()` (short-circuits on `_ready`).
+- `add-migration-all` constructed contexts **without** `MASTERRECORD_SCHEMA_ONLY`, unlike the single `add-migration` — so generating migrations for all contexts needlessly required a reachable database (and hit the missing-DB init path on MySQL/Postgres). Now schema-only, matching `add-migration`.
+- Reviewed the remaining construction sites: `ensure-database` (dedicated create — correct), per-migration `new Migration(ContextCtor)` (each runs `schema._ensureReady()` internally — correct), and the rollback commands `update-database-down`/`-target` (auto-create is intentionally **not** applied — you can't roll back a database that was never created; `-down` already awaits init, `-target` never queries its bootstrap context).
+
+New tests: `test/cli-context-init.test.js` (SQLite: bootstrap returns a ready, queryable context) and a gated `[engine] migration bootstrap AUTO-CREATES a missing database` integration test (drops a throwaway DB, bootstraps, asserts it was created and is queryable). Full suite green (0 fail); 0 lint errors. The live auto-create assertion runs in CI against the MySQL/Postgres service containers.
+
 ## v1.3.1 — portable snapshots + heterogeneous batch inserts
 
 **Fixed — Windows-generated migration snapshots broke Linux deploys (critical).**

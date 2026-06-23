@@ -2118,7 +2118,12 @@ class context {
      * await ctx.execute('UPDATE Step SET run_id = ? WHERE id = ?', ['run_x', 1]); // sqlite/mysql
      */
     async query(sql, params = []) {
-        if (this._initPromise) { await this._initPromise; }   // MySQL/Postgres async init
+        // Honor the readiness flag rather than blindly awaiting _initPromise:
+        // after the migration auto-create path swaps in a live engine, the
+        // original _initPromise may be settled-rejected, and re-awaiting it
+        // would throw even though the connection is healthy. _ensureReady()
+        // short-circuits on _ready and validates the engine.
+        await this._ensureReady();
         if (!this._SQLEngine) {
             throw new DatabaseConnectionError(
                 'Cannot run query: database engine not initialized. Ensure you have awaited env() before querying.',
