@@ -611,6 +611,8 @@ class postgresEngine {
 
     buildSkip(query) {
         if (query.skip) {
+            // Unlike SQLite/MySQL, Postgres accepts a bare OFFSET with no LIMIT,
+            // so a .skip() without .take() is valid as-is — no sentinel needed.
             return `OFFSET ${query.skip}`;
         }
         return "";

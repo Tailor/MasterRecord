@@ -374,7 +374,12 @@ class SQLLiteEngine {
 
     buildSkip(query){
         if(query.skip){
-            return `OFFSET ${query.skip}`
+            // SQLite requires a LIMIT before OFFSET. When the caller paginated
+            // with .skip() but no .take(), emit `LIMIT -1` (SQLite's documented
+            // "no upper bound") so the OFFSET is valid SQL instead of a syntax
+            // error. Now that .toList() no longer injects a default LIMIT 1000,
+            // this is the path a bare .skip() takes.
+            return query.take ? `OFFSET ${query.skip}` : `LIMIT -1 OFFSET ${query.skip}`;
         }
         else{
             return "";

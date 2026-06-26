@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.3.3 — `.toList()` no longer silently caps at 1000 rows
+
+**Bug (high — silent data loss):** `.toList()` injected a default `LIMIT 1000` whenever the caller hadn't chained `.take()`. Any query matching more than 1000 rows silently returned only the first 1000 — no error, no warning, undocumented. Aggregates derived from the result (counts, sums, "does X exist?") were silently wrong. The cap was also gated on `entityMap.length === 0`, so an `.include()` query was **not** capped while the same query without an include **was** — identical-looking calls behaved differently. (EF/LINQ's `ToList()`, which this API mirrors, returns everything.)
+
+**Fix:**
+- Removed the implicit cap in `toList()` — it now returns **all** matching rows. `.take(n)` still limits explicitly, and `.include()` / non-include queries now behave identically.
+- Removing the cap exposed a latent bug it had been masking: SQLite and MySQL reject a bare `OFFSET` with no `LIMIT`, so `.skip()` **without** `.take()` would have produced invalid SQL. `buildSkip()` now emits valid pagination on every engine:
+  - **SQLite** — `LIMIT -1 OFFSET n` (`-1` = no upper bound)
+  - **MySQL** — `LIMIT 18446744073709551615 OFFSET n` (max `BIGINT UNSIGNED`, the documented "all rows from offset" sentinel)
+  - **Postgres** — `OFFSET n` (a bare `OFFSET` is already valid; left as-is)
+
+New test: `test/tolist-no-implicit-limit.test.js` — SQLite executes 1500-row `toList()` (returns all), `where().toList()` (> 1000), `.take()` still limits, bare `.skip()` pages to the end, `.skip().take()` windows; plus `buildSkip()` SQL-shape assertions for all three engines. A gated cross-engine integration test seeds 1500 rows and asserts `toList()`/bare-`.skip()` against live MySQL/Postgres. Full suite green (0 fail); 0 lint errors.
+
 ## v1.3.2 — migration CLI auto-creates a missing MySQL/Postgres database
 
 **Bug (critical for first deploys):** `update-database` printed *"Instantiating Context (this will create the database if it doesn't exist)…"*, but it `await`ed the raw `context._initPromise` directly. When the target database didn't exist, that promise rejected with `Unknown database 'X'` (MySQL) / `database "X" does not exist` (Postgres), and the catch block merely reported failure and exited — it **never invoked the auto-create** (`_createDatabaseFromConfig` + retry) that lives in `schema._ensureReady()`. So a first-time deploy against an empty server failed with a confusing error despite the CLI claiming it would create the database. (Confirmed present through 1.3.1.)

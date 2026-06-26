@@ -50,6 +50,11 @@ class Profile {
     name(db) { db.string(); }
     bio(db) { db.string(); }
 }
+// Used to prove toList() has no implicit row cap (> 1000 rows).
+class Counter {
+    id(db) { db.integer().primary().auto(); }
+    n(db) { db.integer(); }
+}
 
 const ENGINES = [
     { name: 'mysql', envVar: 'MR_TEST_MYSQL_URL', target: mysqlTarget(), pkDdl: 'INT AUTO_INCREMENT PRIMARY KEY' },
@@ -248,6 +253,31 @@ for (const eng of ENGINES) {
 
             const [row] = await ctx.query(`SELECT body FROM ${T}`);
             assert.equal(row.body, 'hello', 'data must be preserved across the type change');
+        } finally {
+            await ctx.close();
+        }
+    });
+
+    test(`[${eng.name}] toList() returns all rows (no implicit 1000 cap) and bare .skip() is valid`, { skip }, async () => {
+        const { ctx } = await buildCtx(eng, [Counter], 'tolistcap');
+        const T = qt(eng, 'Counter');
+        const TOTAL = 1500; // > the old implicit cap
+        try {
+            await ctx.query(`DROP TABLE IF EXISTS ${T}`);
+            await ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, n INTEGER)`);
+
+            // One multi-row INSERT to seed > 1000 rows.
+            const values = Array.from({ length: TOTAL }, (_, i) => `(${i + 1})`).join(',');
+            await ctx.query(`INSERT INTO ${T} (n) VALUES ${values}`);
+
+            const all = await ctx.Counter.toList();
+            assert.equal(all.length, TOTAL, `toList() must return all ${TOTAL} rows, not a capped 1000`);
+
+            // Bare .skip() with no .take() must emit valid SQL on every engine
+            // (SQLite/MySQL reject a LIMIT-less OFFSET — the removed implicit
+            // cap used to mask that).
+            const tail = await ctx.Counter.skip(TOTAL - 10).toList();
+            assert.equal(tail.length, 10, 'bare .skip() must page to the end without error');
         } finally {
             await ctx.close();
         }

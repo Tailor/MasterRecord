@@ -534,9 +534,6 @@ class queryMethods{
     async toList(){
         if(this.__queryObject.script.entityMap.length === 0){
             this.__queryObject.skipClause( this.__entity.__name);
-            if(!this.__queryObject.script.take || this.__queryObject.script.take === 0){
-                this.__queryObject.script.take = 1000;
-            }
         }
 
         // Generate cache key

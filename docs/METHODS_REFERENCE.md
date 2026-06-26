@@ -54,7 +54,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `.take(n)` | Limit results | `.take(10)` |
 | `.skip(n)` | Offset results | `.skip(20)` |
 | `.search({ in, query })` | Full-text search (see [FULL_TEXT_SEARCH.md](FULL_TEXT_SEARCH.md)) | `context.MemoryDoc.search({ in: ['title','body'], query: 'auth login' })` |
-| `.toList()` | Execute and return array | `.where(...).toList()` |
+| `.toList()` | Execute and return **all** matching rows as an array (no implicit limit — use `.take(n)`/`.skip(n)` to page) | `.where(...).toList()` |
 | `.single()` | Execute and return one | `.where(...).single()` |
 | `.first()` | Execute and return first | `.where(...).first()` |
 | `.include(lambda)` | Eager load relationships | `.include(u => u.Posts)` |
