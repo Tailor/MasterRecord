@@ -636,6 +636,10 @@ const users = await db.User
 
 ### Pagination
 
+`.toList()` returns **all** matching rows — there is no implicit row limit (it
+mirrors EF/LINQ `ToList()`). Use `.take(n)` to cap results and `.skip(n)` to
+offset; a bare `.skip(n)` with no `.take()` pages to the end of the result set.
+
 ```javascript
 // Skip 20, take 10 (requires await)
 const users = await db.User
@@ -651,6 +655,12 @@ const users = await db.User
     .skip(page * pageSize)
     .take(pageSize)
     .toList();
+
+// Everything after an offset (no upper bound)
+const rest = await db.User.orderBy(u => u.id).skip(100).toList();
+
+// Every row (no limit)
+const everyone = await db.User.toList();
 ```
 
 ### Counting
