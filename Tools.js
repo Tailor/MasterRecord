@@ -212,6 +212,45 @@ class Tools{
         num = num === 'true' ? true : (num === 'false' ? false : num);
         return num ? 1 : 0;
    }
+
+    // ---------------------------------------------------------------------
+    // Security helpers shared by every SQL engine (SQLite / MySQL / Postgres)
+    // ---------------------------------------------------------------------
+
+    // The complete set of comparison operators the query builders are allowed
+    // to emit into a WHERE/AND clause. `func` is derived from parsing the
+    // lambda source (queryScript's OPERATORS_REGEX already restricts it), but
+    // we re-assert the whitelist at the SQL boundary so a hand-built query
+    // string or a future parser change can never emit an arbitrary operator
+    // (which would allow SQL to be smuggled in after the column name).
+    static SAFE_SQL_OPERATORS = new Set([
+        '=', '!=', '<>', '<', '>', '<=', '>=',
+        'is', 'is not', 'in', 'like', 'not like'
+    ]);
+
+    // Validate an operator against the whitelist. Returns the operator
+    // unchanged (case/whitespace-normalized) or throws. Comparison is
+    // case-insensitive so engines that upper-case (`IS`, `IN`) still pass.
+    static assertSafeOperator(func){
+        if(typeof func !== 'string'){
+            throw new Error(`Unsupported SQL operator: ${JSON.stringify(func)}`);
+        }
+        const normalized = func.trim().replace(/\s+/g, ' ').toLowerCase();
+        if(!Tools.SAFE_SQL_OPERATORS.has(normalized)){
+            throw new Error(`Unsupported SQL operator: '${func}'. Allowed: ${[...Tools.SAFE_SQL_OPERATORS].join(', ')}`);
+        }
+        return func;
+    }
+
+    // Escape a value for safe interpolation inside a single-quoted SQL string
+    // literal. Doubling the single quote is the ANSI-standard escape and is
+    // correct on SQLite, MySQL, and Postgres (with standard_conforming_strings,
+    // the default). Runtime user values should still go through `$$`/`$`
+    // parameter binding; this protects the literal path (inline lambda
+    // constants, string-built queries) as defense-in-depth.
+    static escapeSqlLiteral(value){
+        return String(value).replace(/'/g, "''");
+    }
 }
 
 export default Tools;

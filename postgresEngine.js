@@ -12,6 +12,9 @@ class postgresEngine {
         this.db = null;
         this.dbType = 'postgres';
         this.unsupportedWords = ["order"];
+        // Holds a dedicated pooled client while a transaction is open so every
+        // statement in saveChanges() runs on the same client (BEGIN..COMMIT).
+        this._txnClient = null;
     }
 
     /**
@@ -521,6 +524,7 @@ class postgresEngine {
                         }
 
                         if (arg === "null") {
+                            tools.assertSafeOperator(func);
                             expressions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                         } else {
                             // Check if arg is a parameterized placeholder
@@ -528,7 +532,9 @@ class postgresEngine {
                             if (isPlaceholder || func === "IN") {
                                 expressions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                             } else {
-                                expressions.push(`${entityRef}.${$that._q(field)} ${func} '${arg}'`);
+                                tools.assertSafeOperator(func);
+                                // Escape the single quote so a literal can't break out.
+                                expressions.push(`${entityRef}.${$that._q(field)} ${func} '${tools.escapeSqlLiteral(arg)}'`);
                             }
                         }
                     }
@@ -580,16 +586,19 @@ class postgresEngine {
                 }
 
                 if (arg === "null") {
+                    tools.assertSafeOperator(func);
                     conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                 } else if (func === "IN") {
                     conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                 } else {
+                    tools.assertSafeOperator(func);
                     // Check if arg is a parameterized placeholder ($1, $2, etc.)
                     const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
                     if (isPlaceholder) {
                         conditions.push(`${entityRef}.${$that._q(field)} ${func} ${arg}`);
                     } else {
-                        conditions.push(`${entityRef}.${$that._q(field)} ${func} '${arg}'`);
+                        // Escape the single quote so a literal can't break out.
+                        conditions.push(`${entityRef}.${$that._q(field)} ${func} '${tools.escapeSqlLiteral(arg)}'`);
                     }
                 }
             }
@@ -604,7 +613,9 @@ class postgresEngine {
 
     buildLimit(query) {
         if (query.take) {
-            return `LIMIT ${query.take}`;
+            // Defense-in-depth: LIMIT cannot be parameterized, so coerce to an
+            // integer at the SQL boundary (matches MySQL; SQLite does the same).
+            return `LIMIT ${this._safeRowCount(query.take, 'take')}`;
         }
         return "";
     }
@@ -613,9 +624,20 @@ class postgresEngine {
         if (query.skip) {
             // Unlike SQLite/MySQL, Postgres accepts a bare OFFSET with no LIMIT,
             // so a .skip() without .take() is valid as-is — no sentinel needed.
-            return `OFFSET ${query.skip}`;
+            return `OFFSET ${this._safeRowCount(query.skip, 'skip')}`;
         }
         return "";
+    }
+
+    // Coerce a LIMIT/OFFSET value to a non-negative integer or throw. These
+    // clauses are not parameterizable, so this is the last defense against a
+    // non-numeric (injection) pagination value reaching the SQL string.
+    _safeRowCount(value, label){
+        const n = typeof value === 'number' ? value : Number(value);
+        if(!Number.isInteger(n) || n < 0 || !Number.isSafeInteger(n)){
+            throw new Error(`Invalid ${label} value for LIMIT/OFFSET: ${JSON.stringify(value)} (expected a non-negative integer)`);
+        }
+        return n;
     }
 
     /**
@@ -1037,6 +1059,13 @@ class postgresEngine {
                 if (params && params.length) console.log(isMigration ? "[masterrecord:migration] params" : "[Params]", params);
             }
 
+            // Inside a transaction, reuse the transaction's client so every
+            // statement is part of the same BEGIN..COMMIT unit (and don't
+            // release it — endTransaction/errorTransaction owns its lifecycle).
+            if (this._txnClient) {
+                return await this._txnClient.query(query, params);
+            }
+
             const client = await this.pool.connect();
             try {
                 const result = await client.query(query, params);
@@ -1048,6 +1077,58 @@ class postgresEngine {
             console.error('PostgreSQL query error:', error);
             throw error;
         }
+    }
+
+    // --- Transactions -----------------------------------------------------
+    // saveChanges() brackets all inserts/updates/deletes so a partial failure
+    // rolls the whole batch back. Without this, Postgres writes were
+    // autocommitted per statement and a mid-batch error left partial data.
+
+    async startTransaction(){
+        if(this._txnClient){ return; }
+        this._txnClient = await this.pool.connect();
+        await this._txnClient.query('BEGIN');
+    }
+
+    async endTransaction(){
+        if(!this._txnClient){ return; }
+        const client = this._txnClient;
+        this._txnClient = null;
+        try {
+            await client.query('COMMIT');
+        } finally {
+            client.release();
+        }
+    }
+
+    async errorTransaction(){
+        if(!this._txnClient){ return; }
+        const client = this._txnClient;
+        this._txnClient = null;
+        try {
+            await client.query('ROLLBACK');
+        } finally {
+            client.release();
+        }
+    }
+
+    inTransaction(){
+        return !!this._txnClient;
+    }
+
+    // Nested rollback points so a failed bulk write can be undone without
+    // aborting (Postgres marks a transaction "aborted" after any statement
+    // error) the enclosing transaction. `name` is an internal identifier.
+    async savepoint(name){
+        return this._txnClient.query(`SAVEPOINT ${name}`);
+    }
+
+    async releaseSavepoint(name){
+        return this._txnClient.query(`RELEASE SAVEPOINT ${name}`);
+    }
+
+    async rollbackToSavepoint(name){
+        return this._txnClient.query(`ROLLBACK TO SAVEPOINT ${name}`);
     }
 
     /**

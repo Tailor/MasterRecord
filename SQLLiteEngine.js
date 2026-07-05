@@ -365,7 +365,10 @@ class SQLLiteEngine {
 
     buildTake(query){
         if(query.take){
-            return `LIMIT ${query.take}`
+            // Defense-in-depth: coerce to an integer at the SQL boundary. The
+            // `.take()` setter already validates, but LIMIT cannot be
+            // parameterized, so we never interpolate anything but a number.
+            return `LIMIT ${this._safeRowCount(query.take, 'take')}`
         }
         else{
             return "";
@@ -379,11 +382,23 @@ class SQLLiteEngine {
             // "no upper bound") so the OFFSET is valid SQL instead of a syntax
             // error. Now that .toList() no longer injects a default LIMIT 1000,
             // this is the path a bare .skip() takes.
-            return query.take ? `OFFSET ${query.skip}` : `LIMIT -1 OFFSET ${query.skip}`;
+            const skip = this._safeRowCount(query.skip, 'skip');
+            return query.take ? `OFFSET ${skip}` : `LIMIT -1 OFFSET ${skip}`;
         }
         else{
             return "";
         }
+    }
+
+    // Coerce a LIMIT/OFFSET value to a non-negative integer or throw. OFFSET
+    // and LIMIT are not parameterizable, so this is the last line of defense
+    // against a non-numeric (injection) value reaching the SQL string.
+    _safeRowCount(value, label){
+        const n = typeof value === 'number' ? value : Number(value);
+        if(!Number.isInteger(n) || n < 0 || !Number.isSafeInteger(n)){
+            throw new Error(`Invalid ${label} value for LIMIT/OFFSET: ${JSON.stringify(value)} (expected a non-negative integer)`);
+        }
+        return n;
     }
 
     buildAnd(query, mainQuery){
@@ -423,14 +438,16 @@ class SQLLiteEngine {
                             }
                         }
                         if(item.expressions[exp].arg === "null"){
+                            tools.assertSafeOperator(item.expressions[exp].func);
                             expressions.push(`${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`);
                         }else{
                             // Check if arg is a parameterized placeholder
                             const isPlaceholder = (item.expressions[exp].arg === '?' || /^\$\d+$/.test(item.expressions[exp].arg));
+                            tools.assertSafeOperator(item.expressions[exp].func);
                             if(isPlaceholder){
                                 expressions.push(`${entity}.${field}  ${item.expressions[exp].func} ${item.expressions[exp].arg}`);
                             }else{
-                                expressions.push(`${entity}.${field}  ${item.expressions[exp].func} '${item.expressions[exp].arg}'`);
+                                expressions.push(`${entity}.${field}  ${item.expressions[exp].func} '${tools.escapeSqlLiteral(item.expressions[exp].arg)}'`);
                             }
                         }
                     }
@@ -490,18 +507,22 @@ class SQLLiteEngine {
             if(arg === "null"){
                 if(func === "=") func = "is";
                 if(func === "!=") func = "is not";
+                tools.assertSafeOperator(func);
                 return `${ent}.${field}  ${func} ${arg}`;
             }
             if(func === "IN"){
                 return `${ent}.${field}  ${func} ${arg}`;
             }
+            tools.assertSafeOperator(func);
             // Check if arg is a parameterized placeholder (? for MySQL/SQLite, $1/$2/etc for Postgres)
             const isPlaceholder = (arg === '?' || /^\$\d+$/.test(arg));
             if(isPlaceholder){
                 // Don't quote placeholders - they must remain as bare ? or $1
                 return `${ent}.${field}  ${func} ${arg}`;
             }
-            return `${ent}.${field}  ${func} '${arg}'`;
+            // Literal (inline lambda constant). Escape the single quote so a
+            // value containing `'` can't break out of the string literal.
+            return `${ent}.${field}  ${func} '${tools.escapeSqlLiteral(arg)}'`;
         }
 
         const pieces = [];
@@ -736,6 +757,30 @@ class SQLLiteEngine {
         return Promise.resolve(
             this.db.inTransaction ? this.db.prepare('ROLLBACK').run() : null
         );
+    }
+
+    // True while a transaction is open. Used by saveChanges' batch fallbacks
+    // to decide whether to protect a bulk attempt with a SAVEPOINT.
+    inTransaction(){
+        return !!(this.db && this.db.inTransaction);
+    }
+
+    // Nested-rollback primitives so a failed bulk write can be undone without
+    // aborting the whole enclosing transaction. `name` is an internally
+    // generated identifier (`mr_sp_<n>`), never user input.
+    async savepoint(name){
+        return Promise.resolve(this.db.prepare(`SAVEPOINT ${name}`).run());
+    }
+
+    async releaseSavepoint(name){
+        return Promise.resolve(this.db.prepare(`RELEASE SAVEPOINT ${name}`).run());
+    }
+
+    async rollbackToSavepoint(name){
+        // ROLLBACK TO leaves the savepoint defined; RELEASE removes it so the
+        // savepoint stack doesn't grow across repeated fallbacks.
+        this.db.prepare(`ROLLBACK TO SAVEPOINT ${name}`).run();
+        return Promise.resolve(this.db.prepare(`RELEASE SAVEPOINT ${name}`).run());
     }
 
     _buildSQLEqualTo(model){

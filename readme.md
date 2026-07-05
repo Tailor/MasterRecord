@@ -3336,6 +3336,24 @@ All operations use parameterized queries:
 - IN clauses
 - LIKE patterns
 
+### Pagination is validated
+
+`LIMIT` / `OFFSET` can't be parameterized, so `.take()` / `.skip()` validate their input — a non-negative integer (or a clean numeric string) is accepted; anything else (e.g. `'10; DROP TABLE users'`) throws before it can reach the SQL string. Pass request values straight through safely:
+
+```javascript
+await db.User.take(req.query.limit).skip(req.query.offset).toList();
+```
+
+### Atomic writes
+
+`saveChanges()` wraps all tracked inserts/updates/deletes in a single transaction on **every** engine (SQLite, MySQL, Postgres). A mid-batch failure rolls the whole batch back — you never get partial data.
+
+### Transport encryption (production)
+
+MySQL and Postgres connect in **plaintext unless you provide an `ssl` option** in your environment config. Enable TLS for any non-local database (MasterRecord never disables certificate verification for you). See the full guide:
+
+👉 **[docs/SECURITY.md](./docs/SECURITY.md)** — parameterization, the safe raw-SQL path (`ctx.query(sql, params)`) vs. the verbatim `.raw()` hatch, TLS setup, credentials, and schema-identifier caveats.
+
 ### Input Validation
 
 While SQL injection is prevented, always validate business logic:

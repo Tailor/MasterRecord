@@ -1,5 +1,28 @@
 # MasterRecord Changelog
 
+## v1.4.0 — security hardening + atomic writes (production/enterprise pass)
+
+A focused security & enterprise-readiness pass across all three engines (SQLite / MySQL / Postgres). The parameterized query path (`$$` / `$` → bound parameters) was already safe; this release closes the surfaces around it and makes multi-row writes atomic.
+
+**Security — LIMIT/OFFSET injection (high, reachable).** `.take()` / `.skip()` values are interpolated into `LIMIT` / `OFFSET`, which cannot be parameterized on any engine. Pagination is the single most common place an application forwards raw user input (`?page=`, `?limit=`), so a non-numeric value was a direct injection vector — and SQLite/Postgres interpolated it verbatim (MySQL coerced with `Number()`, degrading to a `LIMIT NaN` error). Now:
+- `.take()` / `.skip()` **validate at the setter** — a value must be a non-negative safe integer (a clean numeric string like `'10'` is coerced; anything else throws a clear error).
+- Every engine additionally re-coerces at the SQL boundary (`_safeRowCount`) as defense-in-depth, so a hand-mutated `script.take`/`.skip` can never reach the SQL string non-numeric.
+
+**Security — operator whitelist (defense-in-depth).** The SQL operator emitted into a `WHERE`/`AND` clause is now re-asserted against a fixed allowlist (`Tools.assertSafeOperator`) at the SQL boundary in all three engines. The lambda parser already restricts operators, but this guarantees a hand-built or future-parser query object can never smuggle SQL through the operator slot.
+
+**Security — literal escaping (correctness + defense-in-depth).** Inline lambda literals (the non-parameterized `'${arg}'` branch) now double the single quote (ANSI `''` escape, correct on all three engines) via `Tools.escapeSqlLiteral`. This fixes a real correctness bug (values like `O'Brien` in an inline literal produced invalid SQL) and hardens string-built queries. Postgres previously did **no** escaping here; MySQL's `buildAnd` didn't either. Runtime user values should still use `$$` / `$` parameter binding — this only backstops the literal path.
+
+**Security — identifier escaping.** MySQL identifier quoting now escapes embedded backticks (`` ` `` → ``` `` ```); Postgres already escaped `"`. Field names from the lambda parser are already word-char-restricted, so this is defense-in-depth.
+
+**Enterprise — atomic `saveChanges()` on MySQL & Postgres.** Previously only SQLite wrapped a multi-entity `saveChanges()` in a transaction; MySQL and Postgres autocommitted one statement at a time, so a mid-batch failure left **partial data**. MySQL and Postgres engines gained `startTransaction` / `endTransaction` / `errorTransaction` (a dedicated pooled connection/client held for the batch, routed through `_runWithParams`), and `saveChanges()` now brackets all inserts/updates/deletes in a single transaction on every engine — a failure rolls the whole batch back.
+- The batch-insert/update/delete **fallbacks** (which retry row-by-row when a bulk statement fails) are now **savepoint-protected** (`savepoint` / `releaseSavepoint` / `rollbackToSavepoint` on every engine). Without this, Postgres marks a transaction "aborted" after the first error and refuses every subsequent statement — so the old bare try/catch fallback would have turned one failed bulk into a fully failed `saveChanges()`. The fallback now rolls back to a clean savepoint first; if it too fails, it propagates to a full rollback.
+
+**Production guidance (docs).** New [`docs/SECURITY.md`](docs/SECURITY.md): how parameterization works, the safe raw-SQL path (`ctx.query(sql, params)`) vs. the verbatim `.raw()` escape hatch, enabling TLS for MySQL/Postgres (transport is plaintext unless you pass `ssl` — no insecure `rejectUnauthorized:false` override exists anywhere), and the identifier-injection caveat for schema/migration definitions built from untrusted input.
+
+New tests: `test/security-hardening.test.js` (11 tests — take/skip validation at the setter and all three engines, operator whitelist accept/reject incl. per-engine `buildWhere` rejection of a tampered operator, literal escaping unit + per-engine `buildWhere` shape + SQLite end-to-end apostrophe round-trip and neutralized-injection, atomic-rollback on a failed batch, and the transaction/savepoint contract on every engine). Two gated cross-engine integration tests assert atomic rollback and take/skip rejection against live MySQL/Postgres. Full suite green (0 fail, 248 pass, 18 gated-integration skipped offline); 0 lint errors.
+
+**Verification note (unchanged standing caveat):** executed on SQLite here (including the atomic-rollback and escaping end-to-end tests); MySQL/Postgres transaction wrapping and SQL shapes are covered by code review, SQL-string assertions, and the gated CI integration suite (no live MySQL/Postgres server in this environment).
+
 ## v1.3.3 — `.toList()` no longer silently caps at 1000 rows
 
 **Bug (high — silent data loss):** `.toList()` injected a default `LIMIT 1000` whenever the caller hadn't chained `.take()`. Any query matching more than 1000 rows silently returned only the first 1000 — no error, no warning, undocumented. Aggregates derived from the result (counts, sums, "does X exist?") were silently wrong. The cap was also gated on `entityMap.length === 0`, so an `.include()` query was **not** capped while the same query without an include **was** — identical-looking calls behaved differently. (EF/LINQ's `ToList()`, which this API mirrors, returns everything.)

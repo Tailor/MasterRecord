@@ -55,6 +55,12 @@ class Counter {
     id(db) { db.integer().primary().auto(); }
     n(db) { db.integer(); }
 }
+// Used to prove saveChanges() is atomic: a UNIQUE(email) collision mid-batch
+// must roll the whole batch back (1.4.0).
+class Acct {
+    id(db) { db.integer().primary().auto(); }
+    email(db) { db.string(); }
+}
 
 const ENGINES = [
     { name: 'mysql', envVar: 'MR_TEST_MYSQL_URL', target: mysqlTarget(), pkDdl: 'INT AUTO_INCREMENT PRIMARY KEY' },
@@ -278,6 +284,46 @@ for (const eng of ENGINES) {
             // cap used to mask that).
             const tail = await ctx.Counter.skip(TOTAL - 10).toList();
             assert.equal(tail.length, 10, 'bare .skip() must page to the end without error');
+        } finally {
+            await ctx.close();
+        }
+    });
+
+    test(`[${eng.name}] saveChanges() is atomic — a failed batch rolls back entirely`, { skip }, async () => {
+        const { ctx } = await buildCtx(eng, [Acct], 'atomic');
+        const T = qt(eng, 'Acct');
+        try {
+            await ctx.query(`DROP TABLE IF EXISTS ${T}`);
+            await ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, email VARCHAR(100) UNIQUE)`);
+
+            const mk = (email) => { const e = ctx.Acct.new(); e.email = email; ctx.Acct.add(e); };
+            mk('dup@x.com');
+            mk('ok@x.com');
+            mk('dup@x.com'); // violates UNIQUE(email) → whole batch must roll back
+
+            await assert.rejects(() => ctx.saveChanges(), 'duplicate must reject saveChanges');
+
+            const rows = await ctx.query(`SELECT COUNT(*) AS c FROM ${T}`);
+            assert.equal(Number(rows[0].c), 0, 'a partial batch must not survive a failed saveChanges (atomic rollback)');
+        } finally {
+            await ctx.close();
+        }
+    });
+
+    test(`[${eng.name}] take()/skip() reject non-integer (LIMIT/OFFSET injection)`, { skip }, async () => {
+        const { ctx } = await buildCtx(eng, [Counter], 'takeinj');
+        const T = qt(eng, 'Counter');
+        try {
+            await ctx.query(`DROP TABLE IF EXISTS ${T}`);
+            await ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, n INTEGER)`);
+            await ctx.query(`INSERT INTO ${T} (n) VALUES (1)`);
+
+            assert.throws(() => ctx.Counter.take('1; DROP TABLE ' + 'Counter'), /non-negative integer/);
+            assert.throws(() => ctx.Counter.skip('1 UNION SELECT'), /non-negative integer/);
+
+            // A clean numeric string still works (coerced) and the table is intact.
+            const rows = await ctx.Counter.take('1').toList();
+            assert.equal(rows.length, 1, 'valid pagination still works and table was not dropped');
         } finally {
             await ctx.close();
         }

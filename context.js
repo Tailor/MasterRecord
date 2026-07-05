@@ -1716,6 +1716,50 @@ class context {
     }
 
     /**
+     * Run a bulk write, falling back to a per-row path if the bulk attempt
+     * fails. When saveChanges() has a transaction open, the attempt is
+     * bracketed by a SAVEPOINT so a failure can be rolled back to a clean
+     * point before the fallback runs. Without this, Postgres marks the whole
+     * transaction "aborted" after the first error and refuses every subsequent
+     * statement — so the old bare try/catch fallback would have turned one
+     * failed bulk into a fully failed saveChanges. Outside a transaction this
+     * degrades to the previous plain try/catch.
+     *
+     * If the fallback itself throws, it propagates to saveChanges()'s catch,
+     * which rolls back the entire transaction (true atomicity).
+     *
+     * @private
+     */
+    async _bulkWithFallback(label, attemptFn, fallbackFn){
+        const eng = this._SQLEngine;
+        const useSavepoint = typeof eng.inTransaction === 'function'
+            && eng.inTransaction()
+            && typeof eng.savepoint === 'function';
+
+        if(!useSavepoint){
+            try {
+                return await attemptFn();
+            } catch (error) {
+                console.error(`[Context] ${label} failed, falling back to individual operations:`, error.message);
+                return await fallbackFn();
+            }
+        }
+
+        this.__savepointSeq = (this.__savepointSeq || 0) + 1;
+        const sp = `mr_sp_${this.__savepointSeq}`;
+        await eng.savepoint(sp);
+        try {
+            const result = await attemptFn();
+            await eng.releaseSavepoint(sp);
+            return result;
+        } catch (error) {
+            console.error(`[Context] ${label} failed, rolling back to savepoint and falling back:`, error.message);
+            await eng.rollbackToSavepoint(sp);
+            return await fallbackFn();
+        }
+    }
+
+    /**
      * Detect whether a tracked entity carries child-relationship data
      * (hasMany / hasOne / hasManyThrough) that was explicitly assigned by the
      * caller. Such entities can't be expressed as a single flat row, so the
@@ -1802,35 +1846,37 @@ class context {
 
             // Flat entities: normalize each, then one fast batched insert.
             if (flatEntities.length > 0) {
-                try {
-                    const manager = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                    const preparedModels = [];
-                    for (const entity of flatEntities) {
-                        preparedModels.push(await manager.prepareInsertModel(entity));
-                    }
+                await this._bulkWithFallback('Bulk insert',
+                    async () => {
+                        const manager = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                        const preparedModels = [];
+                        for (const entity of flatEntities) {
+                            preparedModels.push(await manager.prepareInsertModel(entity));
+                        }
 
-                    const results = await this._SQLEngine.bulkInsert(preparedModels);
+                        const results = await this._SQLEngine.bulkInsert(preparedModels);
 
-                    // Set auto-increment IDs back on the original tracked entities
-                    for (let i = 0; i < flatEntities.length; i++) {
-                        const entity = flatEntities[i];
-                        const result = results[i];
+                        // Set auto-increment IDs back on the original tracked entities
+                        for (let i = 0; i < flatEntities.length; i++) {
+                            const entity = flatEntities[i];
+                            const result = results[i];
 
-                        if (result && result.id) {
-                            const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
-                            if (entity.__entity[primaryKey]?.auto === true) {
-                                entity[primaryKey] = result.id;
+                            if (result && result.id) {
+                                const primaryKey = tools.getPrimaryKeyObject(entity.__entity);
+                                if (entity.__entity[primaryKey]?.auto === true) {
+                                    entity[primaryKey] = result.id;
+                                }
                             }
                         }
+                    },
+                    async () => {
+                        // Fallback to individual inserts
+                        for (const entity of flatEntities) {
+                            const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
+                            await insert.init(entity);
+                        }
                     }
-                } catch (error) {
-                    console.error('[Context] Bulk insert failed, falling back to individual inserts:', error.message);
-                    // Fallback to individual inserts
-                    for (const entity of flatEntities) {
-                        const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
-                        await insert.init(entity);
-                    }
-                }
+                );
             }
         }
 
@@ -1906,15 +1952,15 @@ class context {
             }
 
             if (updateQueries.length > 0) {
-                try {
-                    await this._SQLEngine.bulkUpdate(updateQueries);
-                } catch (error) {
-                    console.error('[Context] Bulk update failed, falling back to individual updates:', error.message);
-                    // Fallback to individual updates
-                    for (const query of updateQueries) {
-                        await this._SQLEngine.update(query);
+                await this._bulkWithFallback('Bulk update',
+                    async () => { await this._SQLEngine.bulkUpdate(updateQueries); },
+                    async () => {
+                        // Fallback to individual updates
+                        for (const query of updateQueries) {
+                            await this._SQLEngine.update(query);
+                        }
                     }
-                }
+                );
             }
         }
 
@@ -1975,19 +2021,21 @@ class context {
                 deletesByTable.get(groupKey).ids.push(id);
             }
 
-            try {
-                // Performance: Use for...of with Map entries
-                for (const { tableName, primaryKey, ids } of deletesByTable.values()) {
-                    await this._SQLEngine.bulkDelete(tableName, ids, primaryKey);
+            await this._bulkWithFallback('Bulk delete',
+                async () => {
+                    // Performance: Use for...of with Map entries
+                    for (const { tableName, primaryKey, ids } of deletesByTable.values()) {
+                        await this._SQLEngine.bulkDelete(tableName, ids, primaryKey);
+                    }
+                },
+                async () => {
+                    // Fallback to individual deletes
+                    for (const entity of entities) {
+                        const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                        await deleteObject.init(entity);
+                    }
                 }
-            } catch (error) {
-                console.error('[Context] Bulk delete failed, falling back to individual deletes:', error.message);
-                // Fallback to individual deletes
-                for (const entity of entities) {
-                    const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
-                    await deleteObject.init(entity);
-                }
-            }
+            );
         }
 
         // Execute afterDelete hooks
@@ -2030,8 +2078,12 @@ class context {
                 }
             }
 
-            // Handle transactions based on database type
-            if (this.isSQLite) {
+            // Atomicity: wrap every write in a single transaction so a partial
+            // failure rolls the whole batch back. All three engines now expose
+            // startTransaction/endTransaction/errorTransaction (MySQL/Postgres
+            // gained them in 1.4.0; previously their writes were autocommitted
+            // per statement, leaving partial data on a mid-batch error).
+            if (this.isSQLite || this.isMySQL || this.isPostgres) {
                 await this._SQLEngine.startTransaction();
                 try {
                     await this._processTrackedEntities(tracked);
@@ -2041,14 +2093,6 @@ class context {
                     await this._SQLEngine.errorTransaction();
                     throw error;
                 }
-            } else if (this.isMySQL) {
-                // MySQL: Async operations
-                await this._processTrackedEntities(tracked);
-                this.__clearErrorHandler();
-            } else if (this.isPostgres) {
-                // PostgreSQL: Async operations
-                await this._processTrackedEntities(tracked);
-                this.__clearErrorHandler();
             }
 
             // Invalidate query cache for affected tables

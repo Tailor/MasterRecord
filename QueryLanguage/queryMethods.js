@@ -4,6 +4,23 @@ import entityTrackerModel from '../Entity/entityTrackerModel.js';
 import tools from '../Tools.js';
 import queryScript from './queryScript.js';
 
+// Security: `.take()`/`.skip()` values are interpolated directly into
+// LIMIT/OFFSET (these clauses cannot be parameterized on SQLite/MySQL/Postgres).
+// Pagination values are the single most common place an application forwards
+// raw user input (e.g. `?page=`, `?limit=`), so a non-numeric value here is a
+// direct SQL-injection vector. Coerce to a safe, non-negative integer and throw
+// loudly on anything else rather than letting it reach the SQL string.
+function validateRowCount(value, method){
+    if(value === null || value === undefined){
+        return 0; // treated as "not set"
+    }
+    const n = typeof value === 'number' ? value : Number(value);
+    if(!Number.isInteger(n) || n < 0 || !Number.isSafeInteger(n)){
+        throw new Error(`.${method}() requires a non-negative integer, received: ${JSON.stringify(value)}`);
+    }
+    return n;
+}
+
 class queryMethods{
 
     constructor(entity, context) {
@@ -198,12 +215,12 @@ class queryMethods{
     }
 
     take(number){
-        this.__queryObject.script.take = number;
+        this.__queryObject.script.take = validateRowCount(number, 'take');
         return this;
     }
 
     skip(number){
-        this.__queryObject.script.skip = number;
+        this.__queryObject.script.skip = validateRowCount(number, 'skip');
         return this;
     }
 
