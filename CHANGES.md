@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.4.2 — `add-migration` no longer emits malformed no-op column statements
+
+**Bug:** when the schema diff couldn't resolve a real column definition, the migration generator baked lines like `await this.addColumn({"tableName":"X"})` — a column statement with **no column name**. These do nothing at apply time (the runtime `addColumn`/`dropColumn` already throw loudly on such incomplete operands) and just clutter the generated file; 31 of them appeared across five generated migrations and had to be stripped by hand.
+
+**Fix (defense in depth):**
+- `migrationTemplate.js` — `addColumn`/`dropColumn` now refuse to emit a statement for a spec without a `name` (a column statement needs a name to be valid DDL). This is the definitive guard: no matter what the upstream diff produces, a malformed `{"tableName":"X"}`-only no-op can never be written.
+- `migrations.js` `#findDeletedColumns` — now mirrors `#findNewColumns`' `typeof === "object"` guard, so metadata keys like `__name` (a plain string) can never enter the column diff as phantom entries. This also prevents such phantoms from making `hasChanges()` spuriously true (which would generate an otherwise-empty migration).
+
+New test: `test/migration-no-malformed-column.test.js` — template-level (a nameless/blank spec emits nothing; a well-formed spec still emits) plus an end-to-end assertion that a real generated migration never contains an `addColumn`/`dropColumn` call lacking a `"name"`. Full suite green (0 fail, 258 pass, 20 gated-integration skipped offline); 0 lint errors.
+
 ## v1.4.1 — loud failure on missing tables + CLI ergonomics
 
 Three framework findings surfaced while deploying a multi-context app from a SQLite dev database to MySQL.

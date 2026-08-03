@@ -54,12 +54,22 @@ export default ${this.name};
         }
     }
 
+    // A column statement needs a column name to produce valid DDL. When the
+    // diff can't resolve one (e.g. a phantom column from a metadata key), the
+    // spec is `{tableName}` with no `name` — emitting it would bake a malformed
+    // no-op like `addColumn({"tableName":"X"})`. Refuse to emit those.
+    #isEmittableColumnSpec(spec){
+        return !!(spec && typeof spec === 'object'
+            && spec.name !== undefined && spec.name !== null && spec.name !== '');
+    }
+
     // Bake the resolved column spec inline so the migration is self-contained
     // and replays deterministically on every database — independent of the
     // committed snapshot's state at apply time. (Previously emitted
     // `table.<col>`, re-derived from a live diff, which silently no-op'd when
     // the snapshot was already ahead of the target DB.)
     addColumn(type, spec){
+        if(!this.#isEmittableColumnSpec(spec)){ return; }
         const stmt = `     await this.addColumn(${JSON.stringify(spec)});`;
         if(type === "up"){ this.#up += os.EOL + stmt; }
         else{ this.#down += os.EOL + stmt; }
@@ -75,6 +85,7 @@ export default ${this.name};
     }
 
     dropColumn(type, spec){
+        if(!this.#isEmittableColumnSpec(spec)){ return; }
         const stmt = `     await this.dropColumn(${JSON.stringify(spec)});`;
         if(type === "up"){ this.#up += os.EOL + stmt; }
         else{ this.#down += os.EOL + stmt; }

@@ -91,9 +91,25 @@ class Migrations{
                 let deletedColumn = null;
                 if(item.new && item.old){
                     Object.keys(item.old).forEach(function (key) {
+                        // Only real column objects carry a `.name`. Metadata keys
+                        // like `__name` are plain strings; reading `.name` off them
+                        // yields undefined, which used to be pushed as a phantom
+                        // deleted column — making hasChanges() spuriously true and
+                        // baking a malformed `addColumn({"tableName":"X"})` no-op
+                        // into the generated migration's down(). Skip non-columns.
+                        // (This guard mirrors #findNewColumns, which already had it.)
+                        if(typeof item.old[key] !== "object" || item.old[key] === null){
+                            return;
+                        }
                         const value = item.old[key].name;
+                        if(value === undefined || value === null || value === ''){
+                            return;
+                        }
                         deletedColumn = null;
                         Object.keys(item.new).forEach(function (newKey) {
+                            if(typeof item.new[newKey] !== "object" || item.new[newKey] === null){
+                                return;
+                            }
                             const newValue = item.new[newKey].name;
                             if(value === newValue){
                                 deletedColumn = value;
