@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.4.3 — loud guard against cross-context silent data loss
+
+**Bug (silent data loss):** change tracking is per-context-instance. If you load or mutate an entity via context **A** and then call `saveChanges()` on a **different** context instance **B**, `B` silently wrote **zero rows** — no error, no warning — because `A` owns that entity's change tracking. This is the #1 cause of *"saveChanges() succeeded but nothing was written."*
+
+**Fix (loud failure, no silent no-op):**
+- A **global, leak-safe registry** of live context instances (`WeakRef`s + a `FinalizationRegistry`; contexts are removed on `close()` and auto-pruned on GC — it never keeps a context alive) lets `saveChanges()` see entities tracked by *other* instances. When any have **unsaved changes**, it now warns **loudly**, naming them and how to fix it: *"saveChanges() on '<ctx>' will NOT persist N entities with unsaved changes that are tracked by a DIFFERENT context instance: User#1 … Fix: call saveChanges() on the context that loaded them, use entity.save(), or re-track them here with context.attach(entity)."* Freshly loaded (unmutated) entities are in the clean `track` state and never trip this, so read-heavy multi-context usage stays quiet.
+- **`context.attach(entity)`** now **detaches** the entity from its previous context before re-homing it here (an entity is tracked by exactly one context) — so an intentional cross-context save via `attach()` works *and* stops the warning.
+- Suppressible with `MASTERRECORD_SILENCE_CROSS_CONTEXT=1` for apps that intentionally run multiple concurrent contexts with independent pending changes.
+
+We deliberately do **not** warn on close-with-unsaved-changes: the framework can't distinguish "forgot to save" from "deliberately abandoned these changes" (a legitimate load-mutate-abandon flow), so that would false-positive. The mistake is caught precisely at `saveChanges()`, where you clearly *did* expect a write.
+
+New test: `test/cross-context-tracking.test.js` — reproduces the exact bug (mutate via A, `saveChanges()` on B → warns AND writes nothing), verifies `attach()` re-homes and persists (and stops warning), same-context save is silent, plain single-context usage never warns, and the suppression flag works. Full suite green (0 fail, 263 pass, 20 gated skipped); 0 lint errors; 0 vulnerabilities.
+
 ## v1.4.2 — `add-migration` no longer emits malformed no-op column statements
 
 **Bug:** when the schema diff couldn't resolve a real column definition, the migration generator baked lines like `await this.addColumn({"tableName":"X"})` — a column statement with **no column name**. These do nothing at apply time (the runtime `addColumn`/`dropColumn` already throw loudly on such incomplete operands) and just clutter the generated file; 31 of them appeared across five generated migrations and had to be stripped by hand.

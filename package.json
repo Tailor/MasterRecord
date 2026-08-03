@@ -1,6 +1,6 @@
 {
   "name": "masterrecord",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "type": "module",
   "main": "./MasterRecord.js",
@@ -71,12 +71,12 @@
     "masterrecord"
   ],
   "dependencies": {
+    "better-sqlite3": "^13.0.2",
     "commander": "^15.0.0",
-    "glob": "^13.0.6",
     "deep-object-diff": "^1.1.9",
-    "pg": "^8.22.0",
+    "glob": "^13.0.6",
     "mysql2": "^3.23.2",
-    "better-sqlite3": "^13.0.2"
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

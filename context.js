@@ -58,6 +58,19 @@ function findAppRoot(){
 
 const _pools = global.__MR_POOLS__ || (global.__MR_POOLS__ = new Map());
 
+// Registry of live context instances so saveChanges()/close() can detect entities
+// with unsaved changes that are tracked by a DIFFERENT context instance — the
+// classic "saveChanges() succeeded but nothing was written" bug: you mutate an
+// entity loaded by context A, then call saveChanges() on context B (a different
+// instance), and B silently writes nothing because A owns the change tracking.
+//
+// Leak-safe: the Set holds WeakRefs (never strong references to a context), and a
+// FinalizationRegistry prunes a context's WeakRef once the context is GC'd. Live
+// contexts are also removed explicitly on close().
+const _liveContexts = global.__MR_LIVE_CONTEXTS__ || (global.__MR_LIVE_CONTEXTS__ = new Set());
+const _liveContextFinalizer = global.__MR_LIVE_CTX_FIN__ || (global.__MR_LIVE_CTX_FIN__ =
+    new FinalizationRegistry((ref) => { _liveContexts.delete(ref); }));
+
 function _poolKey(type, cfg) {
     if (type === 'sqlite') return `sqlite:${cfg.completeConnection || cfg.connection}`;
     const host = cfg.host || 'localhost';
@@ -229,6 +242,13 @@ class context {
         this.__name = this.constructor.name;
         this._SQLEngine = null;  // Will be set during database initialization
         this.__trackedEntitiesMap = new Map();  // Initialize Map for O(1) lookups
+
+        // Register this instance for cross-context change-tracking detection
+        // (see _liveContexts). Held only as a WeakRef so it never keeps the
+        // context alive; removed on close() and auto-pruned on GC.
+        this.__liveRef = new WeakRef(this);
+        _liveContexts.add(this.__liveRef);
+        _liveContextFinalizer.register(this, this.__liveRef, this.__liveRef);
 
         // Track if this is the first instance of this context class
         // Used to determine if duplicate warnings should be shown
@@ -2082,6 +2102,12 @@ class context {
         try {
             const tracked = this.__trackedEntities;
 
+            // Loud guard against silent data loss: if entities with unsaved
+            // changes are tracked by a DIFFERENT context instance, THIS
+            // saveChanges() will not write them. Warn loudly (this is the #1
+            // cause of "saveChanges succeeded but nothing was written").
+            this._warnForeignDirty('saveChanges()');
+
             if (tracked.length === 0) {
                 console.log('[Context] No tracked entities to save');
                 return true;
@@ -2442,6 +2468,21 @@ class context {
      * db.close();  // Close connections
      */
     async close() {
+        // Deregister from the live-context registry so it stops appearing in
+        // cross-context checks and doesn't linger until GC.
+        //
+        // Note: we intentionally do NOT warn about unsaved changes on close.
+        // The framework can't distinguish "forgot to save" from "deliberately
+        // abandoned these changes" (a legitimate pattern — load, mutate, decide
+        // not to persist, dispose), so such a warning would false-positive. The
+        // real bug — mutating an entity from one context and calling
+        // saveChanges() on another — is caught precisely at saveChanges().
+        if (this.__liveRef) {
+            _liveContexts.delete(this.__liveRef);
+            _liveContextFinalizer.unregister(this.__liveRef);
+            this.__liveRef = null;
+        }
+
         // Find this instance's pool in the registry and decrement
         for (const [key, entry] of _pools) {
             // Skip pending entries -- they have no engine yet
@@ -2559,6 +2600,17 @@ class context {
                 'Unknown',
                 { providedEntity: typeof entity }
             );
+        }
+
+        // An entity is tracked by exactly one context. If it's currently tracked
+        // by a DIFFERENT context instance, detach it from that one first — this
+        // is what makes re-homing correct (and stops the cross-context guard from
+        // continuing to flag it once it's been legitimately moved here).
+        const previous = entity.__context;
+        if (previous && previous !== this && entity.__ID &&
+            previous.__trackedEntitiesMap && previous.__trackedEntitiesMap.has(entity.__ID)) {
+            previous.__trackedEntitiesMap.delete(entity.__ID);
+            previous.__trackedEntities = previous.__trackedEntities.filter(e => e.__ID !== entity.__ID);
         }
 
         // Mark entity as modified
@@ -2717,6 +2769,86 @@ class context {
     __clearTracked() {
         this.__trackedEntities = [];
         this.__trackedEntitiesMap.clear();  // Clear Map for proper garbage collection
+    }
+
+    // ------------------------------------------------------------------
+    // Cross-context change-tracking guards (silent-data-loss prevention)
+    // ------------------------------------------------------------------
+
+    /**
+     * True when an entity has unsaved changes — a pending insert, an in-place
+     * modification, or a pending delete. A freshly loaded (unmutated) entity is
+     * in the clean 'track' state and is NOT dirty, so read-heavy multi-context
+     * usage never trips the cross-context guard.
+     * @private
+     */
+    static _isEntityDirty(entity) {
+        return !!(entity && entity.__state && entity.__state !== 'track');
+    }
+
+    /**
+     * Short, human-readable identifier for an entity, used in warnings.
+     * Prefers "Table#<primaryKeyValue>"; falls back to the internal tracking id.
+     * @private
+     */
+    _describeEntity(entity) {
+        const name = (entity && entity.__name) || 'Entity';
+        let id = entity && entity.__ID;
+        try {
+            if (entity && entity.__entity) {
+                const pk = tools.getPrimaryKeyObject(entity.__entity);
+                if (pk && entity[pk] !== undefined && entity[pk] !== null) {
+                    id = entity[pk];
+                }
+            }
+        } catch (_) { /* fall back to __ID */ }
+        return `${name}#${id === undefined || id === null ? '?' : id}`;
+    }
+
+    /**
+     * Collect entities that have unsaved changes but are tracked by a DIFFERENT
+     * live context instance than this one. Prunes GC'd contexts from the registry
+     * as it walks it.
+     * @private
+     */
+    _foreignDirtyEntities() {
+        const foreign = [];
+        for (const ref of _liveContexts) {
+            const ctx = ref.deref();
+            if (!ctx) { _liveContexts.delete(ref); continue; }  // prune dead ref
+            if (ctx === this) { continue; }
+            const tracked = ctx.__trackedEntities || [];
+            for (const e of tracked) {
+                if (context._isEntityDirty(e)) { foreign.push(e); }
+            }
+        }
+        return foreign;
+    }
+
+    /**
+     * Emit a loud warning if entities with unsaved changes are tracked by a
+     * different context instance — they will NOT be persisted by `action` here.
+     * This is the framework-level guard against the "saveChanges() succeeded but
+     * nothing was written" class of bug. Suppressible with
+     * MASTERRECORD_SILENCE_CROSS_CONTEXT=1 (e.g. for apps that intentionally run
+     * multiple concurrent context instances with independent pending changes).
+     * @private
+     */
+    _warnForeignDirty(action) {
+        if (process.env.MASTERRECORD_SILENCE_CROSS_CONTEXT === '1') { return; }
+        const foreign = this._foreignDirtyEntities();
+        if (foreign.length === 0) { return; }
+        const shown = foreign.slice(0, 10).map(e => this._describeEntity(e)).join(', ');
+        const more = foreign.length > 10 ? `, +${foreign.length - 10} more` : '';
+        const plural = foreign.length === 1 ? 'entity' : 'entities';
+        const verb = foreign.length === 1 ? 'is' : 'are';
+        console.warn(
+            `[masterrecord] WARNING: ${action} on context '${this.__name}' will NOT persist ${foreign.length} ` +
+            `${plural} with unsaved changes that ${verb} tracked by a DIFFERENT context instance: ${shown}${more}. ` +
+            `Those changes are being silently dropped. Fix: call saveChanges() on the context that loaded them, ` +
+            `use entity.save(), or re-track them here first with context.attach(entity). ` +
+            `(Silence with MASTERRECORD_SILENCE_CROSS_CONTEXT=1.)`
+        );
     }
 }
 

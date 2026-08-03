@@ -23,6 +23,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.master = 'fk-setter';
+// This file's first test intentionally creates a `.new()` entity, marks it dirty,
+// and abandons it (it only asserts dirty-tracking, never saves/closes). That
+// leftover dirty entity would otherwise trip the 1.4.3 cross-context guard in
+// later tests. This file isn't testing cross-context behavior, so silence it.
+process.env.MASTERRECORD_SILENCE_CROSS_CONTEXT = '1';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(__dirname, 'fixtures', 'belongs-to-fk-setter');
