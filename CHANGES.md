@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.4.1 — loud failure on missing tables + CLI ergonomics
+
+Three framework findings surfaced while deploying a multi-context app from a SQLite dev database to MySQL.
+
+**No more silent schema drift (the big one).** The framework has **no** runtime table auto-creation — every `createTable` path is migration-driven and both engines already emit `CREATE TABLE IF NOT EXISTS`. What made drift *silent* was that the query methods (`all` / `get` / `getCount`) **swallowed SQL errors and returned `null` / `[]`** on all three engines. So a query against a not-yet-migrated table looked like "no rows": an app built against a SQLite dev database appeared to work, then structurally broke the moment it pointed at MySQL/Postgres — with no warning, because the failure was being eaten.
+- Query errors are **no longer swallowed**. A missing table now throws a loud, actionable error naming the table on **every** engine: *"masterrecord: table 'X' does not exist. If this is a new entity, generate and run a migration (npx masterrecord add-migration … && npx masterrecord update-database …)."* (`Tools.missingTableName` / `Tools.missingTableError` recognize the SQLite, MySQL `ER_NO_SUCH_TABLE`, and Postgres `42P01` signatures.) Any other query error is also re-thrown instead of returning a misleading empty result. Empty-but-existing tables still return `[]` / `null` exactly as before — only genuine errors surface.
+- The correct EF-style fix for a migration-less context remains: generate real `Init` migrations (`enable-migrations` + `add-migration`). This change makes the *need* for that impossible to miss instead of letting it hide until production.
+
+**`ensure-database` no longer requires a migration file.** The command's job is to make the database exist, but it exited with *"Cannot read or find migration file"* before it ever tried — so a brand-new context couldn't be bootstrapped until a migration had been authored. It now falls back to the `schema` layer directly (whose `createDatabase()` is the same method the migration class inherits) when no migration is present. SQLite is a safe no-op (the file is created on open); MySQL/Postgres create the database from the context config.
+
+**Friendlier "dependencies not installed" error.** Loading a context/migration file that does `import masterrecord from 'masterrecord'` in a checkout with no `node_modules` threw a cryptic `ERR_MODULE_NOT_FOUND` buried in a stack trace. The CLI's module loader now detects a missing **bare** dependency and prints *"…its dependency 'X' is not installed. Run `npm install` in your project root first."*
+
+New tests: `test/loud-missing-table.test.js` (cross-engine signature detection + SQLite end-to-end: missing table throws, existing/empty table still returns `[]`), `test/cli-ensure-database.test.js` (schema fallback exposes `createDatabase`, safe no-op on SQLite), `test/cli-friendly-missing-dep.test.js` (detection matches Node's real `ERR_MODULE_NOT_FOUND` shape). A gated cross-engine integration test asserts the missing-table throw against live MySQL/Postgres. Full suite green (0 fail, 254 pass, 20 gated-integration skipped offline); 0 lint errors.
+
 ## v1.4.0 — security hardening + atomic writes (production/enterprise pass)
 
 A focused security & enterprise-readiness pass across all three engines (SQLite / MySQL / Postgres). The parameterized query path (`$$` / `$` → bound parameters) was already safe; this release closes the surfaces around it and makes multi-row writes atomic.

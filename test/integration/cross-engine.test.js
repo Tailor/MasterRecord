@@ -329,6 +329,22 @@ for (const eng of ENGINES) {
         }
     });
 
+    test(`[${eng.name}] querying a missing table throws a loud error (not silent null)`, { skip }, async () => {
+        const { ctx } = await buildCtx(eng, [Counter], 'missingtbl');
+        const T = qt(eng, 'Counter');
+        try {
+            await ctx.query(`DROP TABLE IF EXISTS ${T}`);
+            // No migration, no table — a query must FAIL loudly, not return [].
+            await assert.rejects(
+                () => ctx.Counter.toList(),
+                (err) => { assert.match(err.message, /Counter|does not exist|doesn't exist/i); return true; },
+                'a missing table must throw on this engine, proving the error signature is recognized',
+            );
+        } finally {
+            await ctx.close();
+        }
+    });
+
     test(`[${eng.name}] migration bootstrap AUTO-CREATES a missing database`, { skip }, async () => {
         const autoDb = `mr_autocreate_${eng.name}`;
         const autoTarget = { ...eng.target, database: autoDb };

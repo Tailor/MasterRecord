@@ -223,8 +223,10 @@ class postgresEngine {
             }
             return null;
         } catch (err) {
-            console.error('PostgreSQL get error:', err);
-            return null;
+            // Loud failure: never swallow a query error into a silent null.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 
@@ -256,8 +258,10 @@ class postgresEngine {
             }
             return null;
         } catch (err) {
-            console.error('PostgreSQL getCount error:', err);
-            return null;
+            // Loud failure: never swallow a query error into a silent null.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 
@@ -279,8 +283,10 @@ class postgresEngine {
             }
             return [];
         } catch (err) {
-            console.error('PostgreSQL all error:', err);
-            return [];
+            // Loud failure: never swallow a query error into a silent empty set.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 

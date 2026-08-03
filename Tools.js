@@ -242,6 +242,43 @@ class Tools{
         return func;
     }
 
+    // Detect a "table/relation does not exist" error across all three engines
+    // and extract the table name. Returns the name, or null if `err` is not a
+    // missing-table error. Signatures:
+    //   - Postgres (42P01) : relation "x" does not exist
+    //   - MySQL (ER_NO_SUCH_TABLE) : Table 'db.tbl' doesn't exist
+    //   - SQLite (better-sqlite3)  : no such table: tbl
+    static missingTableName(err){
+        if(!err) return null;
+        const msg = String(err.message || err);
+        let m = /relation "([^"]+)" does not exist/i.exec(msg);
+        if(m) return m[1];
+        m = /Table '(?:[^.']*\.)?([^']+)' doesn't exist/i.exec(msg);
+        if(m) return m[1];
+        m = /no such table:?\s*([A-Za-z0-9_]+)/i.exec(msg);
+        if(m) return m[1];
+        return null;
+    }
+
+    // Turn a missing-table driver error into a loud, actionable masterrecord
+    // error, or null if `err` isn't one. This is what stops schema drift from
+    // accumulating silently: a query against a not-yet-migrated table fails
+    // with a clear message on EVERY engine instead of quietly returning null
+    // (which made SQLite dev "just work" while MySQL/Postgres broke later).
+    static missingTableError(err){
+        const name = Tools.missingTableName(err);
+        if(!name) return null;
+        const friendly = new Error(
+            `masterrecord: table '${name}' does not exist. If this is a new entity, ` +
+            `generate and run a migration first ` +
+            `(npx masterrecord add-migration <name> <context> && npx masterrecord update-database <context>). ` +
+            `Original error: ${err.message || err}`
+        );
+        friendly.cause = err;
+        friendly.missingTable = name;
+        return friendly;
+    }
+
     // Escape a value for safe interpolation inside a single-quoted SQL string
     // literal. Doubling the single quote is the ANSI-standard escape and is
     // correct on SQLite, MySQL, and Postgres (with standard_conforming_strings,

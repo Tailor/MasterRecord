@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { globSync } from 'glob';
 import { resolveMigrationsDirectory, toPosixPath } from './pathUtils.js';
 import Migration from './migrations.js';
+import schema from './schema.js';
 import { instantiateReadyContext } from './contextInit.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -24,8 +25,31 @@ const __dirname = path.dirname(__filename);
  * @returns {Promise<*>} The default export (or whole module if no default)
  */
 async function __loadUserModule(filePath) {
-  const mod = await import(pathToFileURL(filePath).href);
-  return (mod && mod.default !== undefined) ? mod.default : mod;
+  try {
+    const mod = await import(pathToFileURL(filePath).href);
+    return (mod && mod.default !== undefined) ? mod.default : mod;
+  } catch (err) {
+    // A context/migration file typically does `import masterrecord from
+    // 'masterrecord'`. In a checkout without installed dependencies, Node
+    // throws a cryptic ERR_MODULE_NOT_FOUND naming the BARE specifier, buried
+    // in a stack trace. Translate that into an actionable message.
+    if (err && err.code === 'ERR_MODULE_NOT_FOUND') {
+      const m = /Cannot find package '([^']+)'|Cannot find module '([^']+)'/.exec(err.message || '');
+      const missing = m ? (m[1] || m[2]) : null;
+      // A bare specifier (not a relative/absolute path) => a missing dependency,
+      // not a bad file path. Point the user at `npm install`.
+      if (missing && !missing.startsWith('.') && !path.isAbsolute(missing)) {
+        const friendly = new Error(
+          `masterrecord: could not load '${path.basename(filePath)}' — its dependency '${missing}' is not installed. ` +
+          `Run \`npm install\` in your project root first (node_modules is missing or incomplete).`
+        );
+        friendly.code = 'ERR_MODULE_NOT_FOUND';
+        friendly.cause = err;
+        throw friendly;
+      }
+    }
+    throw err;
+  }
 }
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
@@ -218,18 +242,6 @@ program.option('-V', 'output the version');
         console.warn(`   Falling back to snapshot directory: ${snapDir}`);
         migBase = snapDir;
       }
-      // Find latest migration file (so we can use its class which extends schema)
-      let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
-      migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
-      if(!(migrationFiles && migrationFiles.length)){
-        console.log("Error - Cannot read or find migration file");
-        process.exit(1);
-      }
-      const mFiles = migrationFiles.slice().sort(function(a, b){
-        return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
-      });
-      const mFile = mFiles[mFiles.length -1];
-
       let ContextCtor;
       try{
         ContextCtor = await __loadUserModule(contextAbs);
@@ -244,9 +256,27 @@ program.option('-V', 'output the version');
         process.exit(1);
       }
 
-      // Use the migration class (extends schema) so createdatabase is available
-      const MigrationCtor = await __loadUserModule(mFile);
-      const mig = new MigrationCtor(ContextCtor);
+      // ensure-database's job is to make the database EXIST — that must NOT
+      // depend on a migration having been authored yet (otherwise a brand-new
+      // context can't be bootstrapped until you've written a migration). When
+      // migrations exist we use the latest migration class (it extends schema);
+      // otherwise we fall back to the `schema` layer directly, whose
+      // createDatabase() is the very method the migration class inherits.
+      let migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true });
+      migrationFiles = (migrationFiles || []).map(f => path.resolve(migBase, f));
+
+      let mig;
+      if(migrationFiles.length){
+        const mFiles = migrationFiles.slice().sort(function(a, b){
+          return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
+        });
+        const mFile = mFiles[mFiles.length -1];
+        const MigrationCtor = await __loadUserModule(mFile);
+        mig = new MigrationCtor(ContextCtor);
+      }else{
+        console.log('No migration files found — creating the database directly from the context (no migration required).');
+        mig = new schema(ContextCtor);
+      }
       contextInstance = mig._context || mig.context || null;
 
       if(typeof mig.createdatabase === 'function'){

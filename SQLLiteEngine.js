@@ -136,8 +136,12 @@ class SQLLiteEngine {
             }
             return Promise.resolve(null);
         } catch (err) {
-            console.error(err);
-            return Promise.resolve(null);
+            // Loud failure: never swallow a query error into a silent null.
+            // A missing table (the classic "SQLite dev worked, MySQL broke"
+            // drift) becomes a clear, actionable error naming the table.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 
@@ -209,8 +213,12 @@ class SQLLiteEngine {
             }
             return Promise.resolve(null);
         } catch (err) {
-            console.error(err);
-            return Promise.resolve(null);
+            // Loud failure: never swallow a query error into a silent null.
+            // A missing table (the classic "SQLite dev worked, MySQL broke"
+            // drift) becomes a clear, actionable error naming the table.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 
@@ -236,8 +244,12 @@ class SQLLiteEngine {
             }
             return Promise.resolve(null);
         } catch (err) {
-            console.error(err);
-            return Promise.resolve(null);
+            // Loud failure: never swallow a query error into a silent null.
+            // A missing table (the classic "SQLite dev worked, MySQL broke"
+            // drift) becomes a clear, actionable error naming the table.
+            const missing = tools.missingTableError(err);
+            if (missing) { throw missing; }
+            throw err;
         }
     }
 
