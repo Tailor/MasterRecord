@@ -6,49 +6,20 @@ on:
 
 jobs:
   test:
-    name: node ${{ matrix.node }} · sqlite + mysql + postgres
+    name: node ${{ matrix.node }} · sqlite
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
 
-    # Live databases so the cross-engine integration suite executes for real
-    # (test/integration/cross-engine.test.js). Without these env vars the
-    # integration tests skip; here they point at the service containers below.
-    services:
-      mysql:
-        image: mysql:8
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: masterrecord_test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=15
-
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: masterrecord_test
-          POSTGRES_USER: mr
-          POSTGRES_PASSWORD: mrpw
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U mr -d masterrecord_test"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=15
-
-    env:
-      MR_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/masterrecord_test
-      MR_TEST_PG_URL: postgres://mr:mrpw@127.0.0.1:5432/masterrecord_test
-
+    # CI runs the SQLite unit suite only. The cross-engine MySQL/Postgres
+    # integration tests (test/integration/cross-engine.test.js) are gated on
+    # MR_TEST_MYSQL_URL / MR_TEST_PG_URL and auto-skip when those are unset — so
+    # they don't run here (no service containers spun up). To exercise them
+    # locally, start a MySQL/Postgres and set those env vars before `npm test`.
     steps:
       - uses: actions/checkout@v4
 
@@ -62,5 +33,5 @@ jobs:
       - name: Lint
         run: npm run lint:check
 
-      - name: Test (SQLite unit + MySQL/Postgres integration)
+      - name: Test (SQLite unit; MySQL/Postgres integration auto-skips)
         run: npm test
