@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/masterrecord.svg)](https://www.npmjs.com/package/masterrecord)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **ESM only.** As of v1.0, MasterRecord is a pure ESM package. Requires **Node.js 20+** and a host project with `"type": "module"` in `package.json`. There is no CommonJS build.
+> **ESM only.** As of v1.0, MasterRecord is a pure ESM package. Requires **Node.js 22.12+** and a host project with `"type": "module"` in `package.json`. There is no CommonJS build.
 
 **MasterRecord** is a lightweight, code-first ORM for Node.js with a fluent query API, comprehensive migrations, and multi-database support. Build type-safe queries with lambda expressions, manage schema changes with CLI-driven migrations, and work seamlessly across MySQL, PostgreSQL, and SQLite.
 
@@ -201,9 +201,9 @@ npm install masterrecord better-sqlite3  # SQLite
 ### Dependencies
 
 MasterRecord includes the following database drivers by default:
-- `pg@^8.17.2` - PostgreSQL (async)
-- `mysql2@^3.11.5` - MySQL (async with connection pooling)
-- `better-sqlite3@^12.6.2` - SQLite (async API wrapper for consistency)
+- `pg@^8.22.0` - PostgreSQL (async)
+- `mysql2@^3.23.2` - MySQL (async with connection pooling)
+- `better-sqlite3@^13.0.2` - SQLite (async API wrapper for consistency)
 
 ### npm v12+ install note (native SQLite build)
 

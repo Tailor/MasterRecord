@@ -43,16 +43,10 @@
     "!prettier.config.js",
     "docs/**/*.md",
     "CHANGES.md",
-    "DISCLOSURE",
     "LICENSE"
   ],
-  "//contentPolicy": "Declares dual-use content for npm's publish-time scanner (github.blog changelog 2026-07-28). masterrecord is a database ORM whose SQL generation, injection-DEFENSE code, and credential/connection handling can resemble security tooling to automated scanners. See the DISCLOSURE file in the package root. Per npm policy this declaration must persist in all future versions.",
-  "contentPolicy": {
-    "dualUse": true,
-    "disclosure": "DISCLOSURE"
-  },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "test": "node --test test/*.test.js test/integration/*.test.js Migrations/pathUtils.test.js",
@@ -77,17 +71,16 @@
     "masterrecord"
   ],
   "dependencies": {
-    "commander": "^14.0.2",
-    "glob": "^13.0.0",
+    "commander": "^15.0.0",
+    "glob": "^13.0.6",
     "deep-object-diff": "^1.1.9",
-    "pg": "^8.17.2",
-    "mysql2": "^3.11.5",
-    "app-root-path": "^3.1.0",
-    "better-sqlite3": "^12.6.2"
+    "pg": "^8.22.0",
+    "mysql2": "^3.23.2",
+    "better-sqlite3": "^13.0.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
-    "eslint": "^9.17.0",
-    "globals": "^15.14.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.9.0"
   }
 }

@@ -25,7 +25,6 @@ import { globSync } from 'glob';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import appRoot from 'app-root-path';
 import Database from 'better-sqlite3';
 import MySQLAsyncClient from './mySQLConnect.js';
 import PostgresClient from './postgresSyncConnect.js';
@@ -34,6 +33,24 @@ import DependencyGraph from './Migrations/dependencyGraph.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Resolve the consuming application's root directory (replaces the former
+// `app-root-path` dependency). If masterrecord is installed under node_modules,
+// the app root is the directory containing that node_modules; otherwise walk up
+// from the current working directory to the nearest package.json, falling back
+// to cwd. Used to locate the app's config/environments/*.json files.
+function findAppRoot(){
+    const marker = `${path.sep}node_modules${path.sep}`;
+    const idx = __dirname.lastIndexOf(marker);
+    if(idx !== -1){ return __dirname.slice(0, idx); }
+    let dir = process.cwd();
+    while(true){
+        if(fs.existsSync(path.join(dir, 'package.json'))){ return dir; }
+        const parent = path.dirname(dir);
+        if(parent === dir){ return process.cwd(); }
+        dir = parent;
+    }
+}
 
 // ============================================================================
 // GLOBAL POOL REGISTRY - One pool per database, shared across all contexts
@@ -773,7 +790,7 @@ class context {
             } else {
                 // (2) Folder path — locate and read env.<NODE_ENV>.json.
                 // Try multiple base roots for robustness
-                const candidateRoots = [process.cwd(), appRoot.path, __dirname];
+                const candidateRoots = [process.cwd(), findAppRoot(), __dirname];
                 let file = null;
                 const searchErrors = [];
 
@@ -1174,7 +1191,7 @@ class context {
                 );
             }
             const contextName = this.__name;
-            const root = appRoot.path;
+            const root = findAppRoot();
             const file = this.__findSettings(root, rootFolderLocation, envType);
             const settings = JSON.parse(fs.readFileSync(file.file, 'utf8'));
             const options = settings[contextName];

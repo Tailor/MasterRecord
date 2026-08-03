@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        node: [22, 24]
 
     # Live databases so the cross-engine integration suite executes for real
     # (test/integration/cross-engine.test.js). Without these env vars the

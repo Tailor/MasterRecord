@@ -19,6 +19,18 @@ export default [
             // Tracked for a dedicated pass.
             'no-var': 'warn',
             'no-redeclare': 'warn',
+            // Newly in @eslint/js recommended as of ESLint 10. The codebase has
+            // an established catch-and-rethrow style (many intentional re-throws
+            // and throws-after-logging); attaching `{ cause }` at every site is
+            // a good future improvement but a large mechanical change. Deferred
+            // to 'warn' (same treatment as no-var/no-redeclare) so it surfaces
+            // without failing lint. Newer code (e.g. Tools.missingTableError)
+            // already sets `.cause`.
+            'preserve-caught-error': 'warn',
+            // Also newly in recommended as of ESLint 10 — flags dead assignments
+            // in the legacy var-heavy engine code. Deferred to 'warn' with the
+            // same rationale; a dedicated cleanup pass can promote it to 'error'.
+            'no-useless-assignment': 'warn',
             'prefer-const': 'error',
             'no-unused-vars': ['error', {
                 vars: 'all',
