@@ -1,0 +1,60 @@
+DISCLOSURE — Dual-Use Content in masterrecord
+
+masterrecord is an Object-Relational Mapper (ORM) for Node.js. Like every
+database library, it necessarily contains functionality that an automated
+malware/"dual-use" scanner may flag, because the same capabilities that power a
+legitimate ORM also appear in security tooling. This file declares that content
+and its intended, legitimate use.
+
+WHAT THIS PACKAGE IS
+--------------------
+A code-first ORM that maps JavaScript classes to relational database tables
+(SQLite, MySQL, PostgreSQL). It provides a fluent query API, schema migrations,
+and connection management. It is a general-purpose developer tool for building
+applications that store data in a relational database.
+
+DUAL-USE FUNCTIONALITY AND ITS LEGITIMATE PURPOSE
+-------------------------------------------------
+1. SQL generation and a raw-SQL escape hatch.
+   The library builds SQL statements and exposes `ctx.query(sql, params)` /
+   `ctx.execute(sql, params)` for parameterized raw SQL. This is standard ORM
+   functionality for querying and mutating the developer's own database — not
+   for attacking third-party systems.
+
+2. SQL-injection DEFENSE code.
+   The engines contain code and comments that reference "SQL injection",
+   "bypass", "escape", "operator whitelist", and single-quote escaping. This is
+   *defensive*: it validates operators, escapes literals, and forces
+   parameter binding so that application input cannot alter query structure.
+   These are protections against injection, not tools to perform it.
+
+3. Database credential and connection handling.
+   The library reads connection configuration (host, user, password, TLS/SSL
+   options) from the application's own environment config to connect to the
+   application's own database. Credentials are never transmitted anywhere other
+   than the configured database server, and are never logged. See docs/SECURITY.md.
+
+4. Schema migration / DDL generation.
+   The migration CLI generates and executes DDL (CREATE/ALTER/DROP TABLE,
+   indexes) derived from the developer's own entity definitions, to manage the
+   developer's own database schema.
+
+5. Documentation referencing security terms.
+   docs/SECURITY.md and inline comments discuss SQL injection, credentials,
+   tokens, TLS, and escaping for the purpose of teaching users how to use the
+   ORM safely. This is defensive security guidance.
+
+WHAT THIS PACKAGE DOES NOT DO
+-----------------------------
+- It does not exfiltrate data, credentials, or environment variables to any
+  third party.
+- It has no network behavior beyond connecting to the database the application
+  itself configures.
+- It contains no obfuscated code, no remote code download/execution, no
+  install-time telemetry, and no lifecycle scripts of its own.
+- It does not target, scan, or attack systems the operator does not own.
+
+CONTACT
+-------
+Maintainer: Tailor (npm user "tailor"). Repository:
+https://github.com/Tailor/MasterRecord — issues and security reports welcome.

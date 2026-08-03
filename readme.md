@@ -205,6 +205,23 @@ MasterRecord includes the following database drivers by default:
 - `mysql2@^3.11.5` - MySQL (async with connection pooling)
 - `better-sqlite3@^12.6.2` - SQLite (async API wrapper for consistency)
 
+### npm v12+ install note (native SQLite build)
+
+`better-sqlite3` is a native module — it runs a `node-gyp` build in its install
+script. As of **npm v12**, dependency lifecycle scripts (`preinstall` / `install` /
+`postinstall`) are **off by default** (`allowScripts` is opt-in). If you install
+MasterRecord with npm v12+ and SQLite fails to load with a "did not self-register"
+or missing-binding error, approve the build scripts once:
+
+```bash
+npm approve-scripts --allow-scripts-pending   # review, then approve the trusted build scripts
+# commit the resulting allowlist in your package.json
+```
+
+Older npm (≤11) builds native modules automatically and needs no action. If you
+only use MySQL or Postgres, you can drop `better-sqlite3` entirely and this doesn't
+apply.
+
 ## Two Patterns: Entity Framework & Active Record
 
 MasterRecord supports **both** ORM patterns - choose what feels natural:

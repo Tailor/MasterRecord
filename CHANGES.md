@@ -10,6 +10,8 @@
 
 New test: `test/migration-no-malformed-column.test.js` — template-level (a nameless/blank spec emits nothing; a well-formed spec still emits) plus an end-to-end assertion that a real generated migration never contains an `addColumn`/`dropColumn` call lacking a `"name"`. Full suite green (0 fail, 258 pass, 20 gated-integration skipped offline); 0 lint errors.
 
+**Publishing metadata — dual-use content declaration.** npm v12 introduced publish-time malware scanning with a "dual-use content" concept ([github.blog, 2026-07-28](https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/)). As a database ORM, masterrecord contains functionality that automated scanners can mistake for security tooling (SQL generation, a raw-SQL escape hatch, SQL-injection *defense* code that references "injection"/"bypass"/"escape", and credential/connection handling). We now ship a root `DISCLOSURE` file (reviewed by npm's Trust & Safety team) describing this dual-use functionality and its legitimate ORM purpose, plus a `contentPolicy` field in `package.json`. Per npm policy this declaration is permanent — future versions must keep both. Publishing continues via OIDC trusted publishing (2FA-enforcing), as npm requires for dual-use packages.
+
 ## v1.4.1 — loud failure on missing tables + CLI ergonomics
 
 Three framework findings surfaced while deploying a multi-context app from a SQLite dev database to MySQL.

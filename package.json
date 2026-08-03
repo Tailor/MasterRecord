@@ -43,8 +43,14 @@
     "!prettier.config.js",
     "docs/**/*.md",
     "CHANGES.md",
+    "DISCLOSURE",
     "LICENSE"
   ],
+  "//contentPolicy": "Declares dual-use content for npm's publish-time scanner (github.blog changelog 2026-07-28). masterrecord is a database ORM whose SQL generation, injection-DEFENSE code, and credential/connection handling can resemble security tooling to automated scanners. See the DISCLOSURE file in the package root. Per npm policy this declaration must persist in all future versions.",
+  "contentPolicy": {
+    "dualUse": true,
+    "disclosure": "DISCLOSURE"
+  },
   "engines": {
     "node": ">=20.0.0"
   },
