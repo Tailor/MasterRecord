@@ -94,13 +94,18 @@ class migrationMySQLQuery {
             case "decimal":
                 return "DECIMAL"
             case "datetime":
-                return "DATETIME"
             case "timestamp":
-                return "TIMESTAMP"
             case "date":
-                return "DATE"
             case "time":
-                return "TIME"
+                // Match the SQLite and Postgres engines, which store every
+                // temporal type as TEXT "for cross-engine portability":
+                // masterrecord apps write epoch-millis / ISO strings into these
+                // columns (entity get/set hooks like `db.get((v) => v || Date.now())`),
+                // which native DATETIME/TIMESTAMP/DATE/TIME columns reject at
+                // INSERT (e.g. "Incorrect datetime value" for a bigint). TEXT
+                // keeps the engines interchangeable. (Postgres was fixed in
+                // 1.4.7; MySQL had the identical bug.)
+                return "TEXT"
             case "boolean":
                 return "TINYINT"
             case "integer":

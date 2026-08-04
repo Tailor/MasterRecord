@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.4.8 — MySQL temporal types map to TEXT too (completes the 1.4.7 cross-engine fix)
+
+**Bug (parallel to 1.4.7):** 1.4.7 fixed Postgres to store temporal types (`time`/`date`/`datetime`/`timestamp`) as `TEXT`, matching SQLite, because masterrecord apps write epoch-millis / ISO strings into those columns via entity hooks (`db.get((v) => v || Date.now())`) — values a native temporal column rejects at INSERT. But **MySQL was left mapping the same types to native `DATETIME`/`TIMESTAMP`/`DATE`/`TIME`**, so an app that ran on SQLite hit the identical failure (`Incorrect datetime value`) the moment it targeted MySQL. The 1.4.7 commit fixed one of the two native-temporal engines; this fixes the other.
+
+**Fix:** MySQL's `typeManager` now resolves all four temporal types to `TEXT`, so **all three engines are interchangeable** for temporal columns. Epoch-millis and ISO strings insert cleanly everywhere.
+
+New test: `test/temporal-types-text-parity.test.js` — asserts SQLite, MySQL, and Postgres all resolve `time`/`date`/`datetime`/`timestamp` to `TEXT`, pinning the cross-engine contract so no single engine can silently diverge again. Full suite green (0 fail, 272 pass, 20 gated skipped); 0 lint errors.
+
+_(The companion 1.4.7 fixes — Postgres temporal → TEXT, and `alterColumn` on Postgres+MySQL accepting the flat `{...columnDef, tableName}` shape that `buildUpObject` produces — are verified intact; SQLite's `alterColumn` goes through the `syncTable` rebuild path and is unaffected.)_
+
 ## v1.4.6 — `update-database-all` isolates each context's connection lifecycle
 
 **Bug reported (MySQL wrong-database writes):** running `update-database-all` against MySQL sometimes created tables in the **wrong database** while the migrations were still recorded as applied — forcing a wipe-and-remigrate one process at a time. The single-context `update-database` command, and running each context in its own process, were always safe.
