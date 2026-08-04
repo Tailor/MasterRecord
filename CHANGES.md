@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.4.5 — `dropTable` is idempotent (`DROP TABLE IF EXISTS`) on every engine
+
+**Bug (fresh-install migration failure):** SQLite and MySQL emitted a bare `DROP TABLE <name>` (Postgres already used `IF EXISTS`). So a migration that drops a legacy table — one that only ever existed on older installs — **failed hard on a fresh database** ("no such table" / "Unknown table"). This was inconsistent with the framework's other idempotent DDL: `createTable` already emits `IF NOT EXISTS` and `dropColumn` already skips if the column is gone.
+
+**Fix:** all three migration builders now emit **`DROP TABLE IF EXISTS`**, so dropping a table that isn't there is a clean no-op — a `dropTable(...)` migration replays safely on a brand-new database. (This is the standard reason `RemoveBackstageTables`-style migrations broke on fresh DBs.)
+
+New test: `test/droptable-if-exists.test.js` — SQL-shape for all three engines includes `IF EXISTS`, plus an end-to-end SQLite check that dropping a never-existed table (and re-dropping a real one) does not throw. Full suite green (0 fail, 271 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.4.4 — connection-pool cache key now accounts for the Postgres schema
 
 **Bug (wrong-schema writes):** the connection-pool cache key (`_poolKey`) keyed a Postgres pool by `type:user@host:port/database` only — it **omitted the schema / `search_path`**. But `search_path` is a **per-connection** setting. So two contexts pointed at the **same database but different schemas** produced the **same** key and shared a single pooled connection: the second context reused the first's connection (whose `search_path` was already set) and its `CREATE TABLE` / queries **landed in the wrong schema**. This surfaced as `update-database-all` creating tables in the wrong schemas across contexts (a cross-context connection-pool bug).

@@ -234,7 +234,11 @@ class migrationMySQLQuery {
 
 
     dropTable(name){
-        return `DROP TABLE \`${name}\``
+        // IF EXISTS keeps dropTable idempotent — consistent with createTable's
+        // `IF NOT EXISTS` and dropColumn's skip-if-gone, and matching the Postgres
+        // builder. A migration that DROPs a legacy table which never existed on a
+        // fresh install is then a no-op instead of a hard failure.
+        return `DROP TABLE IF EXISTS \`${name}\``
     }
 
     renameTable(table){
