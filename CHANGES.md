@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.4.4 — connection-pool cache key now accounts for the Postgres schema
+
+**Bug (wrong-schema writes):** the connection-pool cache key (`_poolKey`) keyed a Postgres pool by `type:user@host:port/database` only — it **omitted the schema / `search_path`**. But `search_path` is a **per-connection** setting. So two contexts pointed at the **same database but different schemas** produced the **same** key and shared a single pooled connection: the second context reused the first's connection (whose `search_path` was already set) and its `CREATE TABLE` / queries **landed in the wrong schema**. This surfaced as `update-database-all` creating tables in the wrong schemas across contexts (a cross-context connection-pool bug).
+
+**Fix:** `_poolKey` now folds the **resolved `search_path`** into the key for Postgres, so different-schema contexts get their own pool (with the correct `search_path`) while same-schema contexts still share one. A `schema` and an equivalent `searchPath` resolve to the same value, so they correctly share a pool. MySQL/SQLite are unaffected — MySQL's "database" *is* its schema and is already in the key; SQLite has no schemas.
+
+New test: `test/pool-key-schema.test.js` — different schemas → different keys (no wrong-schema sharing), same schema → same key, `schema`≡`searchPath` equivalence, no-schema keys carry no schema segment, different databases stay separated, and MySQL/SQLite keys are unchanged. Full suite green (0 fail, 269 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.4.3 — loud guard against cross-context silent data loss
 
 **Bug (silent data loss):** change tracking is per-context-instance. If you load or mutate an entity via context **A** and then call `saveChanges()` on a **different** context instance **B**, `B` silently wrote **zero rows** — no error, no warning — because `A` owns that entity's change tracking. This is the #1 cause of *"saveChanges() succeeded but nothing was written."*

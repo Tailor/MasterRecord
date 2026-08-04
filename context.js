@@ -75,7 +75,29 @@ function _poolKey(type, cfg) {
     if (type === 'sqlite') return `sqlite:${cfg.completeConnection || cfg.connection}`;
     const host = cfg.host || 'localhost';
     const port = cfg.port || (type === 'mysql' ? 3306 : 5432);
-    return `${type}:${cfg.user}@${host}:${port}/${cfg.database}`;
+    let key = `${type}:${cfg.user}@${host}:${port}/${cfg.database}`;
+    // Postgres: the schema / search_path is a PER-CONNECTION setting. Two contexts
+    // on the SAME database but DIFFERENT schemas must NOT share a pooled connection
+    // — otherwise the second context reuses the first's connection (whose
+    // search_path was already set) and its CREATE TABLE / queries land in the
+    // WRONG schema. This was the update-database-all cross-context bug that created
+    // tables in the wrong schemas. Fold the resolved search_path into the key so
+    // different-schema contexts get their own pool (same-schema contexts still
+    // share one). MySQL needs nothing here — its "database" IS the schema and is
+    // already in the key. (`schema` and an equivalent `searchPath` resolve to the
+    // same value, so they correctly share a pool.)
+    if (type === 'postgres' || type === 'postgresql') {
+        let searchPath = '';
+        try {
+            searchPath = (PostgresClient.resolveSearchPath(cfg).searchPath) || '';
+        } catch (_) {
+            // Invalid schema names are surfaced later by connect(); for keying,
+            // fall back to the raw values so distinct configs still don't collide.
+            searchPath = String(cfg.searchPath || cfg.schema || '');
+        }
+        if (searchPath) { key += `#${searchPath}`; }
+    }
+    return key;
 }
 
 // ============================================================================
