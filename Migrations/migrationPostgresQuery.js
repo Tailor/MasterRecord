@@ -95,13 +95,17 @@ class migrationPostgresQuery {
             case "decimal":
                 return "DECIMAL"
             case "datetime":
-                return "TIMESTAMP"
             case "timestamp":
-                return "TIMESTAMP"
             case "date":
-                return "DATE"
             case "time":
-                return "TIME"
+                // Match the SQLite engine, which stores every temporal type as
+                // TEXT "for cross-engine portability": masterrecord apps write
+                // epoch-millis / ISO strings into these columns (entity get/set
+                // hooks like `db.get((v) => v || Date.now())`), which native
+                // TIME/TIMESTAMP/DATE columns reject at INSERT
+                // ("column is of type time without time zone but expression is
+                // of type bigint"). TEXT keeps the engines interchangeable.
+                return "TEXT"
             case "boolean":
             case "bool":
                 return "BOOLEAN"  // PostgreSQL native boolean type
@@ -130,9 +134,14 @@ class migrationPostgresQuery {
         if(table){
             // PostgreSQL uses different syntax for ALTER COLUMN
             // ALTER TABLE table_name ALTER COLUMN column_name TYPE new_type;
-            const colName = table.table.name;
+            // buildUpObject exposes column entries FLAT ({...columnDef, tableName});
+            // older callers pass a nested { table: columnDef, tableName } shape.
+            // Accept both — the nested access crashed generated CatchUp
+            // migrations with "Cannot read properties of undefined ('name')".
+            const col = table.table || table;
+            const colName = col.name;
             const tableName = table.tableName;
-            const type = this.typeManager(table.table.type);
+            const type = this.typeManager(col.type);
 
             // Build ALTER statements - PostgreSQL requires separate statements for different changes
             const statements = [];
@@ -141,19 +150,19 @@ class migrationPostgresQuery {
             statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" TYPE ${type}`);
 
             // Change nullability
-            if(table.table.nullable === false){
+            if(col.nullable === false){
                 statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET NOT NULL`);
-            } else if(table.table.nullable === true){
+            } else if(col.nullable === true){
                 statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" DROP NOT NULL`);
             }
 
             // Change default
-            if(table.table.default !== undefined && table.table.default !== null){
-                let def = table.table.default;
-                if(table.table.type === 'boolean'){
+            if(col.default !== undefined && col.default !== null){
+                let def = col.default;
+                if(col.type === 'boolean'){
                     def = (def === true || def === 'true') ? 'TRUE' : 'FALSE';
                     statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET DEFAULT ${def}`);
-                } else if(table.table.type === 'integer' || table.table.type === 'float'){
+                } else if(col.type === 'integer' || col.type === 'float'){
                     statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET DEFAULT ${def}`);
                 } else {
                     const esc = String(def).replace(/'/g, "''");

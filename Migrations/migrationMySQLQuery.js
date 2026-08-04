@@ -129,7 +129,7 @@ class migrationMySQLQuery {
       
         if(table){
 
-            return `ALTER TABLE \`${table.tableName}\` MODIFY COLUMN ${this.#columnMapping(table.table)} `;
+            return `ALTER TABLE \`${table.tableName}\` MODIFY COLUMN ${this.#columnMapping(table.table || table)} `;
         }
         else{
             console.log("table information is null");
