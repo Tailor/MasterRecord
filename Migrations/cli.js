@@ -1212,11 +1212,38 @@ program.option('-V', 'output the version');
           }
           migration.createSnapShot(snap);
           console.log(`✓ Database updated successfully for ${entry.ctxName}`);
+
+          // ISOLATION: release this context's connection(s) BEFORE moving to the
+          // next context. update-database-all runs every context in one process
+          // that shares the global connection-pool map, so accumulating open
+          // connections across contexts lets one context's connection state
+          // bleed into another (the reported bug: tables landing in the wrong
+          // MySQL database). Tearing each context down per-iteration makes the
+          // batch run behave like the safe "one process per context" approach.
+          //
+          // Two contexts are opened per iteration: `contextInstance` (from
+          // instantiateReadyContext) and the migration's own context (from
+          // `new migrationProjectFile(ContextCtor)`), which was previously never
+          // closed — a straight connection-pool leak. Close BOTH so the shared
+          // pool's refCount reaches zero and the pool is fully released.
+          try {
+            const migCtx = newMigrationProjectInstance
+              && (newMigrationProjectInstance.context || newMigrationProjectInstance._context);
+            if (migCtx && migCtx !== contextInstance && typeof migCtx.close === 'function') {
+              await migCtx.close();
+            }
+          }catch(_){ /* best-effort teardown */ }
+          try {
+            if (contextInstance && typeof contextInstance.close === 'function') {
+              await contextInstance.close();
+            }
+          }catch(_){ /* best-effort teardown */ }
         }catch(errCtx){
           console.log('Error updating context: ', errCtx);
         }
       }
-      // Cleanup all contexts
+      // Safety-net cleanup (per-iteration close above already released these;
+      // close() is a no-op once the engine is torn down).
       for(const ctx of contextInstances) {
         if (ctx && typeof ctx.close === 'function') {
           await ctx.close();

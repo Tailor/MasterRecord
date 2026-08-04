@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.4.6 — `update-database-all` isolates each context's connection lifecycle
+
+**Bug reported (MySQL wrong-database writes):** running `update-database-all` against MySQL sometimes created tables in the **wrong database** while the migrations were still recorded as applied — forcing a wipe-and-remigrate one process at a time. The single-context `update-database` command, and running each context in its own process, were always safe.
+
+**What was actually wrong in the code:** `update-database-all` runs *every* context inside **one process** that shares the global connection-pool map (`_pools`). Per iteration it opened **two** contexts — `contextInstance` (from `instantiateReadyContext`) **and** the migration's own context (`new migrationProjectFile(ContextCtor)`) — but only ever closed the first, and only at the very end of the whole batch. So open connections **accumulated across all contexts** for the entire run instead of being released between them. That is precisely the condition the safe "one process per context" workaround avoids.
+
+**Fix (per-context isolation):** each context now **tears both of its contexts down at the end of its own iteration**, before the next context is processed — so the shared pool's refcount reaches zero and the connection is fully released between contexts, making the batch run behave like the known-good one-process-per-context approach. This also fixes a straight **connection-pool leak**: the migration's own context was never closed on any path.
+
+**Honest scope note:** this is distinct from the v1.4.4 fix (that was Postgres **wrong-schema**, caused by `search_path` missing from the pool key). For MySQL the pool key already includes the database, so I could **not** reproduce the exact wrong-database line by static analysis alone. What I *did* find and fix is the concrete structural defect — cross-context connection accumulation + a never-closed migration context — that plausibly enables the reported symptom. Please re-verify `update-database-all` against fresh MySQL databases on 1.4.6; if it still misroutes, send the two context env configs that collide and I'll pin down the remaining path.
+
+Full suite green (0 fail, 271 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.4.5 — `dropTable` is idempotent (`DROP TABLE IF EXISTS`) on every engine
 
 **Bug (fresh-install migration failure):** SQLite and MySQL emitted a bare `DROP TABLE <name>` (Postgres already used `IF EXISTS`). So a migration that drops a legacy table — one that only ever existed on older installs — **failed hard on a fresh database** ("no such table" / "Unknown table"). This was inconsistent with the framework's other idempotent DDL: `createTable` already emits `IF NOT EXISTS` and `dropColumn` already skips if the column is gone.
