@@ -1162,20 +1162,24 @@ program.option('-V', 'output the version');
 
       const migration = new Migration();
       const ctxNames = Object.keys(groups);
+      const summary = [];       // { ctxName, status, applied } — one row per context
+      let anyFailed = false;
+
       for(const name of ctxNames){
+        let contextInstance;
         try{
           const list = groups[name];
           // Prefer entries that actually have migration files
           const withMigs = list.filter(e => e.migs && e.migs.length > 0);
           const entry = withMigs.length ? withMigs[withMigs.length - 1] : list[0];
           if(!(entry.migs && entry.migs.length)){
-            console.log(`Skipping ${entry.ctxName}: no migration files found.`);
+            console.log(`⏭️  Skipping ${entry.ctxName}: no migration files found.`);
+            summary.push({ ctxName: entry.ctxName, status: 'skipped (no migrations)', applied: 0 });
             continue;
           }
           const mFiles = entry.migs.slice().sort(function(a, b){
             return __getMigrationTimestamp(a) - __getMigrationTimestamp(b);
           });
-          const mFile = mFiles[mFiles.length - 1];
 
           var ContextCtor;
           try{
@@ -1183,9 +1187,10 @@ program.option('-V', 'output the version');
           }catch(err){
             console.error(`⚠️  Skipping ${entry.ctxName}: cannot load Context file`);
             console.error(`   Details: ${err.message}`);
+            summary.push({ ctxName: entry.ctxName, status: 'FAILED (context load)', applied: 0 });
+            anyFailed = true;
             continue;
           }
-          var contextInstance;
           try{
             // Auto-create a missing MySQL/Postgres database (and await async
             // init) via the schema layer before applying migrations.
@@ -1194,52 +1199,94 @@ program.option('-V', 'output the version');
           }catch(err){
             console.error(`⚠️  Skipping ${entry.ctxName}: failed to construct Context`);
             console.error(`   Details: ${err.message}`);
+            summary.push({ ctxName: entry.ctxName, status: 'FAILED (context init)', applied: 0 });
+            anyFailed = true;
             continue;
           }
-          const migrationProjectFile = await __loadUserModule(mFile);
-          const newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
-          const cleanEntities = migration.cleanEntities(contextInstance.__entities);
-          const tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
-          await newMigrationProjectInstance.up(tableObj);
-          const snap = {
-            file : entry.contextAbs,
-            executedLocation : executedLocation,
-            context : contextInstance,
-            contextEntities : cleanEntities,
-            contextSeedData: contextInstance.__contextSeedData || {},
-            contextSeedConfig: contextInstance.__contextSeedConfig || {},
-            contextFileName: entry.ctxName
-          }
-          migration.createSnapShot(snap);
-          console.log(`✓ Database updated successfully for ${entry.ctxName}`);
 
-          // ISOLATION: release this context's connection(s) BEFORE moving to the
-          // next context. update-database-all runs every context in one process
-          // that shares the global connection-pool map, so accumulating open
-          // connections across contexts lets one context's connection state
-          // bleed into another (the reported bug: tables landing in the wrong
-          // MySQL database). Tearing each context down per-iteration makes the
-          // batch run behave like the safe "one process per context" approach.
-          //
-          // Two contexts are opened per iteration: `contextInstance` (from
-          // instantiateReadyContext) and the migration's own context (from
-          // `new migrationProjectFile(ContextCtor)`), which was previously never
-          // closed — a straight connection-pool leak. Close BOTH so the shared
-          // pool's refCount reaches zero and the pool is fully released.
+          const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+          // Build tableObj once from the current entity state — all pending
+          // migrations share it (mirrors the single-context update-database).
+          const tableObj = migration.buildUpObject(entry.cs.schema, cleanEntities);
+
+          // Run EVERY pending migration in order and record each in the
+          // tracking table — the SAME behavior as the single-context
+          // `update-database`. Previously this batch command applied ONLY the
+          // latest migration file and never consulted/wrote the tracking table,
+          // so earlier pending migrations were silently skipped and nothing was
+          // recorded ("schema changes silently stop applying").
           try {
-            const migCtx = newMigrationProjectInstance
-              && (newMigrationProjectInstance.context || newMigrationProjectInstance._context);
-            if (migCtx && migCtx !== contextInstance && typeof migCtx.close === 'function') {
-              await migCtx.close();
+            await __ensureMigrationsTable(contextInstance);
+          } catch (err) {
+            console.error(`❌ ${entry.ctxName}: could not create migration tracking table — ${err.message}`);
+            summary.push({ ctxName: entry.ctxName, status: 'FAILED (tracking table)', applied: 0 });
+            anyFailed = true;
+            continue;
+          }
+
+          const appliedMigrations = await __getAppliedMigrations(contextInstance);
+          const pending = mFiles.filter(f => !appliedMigrations.has(path.basename(f)));
+
+          let appliedCount = 0;
+          let ctxFailed = false;
+          for (const mFile of pending) {
+            const migrationName = path.basename(mFile);
+            try {
+              const MigrationCtor = await __loadUserModule(mFile);
+              const inst = new MigrationCtor(ContextCtor);
+              await inst.up(tableObj);
+              await __recordMigrationApplied(contextInstance, migrationName);
+              appliedCount++;
+              // Release the migration's own context (opened by its schema
+              // constructor) so connections don't accumulate across the batch.
+              try {
+                const mc = inst && (inst.context || inst._context);
+                if (mc && mc !== contextInstance && typeof mc.close === 'function') { await mc.close(); }
+              } catch(_){ /* best-effort teardown */ }
+            } catch (err) {
+              console.error(`❌ ${entry.ctxName}: migration '${migrationName}' failed — ${err.message}`);
+              console.error(`   Earlier migrations (if any) were applied and recorded. Fix and re-run to resume.`);
+              ctxFailed = true;
+              anyFailed = true;
+              break;
             }
-          }catch(_){ /* best-effort teardown */ }
-          try {
-            if (contextInstance && typeof contextInstance.close === 'function') {
-              await contextInstance.close();
+          }
+
+          if (ctxFailed) {
+            summary.push({ ctxName: entry.ctxName, status: `FAILED (after ${appliedCount} applied)`, applied: appliedCount });
+          } else {
+            if (appliedCount === 0) {
+              console.log(`✓ ${entry.ctxName}: up to date (${appliedMigrations.size} on record)`);
+            } else {
+              console.log(`✓ ${entry.ctxName}: applied ${appliedCount} migration(s)`);
             }
-          }catch(_){ /* best-effort teardown */ }
+            // Snapshot only a context that fully applied without error.
+            const snap = {
+              file : entry.contextAbs,
+              executedLocation : executedLocation,
+              context : contextInstance,
+              contextEntities : cleanEntities,
+              contextSeedData: contextInstance.__contextSeedData || {},
+              contextSeedConfig: contextInstance.__contextSeedConfig || {},
+              contextFileName: entry.ctxName
+            }
+            migration.createSnapShot(snap);
+            summary.push({ ctxName: entry.ctxName, status: appliedCount === 0 ? 'up to date' : `applied ${appliedCount}`, applied: appliedCount });
+          }
         }catch(errCtx){
-          console.log('Error updating context: ', errCtx);
+          console.log(`Error updating context '${name}': `, errCtx);
+          anyFailed = true;
+          summary.push({ ctxName: name, status: 'FAILED (unexpected)', applied: 0 });
+        } finally {
+          // ISOLATION: release this context's connection(s) before the next.
+          // update-database-all runs every context in one process sharing the
+          // global connection-pool map; tearing each context down per-iteration
+          // makes the batch behave like the safe one-process-per-context run
+          // (1.4.6) and prevents one context's connection state bleeding into
+          // the next.
+          try {
+            if (contextInstance && typeof contextInstance.close === 'function') { await contextInstance.close(); }
+          }catch(_){ /* best-effort teardown */ }
         }
       }
       // Safety-net cleanup (per-iteration close above already released these;
@@ -1249,7 +1296,19 @@ program.option('-V', 'output the version');
           await ctx.close();
         }
       }
-      process.exit(0);
+
+      // Loud summary so a deploy log makes it obvious what actually happened —
+      // "0 applied across all contexts" and per-context failures used to look
+      // identical to success.
+      const totalApplied = summary.reduce((n, s) => n + (s.applied || 0), 0);
+      console.log(`\n── update-database-all summary ──`);
+      for (const s of summary) { console.log(`   ${s.ctxName}: ${s.status}`); }
+      console.log(`   ────`);
+      console.log(`   ${summary.length} context(s), ${totalApplied} migration(s) applied${anyFailed ? ', SOME FAILED' : ''}.`);
+
+      // Exit non-zero if any context failed so CI / deploy pipelines detect it
+      // (previously this command always exited 0, hiding failures).
+      process.exit(anyFailed ? 1 : 0);
     }catch(e){
       console.log('Error - Cannot read or find file ', e);
       // Cleanup all contexts

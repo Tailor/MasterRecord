@@ -6,6 +6,11 @@
  *      out already-applied migrations).
  *   3. `update-database-down` rolls back only the MOST RECENTLY APPLIED
  *      migration, not just the latest file on disk.
+ *   4. `update-database-all` (the batch/deploy command) has the SAME parity:
+ *      it applies every pending migration and records each, and a second run
+ *      is a clean no-op. (It previously applied ONLY the latest migration file
+ *      and never wrote the tracking table — "schema changes silently stop
+ *      applying".)
  */
 
 import { test } from 'node:test';
@@ -211,6 +216,40 @@ test('update-database is a no-op on the second run (tracking table filters)', ()
     const second = runCli(['update-database', 'multimigctx'], projectDir);
     assert.equal(second.status, 0, `second run failed. stderr:\n${second.stderr}`);
     assert.match(second.stdout, /already applied|up to date/i, `expected no-op message on second run; got:\n${second.stdout}`);
+
+    const applied = appliedMigrationRows(dbPath(dbDir));
+    assert.equal(applied.length, 3, 'still exactly 3 applied rows after second run');
+});
+
+test('update-database-all applies ALL pending migrations and records them (parity with update-database)', () => {
+    const { projectDir, dbDir } = makeProject();
+    const result = runCli(['update-database-all'], projectDir);
+
+    assert.equal(result.status, 0, `CLI exited non-zero. stderr:\n${result.stderr}\nstdout:\n${result.stdout}`);
+
+    const file = dbPath(dbDir);
+    assert.ok(fs.existsSync(file), 'SQLite DB file should be created');
+
+    const tables = tableNames(file);
+    assert.ok(tables.includes('Author'), 'Author table should exist (migration 1)');
+    assert.ok(tables.includes('Book'), 'Book table should exist (migration 2)');
+    assert.ok(tables.includes('Review'), 'Review table should exist (migration 3) — NOT just the latest');
+    assert.ok(tables.includes('_masterrecord_migrations'), 'migration tracking table should exist');
+
+    const applied = appliedMigrationRows(file);
+    assert.equal(applied.length, 3, `all three migrations should be recorded; got ${applied.length}: ${applied.join(', ')}`);
+
+    assert.match(result.stdout, /summary/i, 'should print a per-context summary');
+});
+
+test('update-database-all is a no-op on the second run (exit 0, tracking table filters)', () => {
+    const { projectDir, dbDir } = makeProject();
+    const first = runCli(['update-database-all'], projectDir);
+    assert.equal(first.status, 0, `first run failed. stderr:\n${first.stderr}`);
+
+    const second = runCli(['update-database-all'], projectDir);
+    assert.equal(second.status, 0, `second run failed. stderr:\n${second.stderr}`);
+    assert.match(second.stdout, /up to date/i, `expected up-to-date message on second run; got:\n${second.stdout}`);
 
     const applied = appliedMigrationRows(dbPath(dbDir));
     assert.equal(applied.length, 3, 'still exactly 3 applied rows after second run');

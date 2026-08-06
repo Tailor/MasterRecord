@@ -5,10 +5,13 @@
  *    diff against the existing schema, so re-running migrations failed with
  *    `column "X" already exists`.
  *
- * 2. DROP COLUMN DDL was not idempotent — Postgres/MySQL didn't emit
- *    `IF EXISTS` and SQLite had no runtime guard, so re-running a
- *    drop-column migration after a failed/partial run errored with
- *    `column "X" does not exist`.
+ * 2. DROP COLUMN DDL was not idempotent — re-running a drop-column migration
+ *    after a failed/partial run errored with `column "X" does not exist`.
+ *    Postgres supports `DROP COLUMN IF EXISTS` and now emits it. MySQL and
+ *    SQLite do NOT support that clause (it is MariaDB-only on MySQL, and
+ *    unsupported on SQLite), so their idempotency guard lives in
+ *    schema.dropColumn(), which probes the live schema and skips a column
+ *    that is already gone.
  */
 
 import { test } from 'node:test';
@@ -55,10 +58,13 @@ test('Postgres dropColumn emits IF EXISTS with quoted identifiers', () => {
     assert.match(sql, /ALTER TABLE "SchedulerLeader" DROP COLUMN IF EXISTS "staleField"/);
 });
 
-test('MySQL dropColumn emits IF EXISTS with backtick quotes', () => {
+test('MySQL dropColumn backtick-quotes identifiers and does NOT emit IF EXISTS', () => {
     const q = new MySQLQuery();
     const sql = q.dropColumn({ tableName: 'User', name: 'legacyField' });
-    assert.match(sql, /ALTER TABLE `User` DROP COLUMN IF EXISTS `legacyField`/);
+    assert.match(sql, /ALTER TABLE `User` DROP COLUMN `legacyField`/);
+    // MySQL has no `IF EXISTS` on DROP COLUMN (MariaDB-only syntax — emitting it
+    // throws ER_PARSE_ERROR); the guard lives in schema.dropColumn().
+    assert.doesNotMatch(sql, /IF EXISTS/);
 });
 
 test('SQLite dropColumn quotes identifiers with square brackets', () => {

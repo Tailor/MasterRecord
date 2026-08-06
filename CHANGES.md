@@ -1,5 +1,24 @@
 # MasterRecord Changelog
 
+## v1.5.2 — `update-database-all` reaches parity with `update-database` (applies ALL pending migrations, records them, reports loudly)
+
+**Bug (the real root of "schema changes silently stop applying"):** the batch command `update-database-all` — the one a deploy/start script calls to migrate every context — never received the "run all pending migrations + track them" fix that the single-context `update-database` got. It:
+- applied **only the latest migration file** per context (`mFiles[mFiles.length - 1]`), silently skipping every earlier pending migration;
+- **never consulted or wrote the `_masterrecord_migrations` tracking table**, so nothing was recorded and re-runs weren't idempotent;
+- printed `✓ Database updated successfully` unconditionally — even when a context **errored** — and always `process.exit(0)`, so a CI/deploy pipeline could not detect a failure.
+
+**Fix (full parity with `update-database`):**
+- Runs **every pending migration** in timestamp order (filtered against the tracking table) and **records each** via `__recordMigrationApplied`. A second run is a clean no-op.
+- **Loud per-context output** (`✓ <ctx>: applied N migration(s)` / `up to date (N on record)`) plus an end-of-run **summary** listing every context's status and the total applied — so "0 applied across all contexts" and per-context failures no longer look identical to success.
+- **Exits non-zero when any context fails** (previously always 0), so deploys/CI catch it. Snapshots are only written for contexts that fully applied without error.
+- Keeps the 1.4.6 per-context connection isolation (each context, and each migration's own context, is torn down before the next).
+
+**Also fixed:** a stale test — `drop-column-idempotent.test.js` still asserted MySQL emitted `DROP COLUMN IF EXISTS`, which the 1.5.1 fix correctly removed (that clause is MariaDB-only on MySQL and throws `ER_PARSE_ERROR`; idempotency lives in `schema.dropColumn()`). The test now matches the shipped behavior (backtick-quoted, no `IF EXISTS`), mirroring the SQLite case.
+
+**Upgrade note:** on the first `update-database-all` after upgrading, any migration **not yet in the tracking table** is treated as pending and re-applied. Schema DDL is idempotent (`createTable` checks existence, `addColumn` no-ops on a present column, `dropTable`/Postgres `dropColumn` use `IF EXISTS`), so this is safe for DDL — but if a migration contains a **raw-SQL data backfill**, test the run against a **copied dev database** first (backfills should be written as raw SQL and are not automatically idempotent).
+
+New tests: `test/update-database-multi.test.js` now also spawns the real `update-database-all` CLI and asserts it applies all three migrations (not just the latest), records all three, prints a summary, and is a no-op on the second run. Full suite green (0 fail, 282 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.1 — DROP COLUMN works on MySQL
 
 **Bug reported (MySQL 8.4):** every drop-column migration failed with
