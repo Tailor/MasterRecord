@@ -1,5 +1,29 @@
 # MasterRecord Changelog
 
+## v1.5.1 — DROP COLUMN works on MySQL
+
+**Bug reported (MySQL 8.4):** every drop-column migration failed with
+`ER_PARSE_ERROR … near 'IF EXISTS \`public_settings\`'`. The MySQL builder
+emitted `ALTER TABLE … DROP COLUMN IF EXISTS …`, but **MySQL has never
+supported `IF EXISTS` on DROP COLUMN** — that is MariaDB syntax. The code
+carried a comment claiming it arrived in MySQL 8.0.24, which is not the case.
+
+The failure mode was quiet where it mattered: a deploy script that logs and
+continues past a failed migration left the column in place, the migration
+unrecorded, and the schema silently behind — while the same migration's
+`createTable` and data backfill had already run.
+
+**Fix:** the clause is gone from the MySQL DDL, and `schema.dropColumn()` now
+emulates it for MySQL the way it already did for SQLite — probe the live schema
+and return early when the column is absent, so re-running a migration is still
+idempotent. Only Postgres, which genuinely supports it, still emits the clause.
+Column-name matching accepts both `name` and `COLUMN_NAME`, so raw
+information_schema rows are not mistaken for "already gone".
+
+New test: `test/drop-column-mysql-syntax.test.js` — pins the emitted DDL and
+all three schema paths (exists → ALTER, gone → no-op, information_schema
+shape). Three of its four cases fail against 1.5.0.
+
 ## v1.5.0 — syncTable keeps a column's nullability (Postgres/MySQL)
 
 **Bug reported (Postgres):** every column added to an existing table by

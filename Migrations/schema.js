@@ -295,18 +295,21 @@ class schema{
         }
         if(table){
             if(this.fullTable){
-                // SQLite doesn't support `IF EXISTS` on DROP COLUMN, so
-                // emulate it here: probe getTableInfo and bail out if the
-                // column is already gone. Postgres + MySQL emit the
-                // `IF EXISTS` clause directly in their DDL.
-                if(this.context.isSQLite){
+                // Neither SQLite nor MySQL supports `IF EXISTS` on DROP COLUMN
+                // (MySQL never has — that is MariaDB syntax), so emulate it for
+                // both: probe the live schema and bail out if the column is
+                // already gone. Only Postgres emits the clause in its DDL.
+                if(this.context.isSQLite || this.context.isMySQL){
                     if (typeof this.context._SQLEngine.getTableInfo === 'function') {
                         const cols = await this.context._SQLEngine.getTableInfo(table.tableName);
-                        const exists = Array.isArray(cols) && cols.some(c => c && (c.name === table.name));
+                        const exists = Array.isArray(cols) && cols.some(c => c && (c.name === table.name || c.COLUMN_NAME === table.name));
                         if (!exists) {
                             return;
                         }
                     }
+                }
+
+                if(this.context.isSQLite){
                     var queryBuilder = new sqliteQuery();
                     var query = queryBuilder.dropColumn(table);
                     await this.context._execute(query);
