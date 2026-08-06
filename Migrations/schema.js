@@ -411,11 +411,16 @@ class schema{
                 if(col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough') continue;
                 const colName = (col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : col.name;
                 if(!existingNames.has(colName)){
-                    // add column
+                    // add column — carry the WHOLE definition, not just the
+                    // name/type. Dropping `nullable`/`unique`/`default` here
+                    // made every synced column NOT NULL (columnMapping treats a
+                    // missing `nullable` as false), so a later insert that left
+                    // the column empty failed against a column the entity had
+                    // declared optional.
                     const newCol = {
+                        ...col,
                         tableName: tableName,
-                        name: colName,
-                        type: col.type
+                        name: colName
                     };
                     // MySQL path uses addColum with realDataType
                     if(this.context.isSQLite){
@@ -523,6 +528,35 @@ class schema{
                     }
                     const alter = `ALTER TABLE ${tableName} MODIFY COLUMN ${d.name} ${type} ${nullPart}${defPart}`;
                     await this.context._execute(alter);
+                }
+            }
+        }
+
+        if(this.context.isPostgres){
+            // Reconcile nullability and defaults, the way the MySQL branch
+            // above does. Without this a column that was created NOT NULL by
+            // an older sync stayed NOT NULL forever, even though the entity
+            // declared it optional.
+            const byName = {};
+            for(const row of existing){ byName[row.name] = row; }
+            for(const d of desiredCols){
+                const row = byName[d.name];
+                if(!row) continue;
+                if(d.col.primary) continue;              // never touch the key
+                const desiredNotNull = d.col.nullable === false;
+                const existingNullable = String(row.is_nullable || '').toUpperCase() === 'YES';
+                if(desiredNotNull && existingNullable){
+                    // Only safe when no row would violate it; Postgres tells us
+                    // by failing, and a failure here must not abort the deploy.
+                    try {
+                        await this.context._execute(`ALTER TABLE "${tableName}" ALTER COLUMN "${d.name}" SET NOT NULL`);
+                    } catch (e) {
+                        if(process.env.MR_SILENT_MIGRATIONS !== 'true'){
+                            console.log(`[masterrecord:sync] could not set NOT NULL on ${tableName}.${d.name}: ${e.message}`);
+                        }
+                    }
+                } else if(!desiredNotNull && !existingNullable){
+                    await this.context._execute(`ALTER TABLE "${tableName}" ALTER COLUMN "${d.name}" DROP NOT NULL`);
                 }
             }
         }

@@ -1,5 +1,38 @@
 # MasterRecord Changelog
 
+## v1.5.0 — syncTable keeps a column's nullability (Postgres/MySQL)
+
+**Bug reported (Postgres):** every column added to an existing table by
+`schema.syncTable()` came out `NOT NULL`, whatever the entity said. An app that
+declared `metric(db){ db.string(); }` — optional — got
+`"metric" VARCHAR(255) NOT NULL`, and the next insert that left it empty failed
+against a constraint nobody wrote. `syncTable` runs on any bootstrap path that
+calls `createTable()` for a table that already exists, so this hit real
+deployments: the sync added the column before the tracked migration could, and
+the migration then skipped it as "already exists".
+
+**What was actually wrong:** when a desired column was missing, `syncTable`
+built its spec as `{tableName, name, type}` and dropped the rest of the entity's
+definition. `columnMapping()` reads `table.nullable` and treats *missing* as
+`false`, so the generated DDL always carried `NOT NULL` — and `unique` and
+`default` were silently lost the same way.
+
+**Fix (two parts):**
+
+1. `syncTable` now spreads the whole column definition (`{...col, tableName,
+   name}`) into the add, so nullability, uniqueness and defaults survive.
+2. Postgres gained the nullability/default reconciliation pass that MySQL and
+   SQLite already had. A column made `NOT NULL` by an older sync is now brought
+   back in line with its entity (`ALTER COLUMN … DROP NOT NULL`), and a column
+   the entity marks required is tightened where the data allows — a failed
+   `SET NOT NULL` (existing rows hold nulls) is reported, not fatal, so a
+   deploy is never blocked by it.
+
+New test: `test/sync-table-nullable.test.js` — drives `syncTable` against a
+recording stub context and pins all four cases (nullable added, required added,
+existing constraint dropped, matching column untouched). Two of the four fail
+against 1.4.9.
+
 ## v1.4.8 — MySQL temporal types map to TEXT too (completes the 1.4.7 cross-engine fix)
 
 **Bug (parallel to 1.4.7):** 1.4.7 fixed Postgres to store temporal types (`time`/`date`/`datetime`/`timestamp`) as `TEXT`, matching SQLite, because masterrecord apps write epoch-millis / ISO strings into those columns via entity hooks (`db.get((v) => v || Date.now())`) — values a native temporal column rejects at INSERT. But **MySQL was left mapping the same types to native `DATETIME`/`TIMESTAMP`/`DATE`/`TIME`**, so an app that ran on SQLite hit the identical failure (`Incorrect datetime value`) the moment it targeted MySQL. The 1.4.7 commit fixed one of the two native-temporal engines; this fixes the other.
