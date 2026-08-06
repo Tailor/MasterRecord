@@ -9,13 +9,21 @@ const task = await this._taskService.getTask(taskId);
 // Service receives task and modifies it
 task.status = 'completed';
 
-// Try to save - BUT IT DOESN'T WORK! ❌
-this._qaContext.saveChanges();  // Task change NOT saved
+// Try to save - the task change is NOT written by this context ❌
+this._qaContext.saveChanges();  // Task change not persisted here
 
-// Why? The task is "detached" - not tracked by _qaContext
+// Why? The task is "detached" - it is tracked by a DIFFERENT context
 ```
 
-**Root Cause:** The task was loaded in a different context (`taskService`) and is now **detached** from the current context (`_qaContext`). MasterRecord's change tracking doesn't see the modification.
+**Root Cause:** The task was loaded in a different context (`taskService`) and is tracked there, not by the current context (`_qaContext`). `_qaContext.saveChanges()` only writes entities *it* tracks.
+
+> **As of 1.4.3 this no longer fails silently.** `saveChanges()` now **warns
+> loudly** when entities tracked by a *different* context instance have unsaved
+> changes — naming them and pointing you to the fix (save on the owning context,
+> use `entity.save()`, or re-track with `context.attach(entity)`). Freshly loaded,
+> unmodified entities never trip the warning. If you *intentionally* run multiple
+> concurrent contexts with independent pending changes, silence it with
+> `MASTERRECORD_SILENCE_CROSS_CONTEXT=1`.
 
 ---
 

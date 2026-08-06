@@ -121,6 +121,7 @@ await db.env({
 
 How it works:
 - The schema is applied to **every pooled connection** via libpq's `search_path` startup option, so introspection, migrations (DDL), and runtime queries all resolve to it — no per-query schema qualification needed.
+- **Connection pools are keyed by schema.** Two contexts pointed at the same database but different schemas get **separate** pools, so one context's `search_path` can never bleed into another's — a `CREATE TABLE` always lands in the intended schema. (This is what makes `update-database-all` safe across multi-schema contexts.)
 - On connect, MasterRecord runs `CREATE SCHEMA IF NOT EXISTS "<schema>"`, so a fresh deploy self-creates the schema before any table is created in it.
 - `schema: 'x'` expands to a search_path of `x,public` (so shared objects in `public` remain reachable). Use `searchPath` to control the full list/order.
 
@@ -349,8 +350,11 @@ Key differences when migrating to PostgreSQL:
    - MasterRecord handles type coercion
 
 4. **Date/Time**:
-   - Both use Date objects in JavaScript
-   - PostgreSQL has more precise timestamp handling
+   - Temporal types (`date`/`time`/`datetime`/`timestamp`) are stored as `TEXT`
+     on **every** engine (SQLite, MySQL, PostgreSQL) for cross-engine portability
+   - Write epoch-millis or ISO-8601 strings; a native PostgreSQL temporal column
+     would reject those values at INSERT
+   - Set the value in app code or a `beforeSave` hook (not a DB-side default)
 
 5. **RETURNING Clause**:
    - PostgreSQL requires `RETURNING id` for INSERT
@@ -373,7 +377,7 @@ node test/postgresIntegrationTest.js
 - **MasterRecord**: 1.0+ (ESM-only)
 - **pg (node-postgres)**: 8.17+
 - **PostgreSQL Server**: 9.6+ (tested with 12+, 13+, 14+)
-- **Node.js**: 20+
+- **Node.js**: 22.12+ (better-sqlite3@13 requires Node 22+)
 
 ## Complete Example
 

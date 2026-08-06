@@ -408,7 +408,31 @@ masterrecord add-migration-all <MigrationName>
 masterrecord update-database-all
 ```
 
-Migration state is tracked in `<contextname>_contextSnapShot.json` alongside the migration files.
+`update-database` applies **every pending migration** in timestamp order (not
+just the latest file) and records each after it succeeds, so re-running it is a
+no-op. `update-database-all` does the same for **every context in the project**:
+it applies all pending migrations per context, records each, isolates each
+context's database connection, prints a per-context summary of what was applied,
+and **exits non-zero if any context fails** — so a deploy or CI step detects a
+partial failure instead of it passing silently.
+
+### Two kinds of migration state
+
+There are two distinct pieces of state — don't confuse them:
+
+- **`<contextname>_contextSnapShot.json`** is the **schema baseline** used for
+  *diffing*: `add-migration` compares your current entities against it to emit
+  the next delta migration, then rewrites it.
+- **The `_masterrecord_migrations` table** (created lazily in each database on
+  first apply) records **which migrations have already run**. `update-database`
+  and `update-database-all` consult it to compute the pending set and to stay
+  idempotent on re-runs.
+
+> **Migrations are DDL-only.** The migration DSL describes schema — create/alter/
+> drop tables and columns. For a **data backfill**, write raw SQL inside the
+> migration's `up()` (e.g. `await this._execute("UPDATE ...")`) and test the run
+> against a **copy of your dev database** first — a backfill is not automatically
+> idempotent the way the generated DDL is.
 
 ## Examples
 

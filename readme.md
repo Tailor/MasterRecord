@@ -471,7 +471,8 @@ class User {
     // Unique constraint
     email(db) { db.string().unique(); }
 
-    // Timestamp (stored as TEXT on SQLite; set it in app code or a beforeSave hook)
+    // Timestamp (stored as TEXT on every engine; write an epoch-millis or ISO
+    // string in app code or a beforeSave hook)
     created_at(db) { db.datetime(); }
 }
 ```
@@ -491,14 +492,22 @@ class User {
 | `float`           | REAL          | FLOAT         | REAL      |
 | `decimal`         | DECIMAL       | DECIMAL       | REAL      |
 | `boolean`         | BOOLEAN       | TINYINT       | INTEGER   |
-| `date`            | DATE          | DATE          | TEXT      |
-| `time`            | TIME          | TIME          | TEXT      |
-| `datetime`        | TIMESTAMP     | DATETIME      | TEXT      |
-| `timestamp`       | TIMESTAMP     | TIMESTAMP     | TEXT      |
+| `date`            | TEXT          | TEXT          | TEXT      |
+| `time`            | TEXT          | TEXT          | TEXT      |
+| `datetime`        | TEXT          | TEXT          | TEXT      |
+| `timestamp`       | TEXT          | TEXT          | TEXT      |
 | `json`            | JSON          | JSON          | TEXT      |
 | `jsonb`           | JSONB         | JSON          | TEXT      |
 | `uuid`            | UUID          | VARCHAR(36)   | TEXT      |
 | `binary`          | BYTEA         | BLOB          | BLOB      |
+
+> **Temporal types are TEXT everywhere.** `date`, `time`, `datetime`, and
+> `timestamp` are stored as `TEXT` on **all three engines** (not native
+> `DATE`/`TIME`/`TIMESTAMP`/`DATETIME`) so the same model runs unchanged across
+> SQLite, MySQL, and PostgreSQL. Write epoch-millis or ISO-8601 strings — a
+> native temporal column would reject those values at INSERT. Set them in app
+> code or a `beforeSave` hook rather than via a DB-side `CURRENT_TIMESTAMP`
+> default.
 
 ### Relationships
 
@@ -1862,7 +1871,10 @@ class User {
     }
 
     created_at(db) {
-        db.timestamp().default('CURRENT_TIMESTAMP');
+        // Temporal columns are TEXT on every engine — set the value in app
+        // code or a beforeSave hook (a DB-side CURRENT_TIMESTAMP default is not
+        // portable). Write epoch-millis or an ISO string.
+        db.datetime();
     }
 }
 ```
@@ -1963,7 +1975,10 @@ class CreditLedger {
     }
 
     created_at(db) {
-        db.timestamp().default('CURRENT_TIMESTAMP');
+        // Temporal columns are TEXT on every engine — set the value in app
+        // code or a beforeSave hook (a DB-side CURRENT_TIMESTAMP default is not
+        // portable). Write epoch-millis or an ISO string.
+        db.datetime();
     }
 
     resource_type(db) {
