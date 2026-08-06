@@ -565,25 +565,68 @@ class schema{
         }
 
         if(needRebuildSQLite()){
-                        var queryBuilder = new sqliteQuery();
-            // rename old table
-            const rename = queryBuilder.renameTable({ tableName, newName: "_temp_alter_column_update" });
-            await this.context._execute(rename);
-            // create new with desired schema
-            const create = queryBuilder.createTable(table);
-            await this.context._execute(create);
-            // compute common columns
-            const oldInfo = await engine.getTableInfo(tableName.replace(/.*/, '_temp_alter_column_update')) || await engine.getTableInfo("_temp_alter_column_update");
-            const oldNames = new Set((oldInfo || existing).map(r => r.name));
-            const newNames = desiredCols.map(d => d.name);
-            const common = newNames.filter(n => oldNames.has(n));
-            if(common.length > 0){
-                const cols = common.join(',');
-                const insert = `INSERT INTO ${tableName} (${cols}) SELECT ${cols} FROM _temp_alter_column_update`;
-                await this.context._execute(insert);
+            var queryBuilder = new sqliteQuery();
+            const TEMP = "_temp_alter_column_update";
+
+            // A rebuild is rename -> create -> copy -> drop. Every step after the
+            // rename is a step where the table's contents live only in TEMP, so a
+            // failure there used to leave the original renamed away and the new
+            // table empty. Anything that goes wrong now puts the original back.
+            const leftovers = await engine.getTableInfo(TEMP);
+            if(leftovers && leftovers.length){
+                // A previous run died mid-rebuild. Its data is the real data.
+                await this.context._execute(queryBuilder.dropTable(tableName));
+                await this.context._execute(`ALTER TABLE ${TEMP} RENAME TO ${tableName}`);
             }
-            const drop = queryBuilder.dropTable("_temp_alter_column_update");
-            await this.context._execute(drop);
+
+            // Foreign keys must be off for the duration. The rebuild drops the
+            // renamed original, and a child table with ON DELETE CASCADE takes
+            // that as its parent disappearing — rebuilding Post silently emptied
+            // Kudos, Poll, PollOption, PollVote, PostComment and PostLike.
+            // SQLite's own "making other kinds of table schema changes" recipe
+            // prescribes exactly this.
+            let fkWasOn = false;
+            try {
+                const fk = await engine.query('PRAGMA foreign_keys');
+                fkWasOn = !!(fk && fk[0] && (fk[0].foreign_keys === 1 || fk[0].foreign_keys === true));
+            } catch { /* pragma unavailable — treat as off */ }
+            if(fkWasOn) await this.context._execute('PRAGMA foreign_keys = OFF');
+
+            await this.context._execute(queryBuilder.renameTable({ tableName, newName: TEMP }));
+            try {
+                await this.context._execute(queryBuilder.createTable(table));
+
+                const oldInfo = await engine.getTableInfo(TEMP);
+                const oldNames = new Set((oldInfo || existing).map(r => r.name));
+                const common = desiredCols.filter(d => oldNames.has(d.name));
+                if(common.length > 0){
+                    // A column that is NOT NULL now may hold NULLs in rows written
+                    // before it was required. Copying those verbatim fails the
+                    // constraint and costs the whole table, so they take the
+                    // column's default — or a typed zero value when it has none.
+                    const cols = common.map(d => d.name).join(',');
+                    const selects = common.map(d => {
+                        if(d.col.nullable !== false) return d.name;
+                        let fallback = d.col.default;
+                        if(fallback == null){
+                            const t = String(d.col.type || '').toLowerCase();
+                            fallback = (t === 'integer' || t === 'float' || t === 'decimal' || t === 'boolean') ? 0 : "''";
+                        } else if(typeof fallback === 'string'){
+                            fallback = `'${fallback.replace(/'/g, "''")}'`;
+                        }
+                        return `COALESCE(${d.name}, ${fallback})`;
+                    }).join(',');
+                    await this.context._execute(`INSERT INTO ${tableName} (${cols}) SELECT ${selects} FROM ${TEMP}`);
+                }
+                await this.context._execute(queryBuilder.dropTable(TEMP));
+            } catch(err) {
+                // Put the table back exactly as it was, then report.
+                try { await this.context._execute(queryBuilder.dropTable(tableName)); } catch { /* never created */ }
+                await this.context._execute(`ALTER TABLE ${TEMP} RENAME TO ${tableName}`);
+                throw err;
+            } finally {
+                if(fkWasOn) await this.context._execute('PRAGMA foreign_keys = ON');
+            }
         }
     }
 
