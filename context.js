@@ -2120,10 +2120,32 @@ class context {
      * db.saveChanges();
      */
     async saveChanges() {
-        await this._ensureReady();
-        try {
-            const tracked = this.__trackedEntities;
+        // Concurrent saveChanges() calls on a shared context are serialized.
+        // The engines hold ONE transaction client (`_txnClient`) and the
+        // tracked-entity list is shared context state, so two overlapping
+        // calls used to ride the same BEGIN..COMMIT: whichever finished first
+        // committed (or rolled back) BOTH callers' writes, and the other
+        // caller's remaining statements fell through to autocommit on random
+        // pooled connections. Under load that shows up as "the row I saved
+        // (and whose id my child rows reference) is gone" — an aborted
+        // sibling transaction took it down. Queuing removes the interleaving
+        // while keeping each batch atomic.
+        const run = () => this._saveChangesExclusive();
+        const prev = this.__saveQueue || Promise.resolve();
+        const next = prev.then(run, run);
+        // The queue itself must swallow rejections or one failed save would
+        // poison every save after it; callers still see their own rejection
+        // through `next`.
+        this.__saveQueue = next.catch(() => {});
+        return next;
+    }
 
+    async _saveChangesExclusive() {
+        await this._ensureReady();
+        // Snapshot the batch: entities add()ed while this save is in flight
+        // belong to the NEXT queued save, and must not be cleared by this one.
+        const tracked = this.__trackedEntities.slice();
+        try {
             // Loud guard against silent data loss: if entities with unsaved
             // changes are tracked by a DIFFERENT context instance, THIS
             // saveChanges() will not write them. Warn loudly (this is the #1
@@ -2165,16 +2187,26 @@ class context {
                 this._queryCache.invalidateTable(tableName);
             }
 
-            // Clear tracked entities after successful save
-            this.__clearTracked();
+            // Clear only THIS batch — entities tracked mid-save stay queued.
+            this.__untrack(tracked);
             return true;
         } catch (error) {
-            // Clean up on error
+            // Clean up on error (this batch only)
             this.__clearErrorHandler();
-            this.__clearTracked();
+            this.__untrack(tracked);
 
             console.error('[Context] Failed to save changes:', error);
             throw error;
+        }
+    }
+
+    /** Remove a specific batch of entities from change tracking. */
+    __untrack(batch) {
+        if (!batch || !batch.length) return;
+        const drop = new Set(batch);
+        this.__trackedEntities = this.__trackedEntities.filter(e => !drop.has(e));
+        for (const e of batch) {
+            if (e && e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
         }
     }
 

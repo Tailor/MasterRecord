@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.5.4 — concurrent `saveChanges()` calls no longer cross-wire one another's transactions
+
+**Bug (production data loss under concurrency):** each engine holds a single transaction client (`_txnClient` on Postgres/MySQL; the shared connection on SQLite), and `startTransaction()` returns early when one is already open. Two `saveChanges()` calls overlapping in time therefore rode the **same** BEGIN..COMMIT:
+
+- whichever call finished first issued COMMIT (or ROLLBACK) for **both** batches;
+- the other call's remaining statements then ran with no transaction at all, autocommitting on random pooled connections;
+- when the shared transaction aborted, rows the first caller had already "saved" — and whose generated ids later child rows referenced — were rolled back. Observed in production as vanished parent rows with orphaned children pointing at their ids (the id sequence shows the gap).
+
+**Fix:** `saveChanges()` now serializes through a per-context promise queue — each call becomes `_saveChangesExclusive()`, which runs alone: snapshot the tracked batch, BEGIN, write, COMMIT/ROLLBACK, and untrack **only that batch** (entities `add()`ed while a save is in flight belong to the next queued save and are no longer clobbered by a blanket `__clearTracked()`). A failed save rejects its own caller without poisoning the queue.
+
+**Test:** `test/concurrent-savechanges.test.js` fires interleaved add+save pairs without awaiting and asserts every batch lands exactly once with tracking drained.
+
 ## v1.5.2 — `update-database-all` reaches parity with `update-database` (applies ALL pending migrations, records them, reports loudly)
 
 **Bug (the real root of "schema changes silently stop applying"):** the batch command `update-database-all` — the one a deploy/start script calls to migrate every context — never received the "run all pending migrations + track them" fix that the single-context `update-database` got. It:
