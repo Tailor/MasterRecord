@@ -21,6 +21,7 @@ import SQLLiteEngine from './SQLLiteEngine.js';
 import MySQLEngine from './mySQLEngine.js';
 import insertManager from './insertManager.js';
 import deleteManager from './deleteManager.js';
+import EntityTrackerModel from './Entity/entityTrackerModel.js';
 import { globSync } from 'glob';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1947,10 +1948,24 @@ class context {
         }
 
         // Transition inserted entities to tracked state so subsequent
-        // property changes trigger UPDATE instead of a second INSERT
+        // property changes trigger UPDATE instead of a second INSERT.
+        //
+        // A plain `new Model()` passed to add() has ordinary own-property
+        // fields, NOT the change-tracking accessors a queried entity has — so
+        // without this a later edit (`row.name = 'x'`) is a silent write that
+        // never marks the entity modified, and the change is dropped on the next
+        // saveChanges(). attachTrackingTo() installs those accessors in place so
+        // the just-inserted entity is update-trackable, exactly like one loaded
+        // from the database.
+        const tracker = new EntityTrackerModel();
         for (const entity of entities) {
             entity.__state = 'track';
             entity.__dirtyFields = [];
+            try {
+                tracker.attachTrackingTo(entity);
+            } catch (attachErr) {
+                console.error(`[Context] Could not attach change-tracking to inserted ${entity.__name || 'entity'}: ${attachErr.message}`);
+            }
         }
     }
 
@@ -2130,13 +2145,33 @@ class context {
         // (and whose id my child rows reference) is gone" — an aborted
         // sibling transaction took it down. Queuing removes the interleaving
         // while keeping each batch atomic.
+        // The queue must live on whatever object owns the transaction client,
+        // NOT on the context instance. MySQL/Postgres context instances built
+        // from the same pooled connection all reuse ONE engine object
+        // (`this._SQLEngine = cached.engine`) with a single `_txnClient`, so a
+        // per-instance queue lets two DIFFERENT instances still ride the same
+        // BEGIN..COMMIT — the exact cross-instance data loss 1.5.4 only fixed
+        // for a single instance. Chaining on the engine serializes every save
+        // that shares a connection. (SQLite opens its own engine per instance,
+        // so its per-engine queue is naturally per-instance — correct, since
+        // those connections are independent.)
+        //
+        // The queue is chained SYNCHRONOUSLY (no await before this point): an
+        // await here would defer the assignment to a microtask, so concurrent
+        // callers would all read the queue before any of them wrote it and run
+        // in parallel. `_saveChangesExclusive()` awaits `_ensureReady()` itself,
+        // and by the time overlapping saves race the engine is already set, so
+        // `this._SQLEngine` is the shared lock host; before init (the very first
+        // save) it falls back to the instance, which is fine — there is nothing
+        // concurrent to serialize against yet.
+        const lockHost = this._SQLEngine || this;
         const run = () => this._saveChangesExclusive();
-        const prev = this.__saveQueue || Promise.resolve();
+        const prev = lockHost.__saveQueue || Promise.resolve();
         const next = prev.then(run, run);
         // The queue itself must swallow rejections or one failed save would
         // poison every save after it; callers still see their own rejection
         // through `next`.
-        this.__saveQueue = next.catch(() => {});
+        lockHost.__saveQueue = next.catch(() => {});
         return next;
     }
 

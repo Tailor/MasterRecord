@@ -16,6 +16,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import masterrecord from '../MasterRecord.js';
 
+// Select the environment the fixture writes (env.development.json). Without this
+// env() throws "No environment specified" under a plain `npm test` run.
+process.env.master = 'development';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'mr-concurrent-'));
 

@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.5.5 — three shared-connection concurrency bugs: cross-instance saves, poisoned empty cache, dropped post-insert edits
+
+Three related bugs that surface under concurrency on a shared connection.
+
+**1. `saveChanges()` now serializes across context INSTANCES, not just calls on one instance.** 1.5.4 serialized overlapping saves via a *per-instance* promise queue. But every context instance built from the same pooled connection reuses ONE engine object with a single transaction client (`this._SQLEngine = cached.engine`), and `startTransaction()` skips `BEGIN` when one is already open — so two `saveChanges()` calls from *different* instances still rode the same `BEGIN..COMMIT`, and the loser of a unique-index race rolled back the winner's rows. The queue now lives on the shared **engine**, so every instance that shares a connection takes turns. (SQLite opens its own engine per pooled connection, so this is naturally per-connection.)
+
+**2. The query cache no longer serves a poisoned empty result.** `toList()` cached `[]` (an empty array is truthy, so the old `&& result` guard stored it). A "no rows yet" read filled the cache with the pre-commit empty; the moment a concurrent writer inserted the matching row that cached `[]` was stale, yet the writer's `invalidateTable` only clears its OWN instance's cache — so the reader kept serving empty (the "claimed idempotency key reads back empty" bug). Empty result sets are no longer cached, so a not-found lookup always re-checks the database. `first()` already returned `null` (never cached).
+
+**3. A just-inserted entity's later edits are no longer silently dropped.** A user's `new Model()` passed to `add()` has ordinary own-property fields, not the change-tracking accessors a *queried* entity has. After INSERT the entity kept its id and flipped to the clean `'track'` state, but a later `row.name = 'x'` was a plain property write that never marked it `'modified'` — so the edit vanished on the next `saveChanges()` (the workaround was to re-read the row by id). Inserted entities are now run through `EntityTrackerModel.attachTrackingTo()`, which installs the same accessors a queried entity has (via a per-entity backing layer spliced into the prototype chain, so lifecycle-hook methods stay reachable). The accessor definition is factored into a shared `_defineTrackedColumn()` used by both `build()` (query entities) and the new attach path, so behavior is identical.
+
+**Also fixed:** `test/concurrent-savechanges.test.js` (added in 1.5.4) never set the `master`/`NODE_ENV` env var, so it threw `ConfigurationError` under a plain `npm test` — the suite was red at 1.5.4 HEAD. It now selects its fixture environment.
+
+New tests: `test/shared-connection-concurrency.test.js` — overlapping saves across two instances sharing a connection all persist; an empty cached `toList()` is not poisoned when another instance inserts the row; editing a just-inserted entity persists as an UPDATE. Full suite green (0 fail, 292 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.4 — concurrent `saveChanges()` calls no longer cross-wire one another's transactions
 
 **Bug (production data loss under concurrency):** each engine holds a single transaction client (`_txnClient` on Postgres/MySQL; the shared connection on SQLite), and `startTransaction()` returns early when one is already open. Two `saveChanges()` calls overlapping in time therefore rode the **same** BEGIN..COMMIT:

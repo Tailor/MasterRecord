@@ -37,155 +37,9 @@ class EntityTrackerModel {
 
             // set the value dynamiclly
             if(!$that._isRelationship(currentEntity[modelField])){
-                // 🔥 Apply fromDatabase transformer when building entity from DB row
-                let transformedValue = modelFieldValue;
-                try {
-                    transformedValue = FieldTransformer.fromDatabase(
-                        modelFieldValue,
-                        currentEntity[modelField],
-                        currentEntity.__name,
-                        modelField
-                    );
-                } catch(transformError) {
-                    console.error(`Warning: Failed to transform ${currentEntity.__name}.${modelField} from database: ${transformError.message}`);
-                    // Use original value if transformation fails (non-fatal)
-                    transformedValue = modelFieldValue;
-                }
-
-                // current entity has a value then add
-                modelClass["__proto__"]["_" + modelField] = transformedValue;
-
-                Object.defineProperty(modelClass,modelField, {
-                    enumerable: true,
-                    set: function(value) {
-                        // Run validators before setting value
-                        const fieldDef = currentEntity[modelField];
-                        if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
-                            for (const validator of fieldDef.validators) {
-                                let isValid = true;
-                                const errorMsg = validator.message;
-
-                                switch (validator.type) {
-                                    case 'required':
-                                        isValid = value !== null && value !== undefined && value !== '';
-                                        break;
-
-                                    case 'email':
-                                        if (value) {
-                                            isValid = validator.pattern.test(value);
-                                        }
-                                        break;
-
-                                    case 'minLength':
-                                        if (value && typeof value === 'string') {
-                                            isValid = value.length >= validator.length;
-                                        }
-                                        break;
-
-                                    case 'maxLength':
-                                        if (value && typeof value === 'string') {
-                                            isValid = value.length <= validator.length;
-                                        }
-                                        break;
-
-                                    case 'pattern':
-                                        if (value) {
-                                            isValid = validator.pattern.test(value);
-                                        }
-                                        break;
-
-                                    case 'min':
-                                        if (value !== null && value !== undefined) {
-                                            isValid = Number(value) >= validator.min;
-                                        }
-                                        break;
-
-                                    case 'max':
-                                        if (value !== null && value !== undefined) {
-                                            isValid = Number(value) <= validator.max;
-                                        }
-                                        break;
-
-                                    case 'custom':
-                                        if (typeof validator.validator === 'function') {
-                                            isValid = validator.validator(value);
-                                        }
-                                        break;
-                                }
-
-                                if (!isValid) {
-                                    throw new Error(`Validation failed: ${errorMsg}`);
-                                }
-                            }
-                        }
-
-                        modelClass.__state = "modified";
-
-                        // belongsTo FK columns appear in the DB row but not as
-                        // a top-level key in `__entity` (the entity defines
-                        // the navigation property `Run` with foreignKey:
-                        // 'run_id'; there's no separate 'run_id' field). The
-                        // engine UPDATE/INSERT builders detect belongsTo by
-                        // looking up __entity[<dirtyField>]; pushing 'run_id'
-                        // would crash on `__entity['run_id'].type`. Translate
-                        // the dirty field to the navigation name and mirror
-                        // the value into both backing fields so existing
-                        // belongsTo handling (which reads `_<navName>`) and
-                        // FK-name reads (which read `_<modelField>`) both
-                        // return the new value.
-                        const navNameForFk = (!currentEntity[modelField] && fkToNavName[modelField])
-                            ? fkToNavName[modelField]
-                            : null;
-                        const dirtyName = navNameForFk || modelField;
-
-                        // Deduplicate: setting the same field twice used to push
-                        // the name twice, producing duplicate assignments in the
-                        // UPDATE SET clause (`SET col = ?, col = ?`) which is a
-                        // hard error in Postgres and may silently take-last in
-                        // MySQL/SQLite.
-                        if (!modelClass.__dirtyFields.includes(dirtyName)) {
-                            modelClass.__dirtyFields.push(dirtyName);
-                        }
-                        // ensure this entity is tracked on any modification
-                        if(modelClass.__context && typeof modelClass.__context.__track === 'function'){
-                            modelClass.__context.__track(modelClass);
-                        }
-                        // Guard against currentEntity[modelField] being
-                        // undefined (the FK column case described above).
-                        const fieldDefForSet = currentEntity[modelField];
-                        let storedValue;
-                        if(fieldDefForSet && typeof fieldDefForSet.set === "function"){
-                            storedValue = fieldDefForSet.set(value);
-                        }else{
-                            storedValue = value;
-                        }
-                        this["__proto__"]["_" + modelField] = storedValue;
-                        if (navNameForFk) {
-                            // Mirror into the nav-property backing so the
-                            // engine UPDATE builders (which read
-                            // `_<dirtyField>` for belongsTo) find the new
-                            // value.
-                            this["__proto__"]["_" + navNameForFk] = storedValue;
-                        }
-                    },
-                    get:function(){
-                        // TODO: fix only when updating
-                        if(currentEntity[modelField]){
-                            if(!currentEntity[modelField].skipGetFunction){
-                                if(typeof currentEntity[modelField].get === "function"){
-                                    return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
-                                }else{
-                                    return this["__proto__"]["_" + modelField];
-                                }
-                            }else{
-                                // If skipGetFunction is true, return the raw value
-                                return this["__proto__"]["_" + modelField];
-                            }
-                        }else{
-                            return this["__proto__"]["_" + modelField];
-                        }
-                    }
-                  });
+                // Shared with attachTrackingTo() so a query-built entity and an
+                // insert-then-attached entity get IDENTICAL accessors.
+                this._defineTrackedColumn(modelClass, modelField, modelFieldValue, currentEntity, fkToNavName, true);
             }
         }
 
@@ -418,6 +272,205 @@ class EntityTrackerModel {
         }
 
         return modelClass;
+    }
+
+    /**
+     * Define a single tracked column accessor on `target`. Factored out of
+     * build() so the SAME code powers query-built entities and entities that
+     * are attached in place after an insert (attachTrackingTo). Closures use
+     * `this` — the accessor owner — for entity state, so the definition is
+     * target-agnostic.
+     *
+     * @param {boolean} applyFromDb - true when `rawValue` came straight from a
+     *   DB row (apply the fromDatabase transformer); false when it is already
+     *   the in-memory domain value of a just-inserted entity.
+     */
+    _defineTrackedColumn(target, modelField, rawValue, currentEntity, fkToNavName, applyFromDb) {
+        let transformedValue = rawValue;
+        if (applyFromDb) {
+            try {
+                transformedValue = FieldTransformer.fromDatabase(
+                    rawValue,
+                    currentEntity[modelField],
+                    currentEntity.__name,
+                    modelField
+                );
+            } catch (transformError) {
+                console.error(`Warning: Failed to transform ${currentEntity.__name}.${modelField} from database: ${transformError.message}`);
+                transformedValue = rawValue;
+            }
+        }
+
+        target["__proto__"]["_" + modelField] = transformedValue;
+
+        Object.defineProperty(target, modelField, {
+            enumerable: true,
+            set: function(value) {
+                // Run validators before setting value
+                const fieldDef = currentEntity[modelField];
+                if (fieldDef && fieldDef.validators && Array.isArray(fieldDef.validators)) {
+                    for (const validator of fieldDef.validators) {
+                        let isValid = true;
+                        const errorMsg = validator.message;
+
+                        switch (validator.type) {
+                            case 'required':
+                                isValid = value !== null && value !== undefined && value !== '';
+                                break;
+
+                            case 'email':
+                                if (value) {
+                                    isValid = validator.pattern.test(value);
+                                }
+                                break;
+
+                            case 'minLength':
+                                if (value && typeof value === 'string') {
+                                    isValid = value.length >= validator.length;
+                                }
+                                break;
+
+                            case 'maxLength':
+                                if (value && typeof value === 'string') {
+                                    isValid = value.length <= validator.length;
+                                }
+                                break;
+
+                            case 'pattern':
+                                if (value) {
+                                    isValid = validator.pattern.test(value);
+                                }
+                                break;
+
+                            case 'min':
+                                if (value !== null && value !== undefined) {
+                                    isValid = Number(value) >= validator.min;
+                                }
+                                break;
+
+                            case 'max':
+                                if (value !== null && value !== undefined) {
+                                    isValid = Number(value) <= validator.max;
+                                }
+                                break;
+
+                            case 'custom':
+                                if (typeof validator.validator === 'function') {
+                                    isValid = validator.validator(value);
+                                }
+                                break;
+                        }
+
+                        if (!isValid) {
+                            throw new Error(`Validation failed: ${errorMsg}`);
+                        }
+                    }
+                }
+
+                this.__state = "modified";
+
+                // belongsTo FK columns appear in the DB row but not as a
+                // top-level key in `__entity`; translate the dirty field to the
+                // navigation name and mirror the value into both backing fields.
+                const navNameForFk = (!currentEntity[modelField] && fkToNavName[modelField])
+                    ? fkToNavName[modelField]
+                    : null;
+                const dirtyName = navNameForFk || modelField;
+
+                // Deduplicate: setting the same field twice must not push the
+                // name twice (duplicate assignments in the UPDATE SET clause).
+                if (!this.__dirtyFields.includes(dirtyName)) {
+                    this.__dirtyFields.push(dirtyName);
+                }
+                // Ensure this entity is tracked on any modification. THIS is the
+                // line that makes a just-inserted, attached entity's later edits
+                // persist instead of being silently dropped.
+                if (this.__context && typeof this.__context.__track === 'function') {
+                    this.__context.__track(this);
+                }
+                const fieldDefForSet = currentEntity[modelField];
+                let storedValue;
+                if (fieldDefForSet && typeof fieldDefForSet.set === "function") {
+                    storedValue = fieldDefForSet.set(value);
+                } else {
+                    storedValue = value;
+                }
+                this["__proto__"]["_" + modelField] = storedValue;
+                if (navNameForFk) {
+                    this["__proto__"]["_" + navNameForFk] = storedValue;
+                }
+            },
+            get: function() {
+                if (currentEntity[modelField]) {
+                    if (!currentEntity[modelField].skipGetFunction) {
+                        if (typeof currentEntity[modelField].get === "function") {
+                            return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
+                        } else {
+                            return this["__proto__"]["_" + modelField];
+                        }
+                    } else {
+                        return this["__proto__"]["_" + modelField];
+                    }
+                } else {
+                    return this["__proto__"]["_" + modelField];
+                }
+            }
+        });
+    }
+
+    /**
+     * Install tracked-column accessors on an EXISTING entity object — a user's
+     * `new Model()` that was `add()`ed and just INSERTed. Without this the
+     * entity's fields are ordinary own properties, so a later edit
+     * (`row.name = 'x'`) is a plain write that never flips the entity to
+     * 'modified' — the change is silently dropped on the next saveChanges().
+     * After this, the inserted entity behaves like a queried one: edits mark it
+     * modified and produce an UPDATE.
+     *
+     * A per-entity backing layer is spliced into the prototype chain
+     * (`Object.create(originalProto)`) so `_<field>` backings stay per-instance
+     * while the class prototype — and any lifecycle-hook methods on it — remain
+     * reachable.
+     */
+    attachTrackingTo(target) {
+        const currentEntity = target && target.__entity;
+        if (!currentEntity) return target;
+        if (target.__trackingAttached) return target;
+
+        const fkToNavName = {};
+        for (const k of Object.keys(currentEntity)) {
+            const def = currentEntity[k];
+            if (def && def.relationshipType === 'belongsTo' && def.foreignKey) {
+                fkToNavName[def.foreignKey] = k;
+            }
+        }
+
+        // Capture the current scalar values before we replace them with
+        // accessors. If a field is already an accessor the entity was built via
+        // build() and needs no attaching.
+        const scalarFields = [];
+        const captured = {};
+        for (const modelField of Object.keys(currentEntity)) {
+            if (this._isRelationship(currentEntity[modelField])) continue;
+            const desc = Object.getOwnPropertyDescriptor(target, modelField);
+            if (desc && !('value' in desc)) return target; // already tracked
+            captured[modelField] = target[modelField];
+            scalarFields.push(modelField);
+        }
+
+        // Splice a fresh backing layer in front of the original prototype so the
+        // class prototype (and its lifecycle hooks) stays reachable.
+        Object.setPrototypeOf(target, Object.create(Object.getPrototypeOf(target)));
+        Object.defineProperty(target, '__trackingAttached', {
+            value: true, enumerable: false, writable: true, configurable: true,
+        });
+
+        for (const modelField of scalarFields) {
+            // applyFromDb=false: the captured value is already the domain value
+            // the user set and that the INSERT persisted — not a raw DB row.
+            this._defineTrackedColumn(target, modelField, captured[modelField], currentEntity, fkToNavName, false);
+        }
+        return target;
     }
 
     buildObject(){

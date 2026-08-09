@@ -539,7 +539,13 @@ class queryMethods{
             throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
 
-        // Store in cache
+        // Store in cache — but never cache a "not found" (null) result. A
+        // negative result is poisoned the instant any concurrent writer inserts
+        // the matching row: a reader that filled the cache with the pre-commit
+        // empty would keep serving it (the writer's invalidateTable ran before
+        // this set, or on a different context instance's cache entirely). This
+        // is the "claimed idempotency key reads back empty" bug — re-run the
+        // cheap lookup against the database instead of trusting a cached miss.
         if (this.__useCache && result) {
             this.__context._queryCache.set(cacheKey, result, tableName);
         }
@@ -589,8 +595,14 @@ class queryMethods{
             throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
 
-        // Store in cache
-        if (this.__useCache && result) {
+        // Store in cache — but NOT an empty result set. An empty array is
+        // truthy, so the old `&& result` guard cached `[]`, which is negative
+        // caching: the moment a concurrent writer inserts a matching row the
+        // cached `[]` is stale, yet a reader that filled it just before the
+        // writer's commit (or on a different context instance, whose cache the
+        // writer's invalidateTable never touches) keeps serving empty. Skipping
+        // empty sets means a "no rows yet" lookup always re-checks the database.
+        if (this.__useCache && result && result.length > 0) {
             this.__context._queryCache.set(cacheKey, result, tableName);
         }
 
