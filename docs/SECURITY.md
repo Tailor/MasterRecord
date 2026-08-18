@@ -29,7 +29,7 @@ ctx.User.take(req.query.limit).skip(req.query.offset).toList();
 ```
 
 - A non-negative integer (or a clean numeric string like `'25'`) is accepted.
-- Anything else (`'10; DROP TABLE users'`, `-1`, `1.5`, `NaN`) **throws** before it can reach the SQL string — both at the `.take()`/`.skip()` setter and again at the engine boundary.
+- Anything else (a value that appends extra SQL after the number, `-1`, `1.5`, `NaN`) **throws** before it can reach the SQL string — both at the `.take()`/`.skip()` setter and again at the engine boundary.
 
 Clamp `limit` to a sane maximum in your own code to avoid unbounded result sets.
 

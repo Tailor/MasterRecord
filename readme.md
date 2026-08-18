@@ -3370,7 +3370,7 @@ All operations use parameterized queries:
 
 ### Pagination is validated
 
-`LIMIT` / `OFFSET` can't be parameterized, so `.take()` / `.skip()` validate their input — a non-negative integer (or a clean numeric string) is accepted; anything else (e.g. `'10; DROP TABLE users'`) throws before it can reach the SQL string. Pass request values straight through safely:
+`LIMIT` / `OFFSET` can't be parameterized, so `.take()` / `.skip()` validate their input — a non-negative integer (or a clean numeric string) is accepted; anything else (e.g. a value that tries to smuggle extra SQL in after the number) throws before it can reach the SQL string. Pass request values straight through safely:
 
 ```javascript
 await db.User.take(req.query.limit).skip(req.query.offset).toList();
