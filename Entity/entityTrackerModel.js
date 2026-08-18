@@ -454,7 +454,13 @@ class EntityTrackerModel {
             if (this._isRelationship(currentEntity[modelField])) continue;
             const desc = Object.getOwnPropertyDescriptor(target, modelField);
             if (desc && !('value' in desc)) return target; // already tracked
-            captured[modelField] = target[modelField];
+            // An UNSET declared field still resolves to its definition method on
+            // the class prototype (e.g. `apiKey(db){...}`) — a truthy function.
+            // Capturing that verbatim would make `!entity.apiKey` false and read
+            // back a function. An entity field value is never a function, so
+            // treat a function here as "unset" and back it with undefined.
+            const cur = target[modelField];
+            captured[modelField] = (typeof cur === 'function') ? undefined : cur;
             scalarFields.push(modelField);
         }
 

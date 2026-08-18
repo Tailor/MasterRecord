@@ -1017,6 +1017,21 @@ class queryMethods{
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
         entityValue.__name = this.__entity.__name;
+        // An UNSET declared field still resolves to its definition method on the
+        // class prototype (e.g. `apiKey(db){...}`) — a truthy function — so
+        // `!entity.apiKey` never fires. Blank those so an added entity reads
+        // cleanly even before save. (This is a plain own-property write, not the
+        // full accessor install, which the insert path can't take pre-save; full
+        // change-tracking accessors are attached after INSERT.) Relationship
+        // navigation properties are left alone.
+        for (const f in this.__entity) {
+            const def = this.__entity[f];
+            const isRel = def && (def.type === 'hasOne' || def.type === 'hasMany'
+                || def.type === 'hasManyThrough' || def.relationshipType === 'belongsTo');
+            if (!isRel && typeof entityValue[f] === 'function') {
+                entityValue[f] = undefined;
+            }
+        }
         this.__context.__track(entityValue);
     }
     
