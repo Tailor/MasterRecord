@@ -41,8 +41,6 @@
     "!**/*.test.js",
     "!eslint.config.js",
     "!prettier.config.js",
-    "docs/**/*.md",
-    "CHANGES.md",
     "LICENSE"
   ],
   "engines": {
