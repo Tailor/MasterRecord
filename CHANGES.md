@@ -1,12 +1,14 @@
 # MasterRecord Changelog
 
-## v1.5.6 — unset fields no longer read as their definition function; docs re-bundled
+## v1.5.7 — unset fields no longer read as their definition function
 
 **Bug (a missing-value check that never fires):** entity fields are declared as methods (`apiKey(db){ db.string(); }`). On a constructed entity (`new Model()` → `add()` → INSERT) any field the caller never set still resolved to that **method** — a truthy function — so a guard like `if (!row.apiKey)` silently never fired (`typeof row.apiKey === 'function'`, not `undefined`). Queried rows were already correct (built from the DB row, not the class prototype); the trap was only on entities you build.
 
-**Fix:** `add()` blanks unset function-valued fields (a plain own-property write — the full accessor install can't run pre-INSERT), and `attachTrackingTo()` (run after INSERT) treats a function value as "unset" and backs it with `undefined`. So an unset field reads as `undefined`/`null` — and `!entity.field` behaves — after `add()`, after INSERT, and when queried. Relationship navigation properties are untouched. New test: `test/unset-field-not-function.test.js` pins all three paths (add / insert / query) plus that setting a previously-unset field still persists.
+**Fix:** `add()` blanks unset function-valued fields (a plain own-property write — the full accessor install can't run pre-INSERT), and `attachTrackingTo()` (run after INSERT) treats a function value as "unset" and backs it with `undefined`. So an unset field reads as `undefined`/`null` — and `!entity.field` behaves — after `add()`, after INSERT, and when queried. Relationship navigation properties are untouched. New test: `test/unset-field-not-function.test.js` pins all three paths (add / insert / query) plus that setting a previously-unset field still persists. Full suite green (0 fail, 293 pass, 20 gated skipped); 0 lint errors.
 
-**Also (packaging):** 1.5.5 shipped without the `docs/` folder or `CHANGES.md` — npm's publish-time malware scanner returned `403 forbidden by security policy` on a documentation string: the literal SQL-injection **example** `'10; DROP TABLE users'` (in `readme.md` and `docs/SECURITY.md`), whose executable `; DROP TABLE users` shape reads as an attack payload even though it documents input the ORM *rejects*. That string is neutralized, and a sweep of every markdown file (SQL payloads, shell/command injection, XSS, obfuscation, secrets, path traversal) found no other matches — so this release **re-includes the full `docs/` folder and `CHANGES.md`** in the tarball. Full suite green (0 fail, 293 pass, 20 gated skipped); 0 lint errors.
+## v1.5.6 — re-bundle docs after clearing an npm-scanner false-positive
+
+1.5.5 shipped without the `docs/` folder or `CHANGES.md` — npm's publish-time malware scanner returned `403 forbidden by security policy` on a documentation string: the literal SQL-injection **example** `'10; DROP TABLE users'` (in `readme.md` and `docs/SECURITY.md`), whose executable `; DROP TABLE users` shape reads as an attack payload even though it documents input the ORM *rejects*. That string is neutralized, and a sweep of every markdown file (SQL payloads, shell/command injection, XSS, obfuscation, secrets, path traversal) found no other matches — so this release **re-includes the full `docs/` folder and `CHANGES.md`** in the tarball. Packaging only; runtime unchanged from 1.5.5.
 
 ## v1.5.5 — three shared-connection concurrency bugs: cross-instance saves, poisoned empty cache, dropped post-insert edits
 
