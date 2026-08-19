@@ -413,11 +413,18 @@ class InsertManager {
                 }
             }
 
-            // check if there is a default value
-            if (currentEntity.default) {
+            // Apply a declared default when the value is missing. Use an
+            // explicit undefined/null check, NOT truthiness — a legitimate
+            // default of `0`, `false`, or `''` is falsy and must still be
+            // applied. Write it into BOTH the clean model (what gets inserted)
+            // and the raw model (what the required-field check below reads),
+            // mirroring the timestamp auto-population.
+            if (currentEntity.default !== undefined && currentEntity.default !== null) {
                 if (currentRealModel[entity] === undefined || currentRealModel[entity] === null) {
-                    // if its empty add the default value
                     currentRealModel[entity] = currentEntity.default;
+                }
+                if (currentModel[entity] === undefined || currentModel[entity] === null) {
+                    currentModel[entity] = currentEntity.default;
                 }
             }
 

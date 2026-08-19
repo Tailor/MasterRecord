@@ -529,7 +529,12 @@ class schema{
                     } else {
                         defPart = ' DEFAULT NULL';
                     }
-                    const alter = `ALTER TABLE ${tableName} MODIFY COLUMN ${d.name} ${type} ${nullPart}${defPart}`;
+                    // Backtick-quote the identifiers so a reserved word (e.g. a
+                    // column named `key`, `order`, `group`) doesn't produce a
+                    // syntax error. createTable, addColumn (via the builder) and
+                    // the Postgres branch below all quote; this inline MODIFY was
+                    // the one path that didn't.
+                    const alter = `ALTER TABLE \`${tableName}\` MODIFY COLUMN \`${d.name}\` ${type} ${nullPart}${defPart}`;
                     await this.context._execute(alter);
                 }
             }

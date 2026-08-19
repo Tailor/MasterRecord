@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.5.8 — falsy defaults (0/false/'') apply on insert; MySQL syncTable quotes reserved words
+
+**Bug 1 — falsy defaults were dropped (regression surfaced by 1.5.7, latent long before).** `insertManager.validateEntity` applied a column's default with `if (currentEntity.default)` — a **truthiness** test — so `.default(0)`, `.default(false)`, and `.default('')` were silently skipped. This was masked until 1.5.7 because an unset field read as its definition *function* (truthy, non-null), so the required-field check passed anyway. Once 1.5.7 made unset fields correctly read as `undefined`, a `.notNullable().default(0)` column (e.g. a `blocked` flag) failed insert validation with *"… is a required Field"* — broadly breaking registration/insert across every model with a falsy-defaulted NOT NULL column. **Fix:** apply the default whenever it is not `undefined`/`null` (not on truthiness), writing it into both the clean model (inserted) and the raw model (read by the required-field check). Genuinely required fields with no default are still enforced. New test: `test/falsy-default-applied.test.js`.
+
+**Bug 2 — MySQL `syncTable` didn't quote identifiers.** The MySQL branch built its inline `ALTER TABLE <t> MODIFY COLUMN <c> …` **without backticks**, so a column named after a reserved word (`key`, `order`, `group`, …) blew up with a SQL syntax error while `syncTable` reconciled its nullability/default. `createTable`, `addColumn` (via the query builder) and the Postgres branch all quote — this inline path was the outlier. **Fix:** backtick-quote the table and column. New test: `test/mysql-synctable-quotes-identifiers.test.js`.
+
+Full suite green (0 fail, 296 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.7 — unset fields no longer read as their definition function
 
 **Bug (a missing-value check that never fires):** entity fields are declared as methods (`apiKey(db){ db.string(); }`). On a constructed entity (`new Model()` → `add()` → INSERT) any field the caller never set still resolved to that **method** — a truthy function — so a guard like `if (!row.apiKey)` silently never fired (`typeof row.apiKey === 'function'`, not `undefined`). Queried rows were already correct (built from the DB row, not the class prototype); the trap was only on entities you build.
