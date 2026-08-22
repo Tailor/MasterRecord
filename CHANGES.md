@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.11.0 — migrations tooling: atomic apply, `script`, `migrations-status`, `--connection`, latest-migration id (EF parity)
+
+Closes gap-analysis #7.
+
+- **Each migration now applies atomically** (EF Core: one transaction per migration). The migration's DDL/DML **and its tracking-table row** commit or roll back together, so a failing migration can no longer leave a half-applied schema. PostgreSQL: `BEGIN…COMMIT`. SQLite: transactional too, with FK enforcement switched off *before* the transaction and restored after (SQLite's `PRAGMA foreign_keys` is a no-op inside a transaction and the table-rebuild path depends on it — exactly EF's SQLite approach). MySQL: DDL implicitly commits, so atomicity isn't possible there (EF documents the same); it runs as before. Used by `update-database` and `update-database-all`.
+- **`masterrecord script <ctx> [-o file]`** (EF `migrations script`): prints the SQL that `update-database` *would* run for pending migrations — DDL plus the tracking-table insert, per migration — **without applying anything**. Introspection still runs against the live database so the plan is accurate; execution is captured instead of performed.
+- **`masterrecord migrations-status <ctx>`** (EF `migrations list`): applied migrations with timestamps, pending ones, recorded-but-missing files, and the snapshot's latest migration.
+- **`--connection <json>`** global option (EF `--connection`): a JSON connection config (optionally keyed by context name) overriding the environment file for that run, e.g. `update-database AppContext --connection '{"type":"sqlite","connection":"./tmp/"}'`. Honored by `context.env()` via `MASTERRECORD_CONNECTION_OVERRIDE`.
+- **Snapshot records `latestMigration`** (EF 11): two branches that each add a migration now conflict on merge, surfacing a divergent migration tree instead of silently diverging.
+- Internals: `__applyMigrationStep`, `__resolveMigrationPlan`, `__getAppliedMigrationRows` helpers in the CLI.
+
+New tests: `test/migrations-tooling.test.js` (status before/after + snapshot latest id; `script` emits DDL + tracking insert and leaves the DB untouched, `--output` file; a failing migration is rolled back atomically with nothing recorded; `--connection` override creates the DB at the overridden location). Full suite green (0 fail, 360 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.10.0 — pluggable logging with parameter redaction (EF LogTo/EnableSensitiveDataLogging) + retry on transient failures (EF EnableRetryOnFailure)
 
 Closes gap-analysis #5 (resiliency) and #6 (logging/diagnostics), the way EF Core does them.

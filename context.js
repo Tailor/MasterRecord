@@ -884,6 +884,19 @@ class context {
             }
             const contextName = this.__name;
 
+            // CLI `--connection <json>` override (EF `dotnet ef ... --connection`):
+            // a JSON connection config (optionally keyed by context name) that
+            // replaces the env-file lookup for this process.
+            const override = process.env.MASTERRECORD_CONNECTION_OVERRIDE;
+            if (override) {
+                let o;
+                try { o = JSON.parse(override); }
+                catch (e) { throw new ConfigurationError(`--connection / MASTERRECORD_CONNECTION_OVERRIDE must be a JSON object: ${e.message}`); }
+                if (o && typeof o === 'object' && o[contextName] && typeof o[contextName] === 'object') o = o[contextName];
+                if (!o || typeof o !== 'object') throw new ConfigurationError('--connection must be a JSON object (e.g. {"type":"sqlite","connection":"./db/"}).');
+                rootFolderLocationOrConfig = o;
+            }
+
             // The config can be supplied two ways:
             //   1. An inline config object:  this.env({ type: 'sqlite', connection: './db/' })
             //   2. A folder path to load env.<NODE_ENV>.json (keyed by context name):

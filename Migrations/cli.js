@@ -152,6 +152,82 @@ async function __removeMigrationApplied(ctx, migrationName){
   }
 }
 
+/** Applied migrations with timestamps: [{ migration_name, applied_at }] (EF `migrations list`). */
+async function __getAppliedMigrationRows(ctx){
+  const engine = ctx._SQLEngine;
+  try {
+    if (ctx.isSQLite) {
+      return engine.db.prepare(`SELECT migration_name, applied_at FROM [${__MIGRATIONS_TABLE__}] ORDER BY applied_at`).all();
+    } else if (ctx.isMySQL) {
+      return await engine._runWithParams(`SELECT migration_name, applied_at FROM \`${__MIGRATIONS_TABLE__}\` ORDER BY applied_at`, []);
+    } else if (ctx.isPostgres) {
+      const r = await engine._runWithParams(`SELECT migration_name, applied_at FROM "${__MIGRATIONS_TABLE__}" ORDER BY applied_at`, []);
+      return r && r.rows ? r.rows : [];
+    }
+  } catch (_) { /* table may not exist yet */ }
+  return [];
+}
+
+/**
+ * Apply ONE migration step atomically (EF Core: each migration runs in its own
+ * transaction). The migration's DDL/DML and its tracking-table row commit or
+ * roll back together, so a failure can never leave a half-applied schema that
+ * is (or isn't) recorded.
+ *   - PostgreSQL: transactional DDL -> BEGIN ... COMMIT.
+ *   - SQLite: transactional DDL too, but `PRAGMA foreign_keys` is a no-op inside
+ *     a transaction and the table-rebuild path relies on toggling it, so FK
+ *     enforcement is switched off BEFORE the transaction and restored after
+ *     (exactly what EF does for SQLite rebuilds).
+ *   - MySQL: DDL implicitly commits, so a migration cannot be made atomic there
+ *     (EF documents the same limitation); statements run directly.
+ * Runs on the migration's own context (it shares the engine/connection with
+ * `contextInstance`), so the tracking row is written inside the same transaction.
+ */
+async function __applyMigrationStep(contextInstance, instance, tableObj, migrationName, direction = 'up'){
+  const ctx = (instance && instance.context) ? instance.context : contextInstance;
+  const run = async () => {
+    if (direction === 'down') await instance.down(tableObj); else await instance.up(tableObj);
+    if (typeof instance.finalize === 'function') await instance.finalize();
+    if (direction === 'down') await __removeMigrationApplied(ctx, migrationName);
+    else await __recordMigrationApplied(ctx, migrationName);
+  };
+  if (ctx.isMySQL || typeof ctx.transaction !== 'function') { await run(); return 'autocommit'; }
+
+  let fkWasOn = false;
+  if (ctx.isSQLite) {
+    await ctx._ensureReady();
+    try { fkWasOn = ctx._SQLEngine.db.pragma('foreign_keys', { simple: true }) === 1; } catch (_) { /* older driver */ }
+    if (fkWasOn) { try { ctx._SQLEngine.db.pragma('foreign_keys = OFF'); } catch (_) { /* ignore */ } }
+  }
+  try {
+    await ctx.transaction(run);
+    return 'transaction';
+  } finally {
+    if (ctx.isSQLite && fkWasOn) { try { ctx._SQLEngine.db.pragma('foreign_keys = ON'); } catch (_) { /* ignore */ } }
+  }
+}
+
+/** Resolve everything a migration command needs for a context (snapshot, files, constructor). */
+async function __resolveMigrationPlan(contextFileName){
+  const executedLocation = process.cwd();
+  contextFileName = String(contextFileName).toLowerCase();
+  const files = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+  const file = files && files[0] ? path.resolve(executedLocation, files[0]) : null;
+  if (!file) {
+    throw new Error(`Cannot find Context snapshot '${contextFileName}_contextSnapShot.json' in '${executedLocation}'. Run 'masterrecord enable-migrations ${contextFileName}' first.`);
+  }
+  const contextSnapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
+  const snapDir = path.dirname(file);
+  const contextAbs = path.resolve(snapDir, contextSnapshot.contextLocation || '');
+  let migBase = path.resolve(snapDir, contextSnapshot.migrationFolder || '.');
+  if (!fs.existsSync(migBase)) migBase = snapDir;
+  const migrationFiles = globSync(`**/*_migration.js`, { cwd: migBase, dot: true, windowsPathsNoEscape: true }) || [];
+  const mFiles = migrationFiles.map(f => path.resolve(migBase, f))
+    .sort((a, b) => __getMigrationTimestamp(a) - __getMigrationTimestamp(b));
+  const ContextCtor = await __loadUserModule(contextAbs);
+  return { executedLocation, contextFileName, file, contextSnapshot, contextAbs, migBase, mFiles, ContextCtor };
+}
+
 // Helper to cleanup context and exit
 async function __cleanupAndExit(contextInstance, exitCode = 0) {
   try {
@@ -176,6 +252,15 @@ program
 
 // Support legacy '-V' as an alias to print version
 program.option('-V', 'output the version');
+
+// EF `--connection`: override the env-file connection for this run with a JSON
+// config (optionally keyed by context name), e.g.
+//   masterrecord update-database AppContext --connection '{"type":"sqlite","connection":"./tmp/"}'
+program.option('--connection <json>', 'JSON connection config that overrides the environment file for this run');
+program.hook('preAction', () => {
+  const opts = program.opts();
+  if (opts.connection) process.env.MASTERRECORD_CONNECTION_OVERRIDE = String(opts.connection);
+});
 
   // Instructions : to run command you must go to main project folder is located and run the command using the context file name.
   program
@@ -594,10 +679,10 @@ program.option('-V', 'output the version');
            try {
              const MigrationCtor = await __loadUserModule(mFile);
              const instance = new MigrationCtor(ContextCtor);
-             await instance.up(tableObj);
-             if (typeof instance.finalize === 'function') await instance.finalize();
-             await __recordMigrationApplied(contextInstance, migrationName);
-             console.log(`    ✓ applied`);
+             // Atomic: DDL + tracking row commit/roll back together (EF: one
+             // transaction per migration; MySQL DDL autocommits — see helper).
+             const mode = await __applyMigrationStep(contextInstance, instance, tableObj, migrationName, 'up');
+             console.log(`    ✓ applied${mode === 'transaction' ? ' (transactional)' : ''}`);
            } catch (err) {
              console.error(`\n❌ Error - Migration '${migrationName}' failed during execution`);
              console.error(`\nDetails: ${err.message}`);
@@ -617,7 +702,8 @@ program.option('-V', 'output the version');
            context : contextInstance,
            contextEntities : cleanEntities,
            contextSeedData: contextInstance.__contextSeedData || {},
-           contextFileName: contextFileName
+           contextFileName: contextFileName,
+           latestMigration: mFiles.length ? path.basename(mFiles[mFiles.length - 1]) : null
          }
 
          migration.createSnapShot(snap);
@@ -870,6 +956,104 @@ program.option('-V', 'output the version');
         }
   });
 
+
+ // EF `dotnet ef migrations list`: applied (with timestamps) vs pending.
+ program
+ .command('migrations-status <contextFileName>')
+ .alias('ms')
+ .description('Show applied and pending migrations for a context against the database')
+ .action(async function(contextFileName){
+   let contextInstance = null;
+   try {
+     const plan = await __resolveMigrationPlan(contextFileName);
+     contextInstance = await instantiateReadyContext(plan.ContextCtor);
+     const rows = await __getAppliedMigrationRows(contextInstance);
+     const appliedMap = new Map(rows.map(r => [r.migration_name, r.applied_at]));
+     const names = plan.mFiles.map(f => path.basename(f));
+     const pending = names.filter(n => !appliedMap.has(n));
+     const orphans = [...appliedMap.keys()].filter(n => !names.includes(n));
+     console.log(`Context: ${plan.contextFileName}`);
+     console.log(`Migrations folder: ${plan.migBase}`);
+     console.log(`\nApplied (${appliedMap.size}):`);
+     for (const n of names) if (appliedMap.has(n)) console.log(`  ✓ ${n}   ${appliedMap.get(n)}`);
+     for (const n of orphans) console.log(`  ✓ ${n}   ${appliedMap.get(n)}   [recorded, file missing]`);
+     console.log(`\nPending (${pending.length}):`);
+     for (const n of pending) console.log(`  • ${n}`);
+     if (plan.contextSnapshot.latestMigration) console.log(`\nSnapshot latest migration: ${plan.contextSnapshot.latestMigration}`);
+     await __cleanupAndExit(contextInstance, 0);
+   } catch (e) {
+     console.error(`❌ migrations-status failed: ${e.message}`);
+     await __cleanupAndExit(contextInstance, 1);
+   }
+ });
+
+ // EF `dotnet ef migrations script`: the SQL for pending migrations, NOT applied.
+ program
+ .command('script <contextFileName>')
+ .option('-o, --output <file>', 'write the SQL to a file instead of stdout')
+ .description('Generate the SQL for pending migrations without applying them (for DBA review)')
+ .action(async function(contextFileName, cmdOpts){
+   let contextInstance = null;
+   try {
+     const plan = await __resolveMigrationPlan(contextFileName);
+     contextInstance = await instantiateReadyContext(plan.ContextCtor);
+     const applied = await __getAppliedMigrations(contextInstance);
+     const pending = plan.mFiles.filter(f => !applied.has(path.basename(f)));
+     const migration = new Migration();
+     const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+     const tableObj = migration.buildUpObject(plan.contextSnapshot.schema, cleanEntities);
+     const lines = [
+       `-- masterrecord migration script for '${plan.contextFileName}'`,
+       `-- generated ${new Date().toISOString()} — ${pending.length} pending migration(s). This script was NOT applied.`,
+       `-- Introspection (table/column checks) ran against the live database; statements below are what update-database would execute.`,
+       '',
+     ];
+     const fmt = (q, p) => {
+       const s = String(q).replace(/\s+/g, ' ').trim().replace(/;$/, '');
+       return (p && p.length) ? `${s}; -- params: ${JSON.stringify(p)}` : `${s};`;
+     };
+     for (const mFile of pending) {
+       const name = path.basename(mFile);
+       const MigrationCtor = await __loadUserModule(mFile);
+       const instance = new MigrationCtor(plan.ContextCtor);
+       const mctx = instance.context || contextInstance;
+       const captured = [];
+       // Capture instead of execute: schema.js issues all DDL/DML through
+       // context._execute; engine-level introspection (tableExists/getTableInfo)
+       // is untouched so the plan reflects the real database state.
+       const patch = (c) => {
+         const orig = c._execute;
+         c._execute = (q, p) => { captured.push(fmt(q, p)); return Promise.resolve({ changes: 0, rowCount: 0, affectedRows: 0 }); };
+         return () => { c._execute = orig; };
+       };
+       const restores = [patch(mctx)];
+       if (mctx !== contextInstance) restores.push(patch(contextInstance));
+       try {
+         await instance.up(tableObj);
+         if (typeof instance.finalize === 'function') await instance.finalize();
+         await __recordMigrationApplied(mctx, name);   // captured, not executed
+       } finally {
+         for (const r of restores) r();
+       }
+       lines.push(`-- Migration: ${name}`);
+       lines.push(...captured);
+       lines.push('');
+       try { if (mctx !== contextInstance && typeof mctx.close === 'function') await mctx.close(); } catch (_) { /* best-effort */ }
+     }
+     const out = lines.join('\n');
+     if (cmdOpts && cmdOpts.output) {
+       const target = path.resolve(cmdOpts.output);
+       fs.writeFileSync(target, out, 'utf8');
+       console.log(`✓ SQL script for ${pending.length} pending migration(s) written to ${target}`);
+     } else {
+       process.stdout.write(out + '\n');
+     }
+     await __cleanupAndExit(contextInstance, 0);
+   } catch (e) {
+     console.error(`❌ script failed: ${e.message}`);
+     await __cleanupAndExit(contextInstance, 1);
+   }
+ });
 
  program
  .command('get-migrations <contextFileName>')
@@ -1238,9 +1422,7 @@ program.option('-V', 'output the version');
             try {
               const MigrationCtor = await __loadUserModule(mFile);
               const inst = new MigrationCtor(ContextCtor);
-              await inst.up(tableObj);
-              if (typeof inst.finalize === 'function') await inst.finalize();
-              await __recordMigrationApplied(contextInstance, migrationName);
+              await __applyMigrationStep(contextInstance, inst, tableObj, migrationName, 'up');
               appliedCount++;
               // Release the migration's own context (opened by its schema
               // constructor) so connections don't accumulate across the batch.

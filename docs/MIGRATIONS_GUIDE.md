@@ -406,7 +406,16 @@ masterrecord update-database <ContextName>
 masterrecord enable-migrations-all
 masterrecord add-migration-all <MigrationName>
 masterrecord update-database-all
+
+# Inspect without changing anything
+masterrecord migrations-status <ContextName>     # applied (with timestamps) vs pending
+masterrecord script <ContextName> [-o file.sql]  # SQL for pending migrations, NOT applied (DBA review)
+
+# Override the connection for one run (JSON, optionally keyed by context name)
+masterrecord update-database <ContextName> --connection '{"type":"sqlite","connection":"./tmp/"}'
 ```
+
+Each migration is applied **atomically** (its DDL and its tracking-table row commit or roll back together) on SQLite and PostgreSQL; MySQL DDL implicitly commits, so a failed MySQL migration may leave earlier statements of that migration applied — re-run after fixing. A generated migration for a removed+added column with the same definition carries a `// POSSIBLE RENAME` advisory with the `renameColumn(...)` call to use instead of the data-destroying drop+add (like EF, renames are never guessed).
 
 `update-database` applies **every pending migration** in timestamp order (not
 just the latest file) and records each after it succeeds, so re-running it is a

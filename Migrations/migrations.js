@@ -552,7 +552,11 @@ class Migrations{
             snapShotLocation: relSnapshotLocation,
             schema : normalizedSchema,
             seedData: orderedSeedData,
-            seedConfig: snap.contextSeedConfig || {}
+            seedConfig: snap.contextSeedConfig || {},
+            // EF 11: the latest migration id is recorded in the snapshot so two
+            // branches that each add a migration conflict on merge (surfacing a
+            // divergent migration tree) instead of silently diverging.
+            latestMigration: snap.latestMigration || null
         };
 
         const jsonContent = JSON.stringify(content, null, 2);
