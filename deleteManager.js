@@ -34,7 +34,10 @@ class DeleteManager {
         try {
             await this.cascadeDelete(currentModel);
         } catch (error) {
-            // Add context to error
+            // A concurrency conflict is a first-class, catchable outcome —
+            // surface it unwrapped so callers can `instanceof ConcurrencyError`.
+            if (error && error.name === 'ConcurrencyError') throw error;
+            // Add context to other errors
             const entityName = currentModel.__entity?.__name || 'unknown';
             throw new Error(`Failed to delete ${entityName}: ${error.message}`, { cause: error });
         }
@@ -101,8 +104,24 @@ class DeleteManager {
             }
         }
 
-        // Delete the entity itself after cascading
-        await this._SQLEngine.delete(entity);
+        // Delete the entity itself after cascading. Carry the entity's
+        // concurrency tokens (original values) into the DELETE's WHERE and
+        // assert one row was affected — a concurrently modified/deleted row
+        // matches 0 rows and must surface as ConcurrencyError, not silent
+        // success (EF throws DbUpdateConcurrencyException on delete too).
+        const ctx = entity.__context;
+        if (ctx && typeof ctx._concurrencyClause === 'function') {
+            const clause = ctx._concurrencyClause(entity);
+            if (clause.length) {
+                Object.defineProperty(entity, '__concurrency', {
+                    value: clause, enumerable: false, writable: true, configurable: true,
+                });
+            }
+        }
+        const result = await this._SQLEngine.delete(entity);
+        if (ctx && typeof ctx._assertAffected === 'function') {
+            ctx._assertAffected(result, entity, 'delete');
+        }
     }
 
     /**

@@ -13,19 +13,45 @@ class SQLLiteEngine {
             throw new Error('UPDATE failed: Invalid parameterized query structure. Check entity definition.');
         }
 
-        const sqlQuery = ` UPDATE [${query.tableName}]
-        SET ${query.arg.sql}
-        WHERE [${query.tableName}].[${query.primaryKey}] = ?`;
-        // Add primaryKeyValue to params array
+        // Optimistic concurrency: a rowVersion column is bumped atomically in
+        // the same statement, and every concurrency token's ORIGINAL value is
+        // appended to the WHERE so a concurrently-modified row matches 0 rows
+        // (the caller checks affectedRows and throws ConcurrencyError).
+        const t = query.tableName;
+        let setSql = query.arg.sql;
+        if (query.rowVersionColumn) {
+            setSql += `, [${query.rowVersionColumn}] = [${query.rowVersionColumn}] + 1`;
+        }
         const params = [...query.arg.params, query.primaryKeyValue];
+        let where = `[${t}].[${query.primaryKey}] = ?`;
+        for (const c of (query.concurrency || [])) {
+            if (c.value === null || c.value === undefined) { where += ` AND [${t}].[${c.column}] IS NULL`; }
+            else { where += ` AND [${t}].[${c.column}] = ?`; params.push(c.value); }
+        }
+        const sqlQuery = ` UPDATE [${t}]
+        SET ${setSql}
+        WHERE ${where}`;
         return Promise.resolve(this._runWithParams(sqlQuery, params));
     }
 
     async delete(queryObject){
        const sqlObject = this._buildDeleteObject(queryObject);
        // Use parameterized query to prevent SQL injection
-       const sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE [${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
-       return Promise.resolve(this._executeWithParams(sqlQuery, [sqlObject.value]));
+       const params = [sqlObject.value];
+       let where = `[${sqlObject.tableName}].[${sqlObject.primaryKey}] = ?`;
+       for (const c of (queryObject.__concurrency || [])) {
+           if (c.value === null || c.value === undefined) { where += ` AND [${sqlObject.tableName}].[${c.column}] IS NULL`; }
+           else { where += ` AND [${sqlObject.tableName}].[${c.column}] = ?`; params.push(c.value); }
+       }
+       const sqlQuery = `DELETE FROM [${sqlObject.tableName}] WHERE ${where}`;
+       return Promise.resolve(this._runWithParams(sqlQuery, params));
+    }
+
+    /** Rows matched by the last UPDATE/DELETE (driver-specific result shape). */
+    affectedRows(result){
+        if (!result) return 0;
+        if (typeof result.changes === 'number') return result.changes;
+        return 0;
     }
 
     async insert(queryObject){

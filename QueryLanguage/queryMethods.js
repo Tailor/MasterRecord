@@ -980,6 +980,15 @@ class queryMethods{
             // Reset dirty fields and state
             this.__dirtyFields = [];
             this.__state = 'track';
+            // Reload resets ORIGINAL values to the database state (EF Reload())
+            // so the next concurrency check compares against the current row.
+            if (typeof this.__context._refreshOriginalValues === 'function') {
+                this.__context._refreshOriginalValues(this);
+            }
+            // Drop the duplicate instance findById tracked (one copy per row).
+            if (typeof this.__context.__untrack === 'function') {
+                this.__context.__untrack([fresh]);
+            }
 
             return this;
         };

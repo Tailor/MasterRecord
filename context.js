@@ -22,6 +22,7 @@ import MySQLEngine from './mySQLEngine.js';
 import insertManager from './insertManager.js';
 import deleteManager from './deleteManager.js';
 import EntityTrackerModel from './Entity/entityTrackerModel.js';
+import { ConcurrencyError } from './errors.js';
 import { globSync } from 'glob';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -2024,58 +2025,52 @@ class context {
             }
         }
 
-        if (entities.length === 1) {
-            // Single update - use existing logic.
-            // NOTE: the second argument must be `__entity` (double underscore).
-            // The previous code used `_entity` which is undefined, so
-            // `removePrimarykeyandVirtual` received `undefined` and stripped
-            // nothing — a latent bug that left primary-key/virtual fields in
-            // the UPDATE SET clause if they ever landed in __dirtyFields.
-            const currentModel = entities[0];
+        // Each entity gets its own UPDATE (the engines' "bulk" update was a
+        // per-row loop anyway) so that every statement can carry that row's
+        // concurrency tokens and be checked for rows-affected individually —
+        // EF's unit-of-work semantics: a concurrently modified/deleted row
+        // affects 0 rows and raises ConcurrencyError, rolling the batch back.
+        //
+        // NOTE: the second argument to removePrimarykeyandVirtual must be
+        // `__entity` (double underscore); `_entity` is undefined and would
+        // strip nothing, leaving PK/virtual fields in the SET clause.
+        for (const currentModel of entities) {
+            const rowVersionColumn = this._rowVersionColumn(currentModel);
+            // The ORM owns the rowVersion column (bumped atomically below). If the
+            // app wrote to it, drop it from the SET so it is never assigned twice.
+            if (rowVersionColumn && Array.isArray(currentModel.__dirtyFields)) {
+                currentModel.__dirtyFields = currentModel.__dirtyFields.filter(f => f !== rowVersionColumn);
+            }
             const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel.__entity);
             const argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
 
-            if (argu !== -1) {
-                const primaryKey = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                const sqlUpdate = {
-                    tableName: cleanCurrentModel.__entity.__name,
-                    arg: argu,
-                    primaryKey: primaryKey,
-                    primaryKeyValue: cleanCurrentModel[primaryKey]
-                };
-                await this._SQLEngine.update(sqlUpdate);
-            } else {
+            if (argu === -1) {
                 console.warn('[Context] Entity marked for update but no changes detected');
-            }
-        } else {
-            // Batch update - build all queries first
-            const updateQueries = [];
-
-            for (const currentModel of entities) {
-                const cleanCurrentModel = tools.removePrimarykeyandVirtual(currentModel, currentModel.__entity);
-                const argu = this._SQLEngine._buildSQLEqualToParameterized(cleanCurrentModel);
-
-                if (argu !== -1) {
-                    const primaryKey = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
-                    updateQueries.push({
-                        tableName: cleanCurrentModel.__entity.__name,
-                        arg: argu,
-                        primaryKey: primaryKey,
-                        primaryKeyValue: cleanCurrentModel[primaryKey]
-                    });
-                }
+                continue;
             }
 
-            if (updateQueries.length > 0) {
-                await this._bulkWithFallback('Bulk update',
-                    async () => { await this._SQLEngine.bulkUpdate(updateQueries); },
-                    async () => {
-                        // Fallback to individual updates
-                        for (const query of updateQueries) {
-                            await this._SQLEngine.update(query);
-                        }
-                    }
-                );
+            const primaryKey = tools.getPrimaryKeyObject(cleanCurrentModel.__entity);
+            const sqlUpdate = {
+                tableName: cleanCurrentModel.__entity.__name,
+                arg: argu,
+                primaryKey: primaryKey,
+                primaryKeyValue: cleanCurrentModel[primaryKey],
+                // Optimistic concurrency: ORIGINAL token values into the WHERE,
+                // and the rowVersion column bumped atomically in the SET.
+                concurrency: this._concurrencyClause(currentModel),
+                rowVersionColumn,
+            };
+            const result = await this._SQLEngine.update(sqlUpdate);
+            this._assertAffected(result, currentModel, 'update');
+
+            // Mirror the atomic `version = version + 1` onto the in-memory
+            // entity so its value matches the row and the next save's WHERE
+            // uses the new version.
+            if (rowVersionColumn) {
+                const proto = Object.getPrototypeOf(currentModel);
+                const cur = Number(this._backingValue(currentModel, rowVersionColumn) || 0);
+                if (proto && ('_' + rowVersionColumn) in proto) proto['_' + rowVersionColumn] = cur + 1;
+                else currentModel[rowVersionColumn] = cur + 1;
             }
         }
 
@@ -2130,16 +2125,44 @@ class context {
                 deletesByTable.get(groupKey).ids.push(id);
             }
 
+            // Entities with concurrency tokens need a per-row DELETE so each
+            // can carry its own token WHERE + rows-affected check; the rest go
+            // through the set-based WHERE IN with a total-rows-affected check.
+            const tokenEntities = entities.filter(e => this._concurrencyTokenColumns(e).length > 0);
+            const tokenSet = new Set(tokenEntities);
+            for (const entity of tokenEntities) {
+                const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
+                await deleteObject.init(entity);   // deleteManager asserts rows-affected
+            }
+            for (const [key, group] of deletesByTable) {
+                group.ids = entities
+                    .filter(e => !tokenSet.has(e) && `${e.__entity.__name}::${tools.getPrimaryKeyObject(e.__entity)}` === key)
+                    .map(e => e[tools.getPrimaryKeyObject(e.__entity)]);
+                if (group.ids.length === 0) deletesByTable.delete(key);
+            }
+
             await this._bulkWithFallback('Bulk delete',
                 async () => {
-                    // Performance: Use for...of with Map entries
                     for (const { tableName, primaryKey, ids } of deletesByTable.values()) {
-                        await this._SQLEngine.bulkDelete(tableName, ids, primaryKey);
+                        const result = await this._SQLEngine.bulkDelete(tableName, ids, primaryKey);
+                        const eng = this._SQLEngine;
+                        const affected = (eng && typeof eng.affectedRows === 'function') ? eng.affectedRows(result) : ids.length;
+                        if (affected !== ids.length) {
+                            // Some rows were already gone: EF treats this as a
+                            // concurrency conflict (expected N, affected M).
+                            const missing = entities.filter(e => !tokenSet.has(e) && e.__entity.__name === tableName);
+                            throw new ConcurrencyError(
+                                `Bulk delete of ${tableName} expected to affect ${ids.length} row(s) but affected ${affected}. ` +
+                                `One or more rows were modified or deleted by another operation since they were loaded.`,
+                                missing, { entity: tableName, expected: ids.length, affected, verb: 'delete' }
+                            );
+                        }
                     }
                 },
                 async () => {
-                    // Fallback to individual deletes
+                    // Fallback to individual deletes (each asserts rows-affected)
                     for (const entity of entities) {
+                        if (tokenSet.has(entity)) continue;
                         const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
                         await deleteObject.init(entity);
                     }
@@ -2199,15 +2222,169 @@ class context {
         // `this._SQLEngine` is the shared lock host; before init (the very first
         // save) it falls back to the instance, which is fine — there is nothing
         // concurrent to serialize against yet.
+        // If THIS context currently holds the engine lock (we're inside
+        // ctx.transaction(fn) or between beginTransaction()/commit()), run the
+        // flush directly — re-entering the mutex would deadlock. The flush uses
+        // a SAVEPOINT in that case (see _saveChangesExclusive).
+        if (this.__engineLockDepth > 0) {
+            return this._saveChangesExclusive();
+        }
+        return this._withEngineLock(() => this._saveChangesExclusive());
+    }
+
+    /**
+     * Async mutex on the engine (the object that owns the transaction client):
+     * serializes units of work that share a connection. Replaces the old
+     * promise-chain queue with an explicit acquire/release so a user
+     * transaction can HOLD the lock across multiple awaits (begin ... commit).
+     */
+    _withEngineLock(fn) {
         const lockHost = this._SQLEngine || this;
-        const run = () => this._saveChangesExclusive();
         const prev = lockHost.__saveQueue || Promise.resolve();
-        const next = prev.then(run, run);
-        // The queue itself must swallow rejections or one failed save would
-        // poison every save after it; callers still see their own rejection
-        // through `next`.
-        lockHost.__saveQueue = next.catch(() => {});
-        return next;
+        let release;
+        const held = new Promise(resolve => { release = resolve; });
+        // The queue never rejects: one failed unit of work must not poison the
+        // ones after it. Callers still see their own rejection via `run`.
+        lockHost.__saveQueue = prev.then(() => held, () => held);
+        const run = prev.then(
+            async () => { try { return await fn(); } finally { release(); } },
+            async () => { try { return await fn(); } finally { release(); } }
+        );
+        return run;
+    }
+
+    // ---- Explicit transactions (EF Core: Database.BeginTransaction / savepoints) ----
+
+    /**
+     * Begin a user-controlled transaction spanning multiple saveChanges() and
+     * raw queries. Holds the engine lock until commit()/rollback() so no other
+     * unit of work on the shared connection can interleave. saveChanges()
+     * calls made while the transaction is open run inside it (each protected
+     * by a SAVEPOINT, like EF) and do NOT commit by themselves.
+     *
+     * @example
+     * await db.beginTransaction();
+     * try {
+     *   db.User.add(u); await db.saveChanges();
+     *   db.Audit.add(a); await db.saveChanges();
+     *   await db.commit();
+     * } catch (e) { await db.rollback(); throw e; }
+     */
+    async beginTransaction() {
+        if (this.__userTx) {
+            throw new Error('masterrecord: a transaction is already open on this context (nested transactions are not supported — use createSavepoint()).');
+        }
+        // Only await readiness if the engine isn't up yet; otherwise acquire the
+        // lock SYNCHRONOUSLY below so a save issued right after this call (but
+        // before the transaction began) cannot slip in ahead of it.
+        if (!this._SQLEngine) await this._ensureReady();
+        // Acquire the engine lock and keep it until commit/rollback.
+        let acquired;
+        const gate = new Promise(resolve => { acquired = resolve; });
+        let releaseLock;
+        const holding = new Promise(resolve => { releaseLock = resolve; });
+        this._withEngineLock(() => { acquired(); return holding; }).catch(() => {});
+        await gate;
+        this.__engineLockDepth = (this.__engineLockDepth || 0) + 1;
+        try {
+            await this._SQLEngine.startTransaction();
+        } catch (e) {
+            this.__engineLockDepth--;
+            releaseLock();
+            throw e;
+        }
+        this.__userTx = { releaseLock, savepoints: 0 };
+        return this;
+    }
+
+    /** Commit the transaction opened by beginTransaction(). */
+    async commit() {
+        if (!this.__userTx) throw new Error('masterrecord: commit() called with no open transaction.');
+        const tx = this.__userTx;
+        try {
+            await this._SQLEngine.endTransaction();
+        } finally {
+            this.__userTx = null;
+            this.__engineLockDepth--;
+            tx.releaseLock();
+        }
+        return this;
+    }
+
+    /** Roll back the transaction opened by beginTransaction(). */
+    async rollback() {
+        if (!this.__userTx) throw new Error('masterrecord: rollback() called with no open transaction.');
+        const tx = this.__userTx;
+        try {
+            await this._SQLEngine.errorTransaction();
+        } finally {
+            this.__userTx = null;
+            this.__engineLockDepth--;
+            tx.releaseLock();
+        }
+        return this;
+    }
+
+    /** Aliases matching common ORM naming. */
+    commitTransaction() { return this.commit(); }
+    rollbackTransaction() { return this.rollback(); }
+
+    /** True while a user transaction (beginTransaction/transaction(fn)) is open. */
+    get inTransaction() { return !!this.__userTx; }
+
+    /**
+     * Run `fn(ctx)` inside a transaction: begin, run, commit — or roll back if
+     * `fn` throws (the error is rethrown). The recommended form.
+     *
+     * @example
+     * await db.transaction(async (tx) => {
+     *   tx.Account.add(a); await tx.saveChanges();
+     *   await tx.execute('UPDATE ...');
+     * });
+     */
+    async transaction(fn) {
+        if (typeof fn !== 'function') throw new TypeError('masterrecord: transaction(fn) expects a function.');
+        await this.beginTransaction();
+        try {
+            const result = await fn(this);
+            await this.commit();
+            return result;
+        } catch (error) {
+            if (this.__userTx) { try { await this.rollback(); } catch (_) { /* keep original error */ } }
+            throw error;
+        }
+    }
+
+    /** Create a named savepoint inside the open transaction (EF CreateSavepoint). */
+    async createSavepoint(name) {
+        const sp = this._savepointName(name);   // validate first (fail fast)
+        if (!this.__userTx) throw new Error('masterrecord: createSavepoint() requires an open transaction.');
+        await this._SQLEngine.savepoint(sp);
+        return this;
+    }
+
+    /** Roll back to a named savepoint, keeping the transaction open (EF RollbackToSavepoint). */
+    async rollbackToSavepoint(name) {
+        const sp = this._savepointName(name);
+        if (!this.__userTx) throw new Error('masterrecord: rollbackToSavepoint() requires an open transaction.');
+        await this._SQLEngine.rollbackToSavepoint(sp);
+        return this;
+    }
+
+    /** Release a named savepoint (EF ReleaseSavepoint). */
+    async releaseSavepoint(name) {
+        const sp = this._savepointName(name);
+        if (!this.__userTx) throw new Error('masterrecord: releaseSavepoint() requires an open transaction.');
+        await this._SQLEngine.releaseSavepoint(sp);
+        return this;
+    }
+
+    /** Savepoint names are identifiers, never user input in SQL: validate strictly. */
+    _savepointName(name) {
+        if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(name)) {
+            throw new Error(`masterrecord: invalid savepoint name ${JSON.stringify(name)} (letters, digits, underscore; must not start with a digit).`);
+        }
+        return `mr_usp_${name}`;
     }
 
     async _saveChangesExclusive() {
@@ -2267,14 +2444,31 @@ class context {
             // Atomicity: wrap the change set in a single transaction so a partial
             // failure rolls it back.
             if (this.isSQLite || this.isMySQL || this.isPostgres) {
-                await this._SQLEngine.startTransaction();
-                try {
-                    await this._processTrackedEntities(changeSet);
-                    this.__clearErrorHandler();
-                    await this._SQLEngine.endTransaction();
-                } catch (error) {
-                    await this._SQLEngine.errorTransaction();
-                    throw error;
+                if (this.__userTx) {
+                    // Inside a user transaction (beginTransaction/transaction(fn)):
+                    // do NOT begin/commit our own. Protect this flush with a
+                    // SAVEPOINT so a failure rolls back only this save and
+                    // leaves the outer transaction usable (EF semantics).
+                    const sp = `mr_save_${++this.__userTx.savepoints}`;
+                    await this._SQLEngine.savepoint(sp);
+                    try {
+                        await this._processTrackedEntities(changeSet);
+                        this.__clearErrorHandler();
+                        await this._SQLEngine.releaseSavepoint(sp);
+                    } catch (error) {
+                        try { await this._SQLEngine.rollbackToSavepoint(sp); } catch (_) { /* outer tx may be aborted */ }
+                        throw error;
+                    }
+                } else {
+                    await this._SQLEngine.startTransaction();
+                    try {
+                        await this._processTrackedEntities(changeSet);
+                        this.__clearErrorHandler();
+                        await this._SQLEngine.endTransaction();
+                    } catch (error) {
+                        await this._SQLEngine.errorTransaction();
+                        throw error;
+                    }
                 }
             }
 
@@ -2323,10 +2517,110 @@ class context {
             if (!wasDelete) {
                 entity.__state = 'track';
                 entity.__dirtyFields = [];
+                // What was just written IS the database state now: refresh the
+                // original-value snapshot (EF does the same after SaveChanges),
+                // so the next concurrency check compares against these values.
+                this._refreshOriginalValues(entity);
             }
             detach.push(entity);
         }
         this.__untrack(detach);
+    }
+
+    // ---- Optimistic concurrency helpers (EF Core concurrency tokens) ---------
+
+    /** Column names on `entity` flagged as concurrency tokens (incl. rowVersion). */
+    _concurrencyTokenColumns(entity) {
+        const def = entity && entity.__entity;
+        if (!def) return [];
+        const cols = [];
+        for (const key of Object.keys(def)) {
+            const f = def[key];
+            if (f && typeof f === 'object' && f.concurrencyToken === true && !f.__relationship) {
+                cols.push(f.relationshipType === 'belongsTo' && f.foreignKey ? f.foreignKey : (f.name || key));
+            }
+        }
+        return cols;
+    }
+
+    /** The single ORM-managed rowVersion column on `entity`, or null. */
+    _rowVersionColumn(entity) {
+        const def = entity && entity.__entity;
+        if (!def) return null;
+        for (const key of Object.keys(def)) {
+            const f = def[key];
+            if (f && typeof f === 'object' && f.rowVersion === true) return f.name || key;
+        }
+        return null;
+    }
+
+    /**
+     * The concurrency WHERE additions for `entity`: each token column paired
+     * with its ORIGINAL (as-loaded / as-last-saved) value. For a concurrency
+     * token the application changed, the ORIGINAL still goes in the WHERE and
+     * the new value in the SET — exactly EF's semantics.
+     */
+    _concurrencyClause(entity) {
+        const cols = this._concurrencyTokenColumns(entity);
+        if (cols.length === 0) return [];
+        const originals = entity.__originalValues || {};
+        return cols.map(column => ({
+            column,
+            value: Object.prototype.hasOwnProperty.call(originals, column)
+                ? originals[column]
+                : this._backingValue(entity, column),
+        }));
+    }
+
+    /** Raw stored (DB-side) value of a column on a tracked entity. */
+    _backingValue(entity, column) {
+        const proto = Object.getPrototypeOf(entity);
+        if (proto && ('_' + column) in proto) return proto['_' + column];
+        const v = entity[column];
+        return typeof v === 'function' ? undefined : v;
+    }
+
+    /** Re-snapshot original values from the entity's current stored values. */
+    _refreshOriginalValues(entity) {
+        const def = entity && entity.__entity;
+        if (!def) return;
+        const originals = {};
+        for (const key of Object.keys(def)) {
+            const f = def[key];
+            if (!f || typeof f !== 'object') continue;
+            if (f.type === 'hasOne' || f.type === 'hasMany' || f.type === 'hasManyThrough') continue;
+            const column = (f.relationshipType === 'belongsTo' && f.foreignKey) ? f.foreignKey : (f.name || key);
+            originals[column] = this._backingValue(entity, column);
+        }
+        Object.defineProperty(entity, '__originalValues', {
+            value: originals, enumerable: false, writable: true, configurable: true,
+        });
+    }
+
+    /**
+     * Rows-affected guard shared by UPDATE and DELETE: EF throws
+     * DbUpdateConcurrencyException whenever a statement expected to affect one
+     * row affected zero — the row was concurrently modified (token mismatch) or
+     * deleted. The enclosing transaction is rolled back by saveChanges().
+     */
+    _assertAffected(result, entity, verb) {
+        const eng = this._SQLEngine;
+        const affected = (eng && typeof eng.affectedRows === 'function') ? eng.affectedRows(result) : 1;
+        if (affected === 0) {
+            const name = entity && entity.__entity ? entity.__entity.__name : 'entity';
+            const pk = entity && entity.__entity ? tools.getPrimaryKeyObject(entity.__entity) : null;
+            const id = pk ? entity[pk] : undefined;
+            const tokens = this._concurrencyTokenColumns(entity);
+            throw new ConcurrencyError(
+                `The ${verb} of ${name}${id !== undefined ? '#' + id : ''} was expected to affect 1 row but affected 0. ` +
+                `The row was modified or deleted by another operation since it was loaded` +
+                (tokens.length ? ` (concurrency token${tokens.length > 1 ? 's' : ''}: ${tokens.join(', ')})` : '') +
+                `. Reload the entity and retry, or resolve the conflict.`,
+                [entity],
+                { entity: name, primaryKey: pk, id, verb, tokens }
+            );
+        }
+        return affected;
     }
 
     /**
@@ -3177,6 +3471,7 @@ export {
     ConfigurationError,
     DatabaseConnectionError,
     EntityValidationError,
+    ConcurrencyError,
     _poolKey
 };
 export default context;

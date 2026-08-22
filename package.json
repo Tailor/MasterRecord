@@ -1,6 +1,6 @@
 {
   "name": "masterrecord",
-  "version": "1.5.17",
+  "version": "1.6.0",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "type": "module",
   "main": "./MasterRecord.js",
@@ -28,7 +28,8 @@
     "./Migrations/schema": "./Migrations/schema.js",
     "./Migrations/migrations": "./Migrations/migrations.js",
     "./Migrations/migrationTemplate": "./Migrations/migrationTemplate.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./errors": "./errors.js"
   },
   "bin": {
     "masterrecord": "Migrations/cli.js"

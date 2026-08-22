@@ -175,6 +175,37 @@ class EntityModel {
         return this;
     }
 
+    /**
+     * Mark this column as an optimistic-concurrency token (EF Core's
+     * IsConcurrencyToken / [ConcurrencyCheck]). Its ORIGINAL value (as loaded)
+     * is added to the WHERE clause of every UPDATE/DELETE of the row:
+     *   UPDATE ... WHERE id = ? AND <col> = <original>
+     * If the row was changed by someone else since it was loaded, 0 rows match
+     * and saveChanges() throws ConcurrencyError instead of silently overwriting.
+     * The application is responsible for setting a new value when it changes
+     * the row (e.g. a GUID) — or use rowVersion() to have the ORM do it.
+     */
+    concurrencyToken(){
+        this.obj.concurrencyToken = true;
+        return this;
+    }
+
+    /**
+     * An ORM-managed integer version column (EF Core's IsRowVersion, but
+     * application-managed so it works identically on SQLite, MySQL and
+     * PostgreSQL). It is a concurrency token that saveChanges() increments
+     * atomically on every UPDATE (`SET <col> = <col> + 1 ... WHERE <col> =
+     * <original>`); you never set it yourself. Defaults to 0, NOT NULL.
+     */
+    rowVersion(){
+        if (!this.obj.type) this.obj.type = 'integer';
+        this.obj.concurrencyToken = true;
+        this.obj.rowVersion = true;
+        this.obj.nullable = false;
+        if (this.obj.default === undefined || this.obj.default === null) this.obj.default = 0;
+        return this;
+    }
+
     // sets the default value in the DB
     default(value){
         this.obj.default = value;

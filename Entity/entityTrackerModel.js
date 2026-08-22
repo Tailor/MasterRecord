@@ -43,6 +43,21 @@ class EntityTrackerModel {
             }
         }
 
+        // Snapshot ORIGINAL values as loaded from the database (EF's
+        // EntityEntry.OriginalValues). Used for optimistic concurrency — the
+        // original value of a concurrency token goes into the UPDATE/DELETE
+        // WHERE clause — and for conflict resolution / entry() introspection.
+        // Non-enumerable so it never leaks into spreads/JSON.
+        const originals = {};
+        for (const [modelField, modelFieldValue] of modelFields) {
+            if (!$that._isRelationship(currentEntity[modelField])) {
+                originals[modelField] = modelFieldValue;
+            }
+        }
+        Object.defineProperty(modelClass, '__originalValues', {
+            value: originals, enumerable: false, writable: true, configurable: true,
+        });
+
         // Add Active Record-style .save() method
         modelClass.save = async function() {
             if (!this.__context) {
@@ -204,6 +219,17 @@ class EntityTrackerModel {
             // Reset dirty fields and state
             this.__dirtyFields = [];
             this.__state = 'track';
+            // Reload resets ORIGINAL values to the database state (EF's
+            // Reload()), so a later concurrency check compares against what
+            // is now in the row — this is what makes "reload and retry" work.
+            if (typeof this.__context._refreshOriginalValues === 'function') {
+                this.__context._refreshOriginalValues(this);
+            }
+            // findById tracked a second instance of this row; drop it so the
+            // identity map holds only this entity (EF never tracks two copies).
+            if (typeof this.__context.__untrack === 'function') {
+                this.__context.__untrack([fresh]);
+            }
 
             return this;
         };
@@ -486,6 +512,12 @@ class EntityTrackerModel {
             // the user set and that the INSERT persisted — not a raw DB row.
             this._defineTrackedColumn(target, modelField, captured[modelField], currentEntity, fkToNavName, false);
         }
+        // Original values for a just-inserted (or attached) entity are its
+        // current values — exactly what was written. (EF: originals equal
+        // current for attached entities.)
+        Object.defineProperty(target, '__originalValues', {
+            value: { ...captured }, enumerable: false, writable: true, configurable: true,
+        });
         return target;
     }
 

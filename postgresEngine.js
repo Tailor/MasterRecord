@@ -79,10 +79,29 @@ class postgresEngine {
 
         const t = this._q(query.tableName);
         const pk = this._q(query.primaryKey);
-        const sqlQuery = `UPDATE ${t} SET ${query.arg.query} WHERE ${t}.${pk} = $${query.arg.params.length + 1}`;
-        // Add primaryKeyValue to params array
+        // Optimistic concurrency: bump a rowVersion column atomically and add
+        // each concurrency token's ORIGINAL value to the WHERE (see SQLite
+        // engine). Positional parameters continue from the SET params.
+        let setSql = query.arg.query;
+        if (query.rowVersionColumn) {
+            const rv = this._q(query.rowVersionColumn);
+            setSql += `, ${rv} = ${rv} + 1`;
+        }
         const params = [...query.arg.params, query.primaryKeyValue];
+        let where = `${t}.${pk} = $${params.length}`;
+        for (const c of (query.concurrency || [])) {
+            if (c.value === null || c.value === undefined) { where += ` AND ${t}.${this._q(c.column)} IS NULL`; }
+            else { params.push(c.value); where += ` AND ${t}.${this._q(c.column)} = $${params.length}`; }
+        }
+        const sqlQuery = `UPDATE ${t} SET ${setSql} WHERE ${where}`;
         return await this._runWithParams(sqlQuery, params);
+    }
+
+    /** Rows matched by the last UPDATE/DELETE (pg Result.rowCount). */
+    affectedRows(result){
+        if (!result) return 0;
+        if (typeof result.rowCount === 'number') return result.rowCount;
+        return 0;
     }
 
     /**
@@ -92,8 +111,14 @@ class postgresEngine {
         const sqlObject = this._buildDeleteObject(queryObject);
         const t = this._q(sqlObject.tableName);
         const pk = this._q(sqlObject.primaryKey);
-        const sqlQuery = `DELETE FROM ${t} WHERE ${t}.${pk} = $1`;
-        return await this._runWithParams(sqlQuery, [sqlObject.value]);
+        const params = [sqlObject.value];
+        let where = `${t}.${pk} = $1`;
+        for (const c of (queryObject.__concurrency || [])) {
+            if (c.value === null || c.value === undefined) { where += ` AND ${t}.${this._q(c.column)} IS NULL`; }
+            else { params.push(c.value); where += ` AND ${t}.${this._q(c.column)} = $${params.length}`; }
+        }
+        const sqlQuery = `DELETE FROM ${t} WHERE ${where}`;
+        return await this._runWithParams(sqlQuery, params);
     }
 
     /**

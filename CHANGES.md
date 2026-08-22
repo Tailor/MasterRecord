@@ -1,5 +1,28 @@
 # MasterRecord Changelog
 
+## v1.6.0 — optimistic concurrency (EF concurrency tokens) + explicit transactions
+
+Closes the last **silent lost-write** class identified in `docs/EF_CORE_GAP_ANALYSIS.md` (#1 and #2), implemented the way Entity Framework Core does.
+
+**Optimistic concurrency**
+- `db.field().concurrencyToken()` — the column's **original** (as-loaded) value is added to every UPDATE/DELETE `WHERE` (EF `IsConcurrencyToken`). You rotate the value when you change the row.
+- `db.rowVersion()` — an ORM-managed integer token bumped **atomically** in the same statement (`SET v = v + 1 … WHERE v = <original>`), mirrored onto the entity and re-snapshotted as the new original after a successful save. Portable across SQLite/MySQL/PostgreSQL (EF `IsRowVersion`, application-managed).
+- **Rows-affected is now always checked** on UPDATE and DELETE (previously never): a row that was concurrently modified (token mismatch) or deleted affects 0 rows → `saveChanges()` rolls the batch back and throws **`ConcurrencyError`** (EF `DbUpdateConcurrencyException`; `err.entries` = conflicting entities, `err.code = 'MR_CONCURRENCY_CONFLICT'`). Before, such saves returned `true` and silently overwrote or no-op'd.
+- Entities now carry **original values** (`__originalValues`, non-enumerable) captured at load / after insert / after save; `reload()` resets them (EF `Reload()`), which is what makes "reload and retry" resolution work. `reload()` also no longer leaves a duplicate tracked instance behind.
+- Engines expose `affectedRows(result)` (SQLite `changes`, mysql2 `affectedRows` — mysql2 connects with `FOUND_ROWS`, so this is rows *matched*, as required; pg `rowCount`). Bulk deletes check total rows affected; entities with tokens are deleted per-row.
+- New module `errors.js` (`ConcurrencyError`), also re-exported from `context.js`.
+
+**Explicit transactions**
+- `ctx.transaction(async tx => { … })` — begin → run → commit, rollback + rethrow on error (recommended form).
+- `ctx.beginTransaction()` / `ctx.commit()` / `ctx.rollback()` (+ `commitTransaction`/`rollbackTransaction` aliases), `ctx.inTransaction`.
+- `ctx.createSavepoint(name)` / `rollbackToSavepoint(name)` / `releaseSavepoint(name)` (names validated as identifiers).
+- Inside a user transaction, each `saveChanges()` is protected by a **savepoint** and does not commit by itself; a failed save leaves the outer transaction usable (EF semantics). Nested `beginTransaction()` is rejected.
+- The engine save queue is now an explicit async mutex (`_withEngineLock`); a transaction holds it for its duration so another unit of work on the same pooled connection waits instead of interleaving statements into the transaction.
+
+**Internals:** per-entity UPDATEs (the engines' "bulk" update was already a per-row loop) so each statement carries its own tokens and rows-affected check. Docs: new "Optimistic concurrency" and "Transactions" sections in `docs/CHANGE_TRACKING_AND_CONTEXT_LIFETIME.md`.
+
+New tests: `test/optimistic-concurrency.test.js` (rowVersion bump/mirror, conflict → `ConcurrencyError` + no overwrite + reload-and-retry, app-managed token, rows-affected on update/delete of a vanished row, batch rollback on conflict) and `test/transactions-api.test.js` (transaction(fn) commit/rollback, manual begin/commit/rollback, nested rejection + savepoints, failed save inside tx keeps tx usable, lock serializes a sibling save). Full suite green (0 fail, 326 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.17 — connections stay warm across close/reopen (ADO.NET-style pooling; no reconnect churn)
 
 `close()` physically closed a pooled connection the moment its refcount reached zero. So a request-scoped context (or a background job that builds a scope per run and disposes it) reconnected on every cycle whenever it was the sole holder — the exact churn that scoping was supposed to avoid.

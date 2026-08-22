@@ -101,6 +101,68 @@ await pool.drain();
 
 ---
 
+## Optimistic concurrency (EF's concurrency tokens)
+
+Without a token, two writers that load the same row and save different changes silently overwrite each other — last write wins. MasterRecord implements EF Core's optimistic concurrency:
+
+```javascript
+class Doc {
+    id(db)      { db.integer().primary().auto(); }
+    title(db)   { db.string(); }
+    version(db) { db.rowVersion(); }                 // ORM-managed: bumped on every UPDATE
+}
+class Tagged {
+    id(db)   { db.integer().primary().auto(); }
+    etag(db) { db.string().concurrencyToken(); }     // app-managed: you set a new value when you change the row
+}
+```
+
+- **`rowVersion()`** — an integer token the ORM owns. Every UPDATE runs `SET ..., version = version + 1 WHERE id = ? AND version = <original>`. Works identically on SQLite, MySQL and PostgreSQL (EF's `IsRowVersion`, but application-managed so it is portable).
+- **`concurrencyToken()`** — any column whose **original** (as-loaded) value is added to the UPDATE/DELETE `WHERE`. You rotate its value yourself (e.g. a GUID/etag) when you change the row (EF's `IsConcurrencyToken`).
+- **Rows-affected is always checked**, token or not: updating or deleting a row that was concurrently deleted affects 0 rows and throws.
+
+When a conflict is detected, `saveChanges()` rolls the whole batch back and throws **`ConcurrencyError`** (EF's `DbUpdateConcurrencyException`). `err.entries` holds the conflicting entities; they stay tracked and dirty so you can resolve and retry:
+
+```javascript
+import { ConcurrencyError } from 'masterrecord/errors';   // also re-exported from 'masterrecord/context'
+
+for (let attempt = 0; attempt < 3; attempt++) {
+    try { await db.saveChanges(); break; }
+    catch (e) {
+        if (!(e instanceof ConcurrencyError)) throw e;
+        for (const entity of e.entries) {
+            await entity.reload();          // database wins: refresh values + original values
+            entity.title = myNewTitle;      // re-apply what you still want
+        }
+    }
+}
+```
+
+Resolution strategies mirror EF: **database wins** (`reload()` then re-apply), **client wins** (`reload()`, then set your values on the now-fresh originals and save), or merge per field using `entity.__originalValues` vs the reloaded values.
+
+## Transactions (EF's `Database.BeginTransaction`)
+
+`saveChanges()` is always atomic on its own. To span several saves (or raw SQL) in one unit:
+
+```javascript
+await db.transaction(async (tx) => {          // begin → run → commit; rollback + rethrow on error
+    tx.Account.add(a);  await tx.saveChanges();
+    await tx.execute('UPDATE Ledger SET ...');
+    tx.Audit.add(log);  await tx.saveChanges();
+});
+
+// manual control
+await db.beginTransaction();
+try { ...; await db.commit(); } catch (e) { await db.rollback(); throw e; }
+
+// savepoints inside an open transaction
+await db.createSavepoint('beforeBulk');
+...
+await db.rollbackToSavepoint('beforeBulk');   // or releaseSavepoint('beforeBulk')
+```
+
+Inside a user transaction each `saveChanges()` is protected by a savepoint and does **not** commit by itself — a failed save leaves the outer transaction usable, exactly as in EF. The transaction holds the context's engine lock, so another unit of work on the same pooled connection waits rather than interleaving. Nested `beginTransaction()` is rejected; use savepoints.
+
 ## Why not a singleton context?
 
 A singleton context shared across concurrent requests is the root cause of an entire class of bugs (and is unsupported in EF for the same reasons):
