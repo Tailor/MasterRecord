@@ -61,7 +61,9 @@ MasterRecord holds tracked entities with **strong references** for the life of t
 
 ### 1. Request-scoped context (recommended)
 
-Create a context per request and `close()` it when the request ends. Connections are pooled underneath, and `close()` releases the whole change tracker. Every `load → mutate → saveChanges` handler works unchanged, with no tracking-behavior tweaks and no way to introduce a lost write.
+Create a context per request and `close()` it when the request ends. Every `load → mutate → saveChanges` handler works unchanged, with no tracking-behavior tweaks and no way to introduce a lost write.
+
+`new AppContext()` is cheap — it does **not** open a new connection. Connections are pooled per database (like ADO.NET under EF): `close()` releases the change tracker and returns the connection to the pool **kept open and idle**, so the next context reuses a warm connection with no reconnect. Idle connections are reclaimed by a background reaper after `MR_POOL_IDLE_MS` (default 60000ms; set `0` to close immediately at refcount zero). So per-request contexts — and background jobs that build a scope per run — do not churn connections.
 
 ```javascript
 async function handler(req, res) {

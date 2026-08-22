@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.5.17 — connections stay warm across close/reopen (ADO.NET-style pooling; no reconnect churn)
+
+`close()` physically closed a pooled connection the moment its refcount reached zero. So a request-scoped context (or a background job that builds a scope per run and disposes it) reconnected on every cycle whenever it was the sole holder — the exact churn that scoping was supposed to avoid.
+
+EF/ADO.NET doesn't do this: disposing a `DbContext` returns its connection to the pool **kept physically open and idle**, and the next context reuses it warm. MasterRecord's `_pools` now behaves the same:
+
+- At refcount zero the connection is **kept open and idle** (not closed). The next context that needs the same database reuses the warm connection with no reconnect. Verified: `close()` then `new Ctx()` yields the *same* engine instance.
+- A background **reaper** physically closes connections idle longer than `MR_POOL_IDLE_MS` (default `60000`), so idle connections are reclaimed, not leaked. The reaper timer is `unref()`-ed and never keeps the process alive; `closeAll()` stops it.
+- **`MR_POOL_IDLE_MS=0`** opts out — the old behavior (close immediately at refcount zero).
+
+This makes per-request contexts and per-run background scopes genuinely cheap: `new AppContext()` allocates a tracking map and points at the already-open connection; `close()` returns it to the pool warm.
+
+New tests: `test/pool-idle-retention.test.js` — a closed connection is reused warm (no reconnect); the reaper closes a connection idle past the timeout; `MR_POOL_IDLE_MS=0` closes immediately. Full suite green (0 fail, 315 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.16 — context pooling (EF's AddDbContextPool) + reset(); change-tracking/lifetime docs
 
 Completes the EF-faithful context-lifetime story so request-scoped contexts are affordable even with many contexts registered.

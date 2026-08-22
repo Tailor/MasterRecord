@@ -59,6 +59,37 @@ function findAppRoot(){
 
 const _pools = global.__MR_POOLS__ || (global.__MR_POOLS__ = new Map());
 
+// ADO.NET-style connection pooling (what EF sits on top of): when a pooled
+// connection's refCount reaches zero it is NOT physically closed — it is kept
+// OPEN and IDLE so the next context that needs it reuses a warm connection
+// (this is why EF does not reconnect on every scope/DbContext dispose). A
+// background reaper physically closes connections that have been idle longer
+// than the timeout, so idle connections are eventually reclaimed. Set
+// MR_POOL_IDLE_MS=0 to disable retention (close immediately at refCount 0).
+const _POOL_IDLE_MS = process.env.MR_POOL_IDLE_MS !== undefined && Number(process.env.MR_POOL_IDLE_MS) >= 0
+    ? Number(process.env.MR_POOL_IDLE_MS)
+    : 60_000;
+let _poolReaper = global.__MR_POOL_REAPER__ || null;
+function _ensurePoolReaper() {
+    if (_poolReaper || _POOL_IDLE_MS <= 0) return;
+    _poolReaper = setInterval(() => {
+        const now = Date.now();
+        for (const [key, entry] of _pools) {
+            if (entry && !entry.promise && entry.refCount <= 0
+                && entry.idleSince != null && (now - entry.idleSince) >= _POOL_IDLE_MS) {
+                _pools.delete(key);
+                try {
+                    if (entry.engine && typeof entry.engine.close === 'function') {
+                        Promise.resolve(entry.engine.close()).catch(() => {});
+                    }
+                } catch (_) { /* best-effort */ }
+            }
+        }
+    }, Math.min(Math.max(_POOL_IDLE_MS, 1000), 30_000));
+    if (typeof _poolReaper.unref === 'function') _poolReaper.unref();  // never keep the process alive
+    global.__MR_POOL_REAPER__ = _poolReaper;
+}
+
 // Registry of live context instances so saveChanges()/close() can detect entities
 // with unsaved changes that are tracked by a DIFFERENT context instance — the
 // classic "saveChanges() succeeded but nothing was written" bug: you mutate an
@@ -2660,9 +2691,21 @@ class context {
             if (entry.engine === this._SQLEngine) {
                 entry.refCount--;
                 if (entry.refCount <= 0) {
-                    _pools.delete(key);
-                    if (this._SQLEngine && typeof this._SQLEngine.close === 'function') {
-                        await this._SQLEngine.close();
+                    // ADO.NET-style: do NOT close the physical connection now.
+                    // Keep it OPEN and idle so the next context reuses a warm
+                    // connection (as EF does — a scoped DbContext dispose returns
+                    // its connection to the pool, it is not disconnected). The
+                    // reaper closes it only after it has been idle past the
+                    // timeout. (MR_POOL_IDLE_MS=0 disables retention -> close now.)
+                    entry.refCount = 0;
+                    if (_POOL_IDLE_MS <= 0) {
+                        _pools.delete(key);
+                        if (this._SQLEngine && typeof this._SQLEngine.close === 'function') {
+                            await this._SQLEngine.close();
+                        }
+                    } else {
+                        entry.idleSince = Date.now();
+                        _ensurePoolReaper();
                     }
                 }
                 this._SQLEngine = null;
@@ -2713,6 +2756,12 @@ class context {
             }
         }
         _pools.clear();
+        // Stop the idle-connection reaper (nothing left to reap).
+        if (_poolReaper) {
+            clearInterval(_poolReaper);
+            _poolReaper = null;
+            global.__MR_POOL_REAPER__ = null;
+        }
     }
 
     /**
