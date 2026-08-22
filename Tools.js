@@ -57,6 +57,30 @@ class Tools{
         }
     }
 
+    /** All primary-key field names (EF HasKey(a, b)); [] when none. */
+    static primaryKeys(model){
+        const out = [];
+        if (!model) return out;
+        for (const key of Object.keys(model)) {
+            if (key.startsWith('__')) continue;
+            const f = model[key];
+            if (f && typeof f === 'object' && f.primary === true) out.push(key);
+        }
+        return out;
+    }
+
+    static isCompositeKey(model){
+        return Tools.primaryKeys(model).length > 1;
+    }
+
+    /** Key values of an entity as { field: value } (read without invoking navigation getters). */
+    static keyValues(entity){
+        const out = {};
+        if (!entity || !entity.__entity) return out;
+        for (const k of Tools.primaryKeys(entity.__entity)) out[k] = Tools.dataValue(entity, k);
+        return out;
+    }
+
     static findForeignTable(name, model){
         for (const key in model) {
             if (Object.prototype.hasOwnProperty.call(model, key)) {

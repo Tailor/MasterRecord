@@ -189,7 +189,16 @@ class InsertManager {
         const pkVal = currentModel[primaryKey];
         if (!dbset || typeof dbset.asNoTracking !== 'function' || pkVal === undefined || pkVal === null) return;
         if (!this._isValidIdentifier(primaryKey)) return;
-        const rows = await dbset.asNoTracking().where(`r => r.${primaryKey} == $$`, pkVal).toObjectList();
+        // (all columns of a composite key)
+        const keys = tools.primaryKeys(modelEntity);
+        let q = dbset.asNoTracking();
+        for (let i = 0; i < keys.length; i++) {
+            if (!this._isValidIdentifier(keys[i])) return;
+            const v = i === 0 ? pkVal : tools.dataValue(currentModel, keys[i]);
+            if (v === undefined || v === null) return;
+            q = i === 0 ? q.where(`r => r.${keys[i]} == $$`, v) : q.and(`r => r.${keys[i]} == $$`, v);
+        }
+        const rows = await q.toObjectList();
         const row = rows && rows[0];
         if (!row) return;
         for (const col of computedCols) {

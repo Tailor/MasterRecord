@@ -1,4 +1,4 @@
-import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions, compositePrimaryKeyClause } from "./ddlClauses.js";
 
 // verison 0.0.4
 class migrationMySQLQuery {
@@ -22,7 +22,7 @@ class migrationMySQLQuery {
         return columnList.join(',');
     }
 
-    #columnMapping(table){
+    #columnMapping(table, suppressPk = false){
         /*
         var mapping = {
             "name": "id", // if this changes then call rename column
@@ -39,10 +39,11 @@ class migrationMySQLQuery {
         */
         // name TEXT NOT NULL,
 
-        const auto = table.auto ? " AUTO_INCREMENT":"";
-        const primaryKey = table.primary ? " PRIMARY KEY" : "";
-        const nullName = table.nullable ? "" : " NOT NULL";
-        const unique = table.unique ? " UNIQUE" : "";
+        // suppressPk: part of a composite key -> emitted as a table-level PRIMARY KEY (a, b)
+        const auto = (table.auto && !suppressPk) ? " AUTO_INCREMENT":"";
+        const primaryKey = (table.primary && !suppressPk) ? " PRIMARY KEY" : "";
+        const nullName = (table.nullable && !(table.primary && suppressPk)) ? "" : " NOT NULL";
+        const unique = (table.unique && !(table.primary && suppressPk)) ? " UNIQUE" : "";   // primary() implies unique; a composite key is unique as a whole
         const type = this.typeManager(table.type);
         let tableName = table.name;
         if(table.relationshipType === 'belongsTo' && table.foreignKey){
@@ -203,6 +204,7 @@ class migrationMySQLQuery {
     createTable(table){
 
         let queryVar = "";
+        const compositePk = compositePrimaryKeyClause(table, (n) => '`' + String(n).replace(/`/g, '``') + '`');
         //console.log("Dsfdsfdsf---------", table)
         for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
@@ -220,10 +222,11 @@ class migrationMySQLQuery {
                         continue;
                     }
 
-                    queryVar += `${this.#columnMapping(col)}, `;
+                    queryVar += `${this.#columnMapping(col, !!compositePk)}, `;
                 }
             }
         }
+        if (compositePk) queryVar += `${compositePk}, `;   // EF HasKey(a, b)
 
         const completeQuery = `CREATE TABLE IF NOT EXISTS \`${table.__name}\` (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;

@@ -119,18 +119,35 @@ class queryMethods{
      * Find/FindAsync): a tracked instance is returned without a query; otherwise
      * the row is loaded (and tracked). Returns null if not found.
      */
-    async find(id){
-        const pk = tools.getPrimaryKeyObject(this.__entity);
-        if (!pk) throw new Error(`masterrecord: find() — no primary key defined on entity '${this.__entity.__name}'`);
+    async find(...ids){
+        const keys = tools.primaryKeys(this.__entity);
+        if (!keys.length) throw new Error(`masterrecord: find() — no primary key defined on entity '${this.__entity.__name}'`);
+        const values = this.__keyValuesFromArgs(keys, ids, 'find');
         const ctx = this.__context;
         const table = this.__entity.__name;
         for (const e of ctx.__trackedEntitiesMap.values()) {
-            if (e && e.__entity && e.__entity.__name === table && e.__state !== 'delete' && String(e[pk]) === String(id)) {
+            if (e && e.__entity && e.__entity.__name === table && e.__state !== 'delete'
+                && keys.every((k, i) => String(tools.dataValue(e, k)) === String(values[i]))) {
                 this.__reset();
                 return e;
             }
         }
-        return this.findById(id);
+        return this.findById(...values);
+    }
+
+    /** Key values from find()/findById() args: (a, b) or ({ a, b }) for composite keys. */
+    __keyValuesFromArgs(keys, ids, method){
+        if (keys.length === 1) {
+            if (ids.length === 1 && ids[0] && typeof ids[0] === 'object' && !Array.isArray(ids[0]) && keys[0] in ids[0]) return [ids[0][keys[0]]];
+            return [ids[0]];
+        }
+        if (ids.length === 1 && ids[0] && typeof ids[0] === 'object' && !Array.isArray(ids[0])) {
+            const missing = keys.filter(k => !(k in ids[0]));
+            if (missing.length) throw new Error(`masterrecord: ${method}() on '${this.__entity.__name}' needs all key values { ${keys.join(', ')} }; missing: ${missing.join(', ')}.`);
+            return keys.map(k => ids[0][k]);
+        }
+        if (ids.length !== keys.length) throw new Error(`masterrecord: ${method}() on '${this.__entity.__name}' takes ${keys.length} key values (${keys.join(', ')}) — EF Find(a, b); received ${ids.length}.`);
+        return ids;
     }
 
     /**
@@ -835,27 +852,18 @@ class queryMethods{
     }
 
     // Convenience method: Find record by primary key ID
-    async findById(id){
-        // Find the primary key field in the entity
-        let primaryKeyField = null;
-        for (const fieldName in this.__entity) {
-            const field = this.__entity[fieldName];
-            if (field && field.primary === true) {
-                primaryKeyField = fieldName;
-                break;
-            }
-        }
-
-        if (!primaryKeyField) {
+    async findById(...ids){
+        const keys = tools.primaryKeys(this.__entity);
+        if (!keys.length) {
             throw new Error(`findById error: No primary key defined on entity '${this.__entity.__name}'`);
         }
-
-        // Build where clause: entity.primaryKey == id
-        const entityParam = 'r'; // Standard parameter name
-        const whereClause = `${entityParam} => ${entityParam}.${primaryKeyField} == $$`;
-
-        // Chain where() and single()
-        return await this.where(whereClause, id).single();
+        // Composite keys (EF HasKey(a, b)): findById(a, b) or findById({ a, b })
+        const values = this.__keyValuesFromArgs(keys, ids, 'findById');
+        let q = this;
+        for (let i = 0; i < keys.length; i++) {
+            q = i === 0 ? q.where(`r => r.${keys[i]} == $$`, values[i]) : q.and(`r => r.${keys[i]} == $$`, values[i]);
+        }
+        return await q.single();
     }
 
     async single(){

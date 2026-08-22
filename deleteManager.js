@@ -111,7 +111,11 @@ class DeleteManager {
         // success (EF throws DbUpdateConcurrencyException on delete too).
         const ctx = entity.__context;
         if (ctx && typeof ctx._concurrencyClause === 'function') {
-            const clause = ctx._concurrencyClause(entity);
+            // (+ the remaining columns of a composite key — EF HasKey(a, b))
+            const clause = [
+                ...ctx._concurrencyClause(entity),
+                ...(typeof ctx._compositeKeyClause === 'function' ? ctx._compositeKeyClause(entity) : []),
+            ];
             if (clause.length) {
                 Object.defineProperty(entity, '__concurrency', {
                     value: clause, enumerable: false, writable: true, configurable: true,

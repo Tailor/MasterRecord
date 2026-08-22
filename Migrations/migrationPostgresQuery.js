@@ -1,4 +1,4 @@
-import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions, compositePrimaryKeyClause } from "./ddlClauses.js";
 // Version 1.0.0 - PostgreSQL migration query builder
 class migrationPostgresQuery {
 
@@ -21,7 +21,7 @@ class migrationPostgresQuery {
         return columnList.join(',');
     }
 
-    #columnMapping(table){
+    #columnMapping(table, suppressPk = false){
         /*
         var mapping = {
             "name": "id", // if this changes then call rename column
@@ -38,17 +38,18 @@ class migrationPostgresQuery {
 
         // PostgreSQL uses SERIAL for auto-increment, not separate AUTO_INCREMENT keyword
         let auto = "";
-        let primaryKey = table.primary ? " PRIMARY KEY" : "";
-        const nullName = table.nullable ? "" : " NOT NULL";
-        const unique = table.unique ? " UNIQUE" : "";
+        // suppressPk: part of a composite key -> emitted as a table-level PRIMARY KEY (a, b)
+        let primaryKey = (table.primary && !suppressPk) ? " PRIMARY KEY" : "";
+        const nullName = (table.nullable && !(table.primary && suppressPk)) ? "" : " NOT NULL";
+        const unique = (table.unique && !(table.primary && suppressPk)) ? " UNIQUE" : "";   // primary() implies unique; a composite key is unique as a whole
 
         // For PostgreSQL, if auto-increment primary key, use SERIAL or BIGSERIAL
         let type;
-        if(table.auto && table.primary && (table.type === 'integer' || table.type === 'int')){
+        if(table.auto && table.primary && !suppressPk && (table.type === 'integer' || table.type === 'int')){
             type = "SERIAL";  // Auto-incrementing integer
             auto = "";
             primaryKey = " PRIMARY KEY";
-        } else if(table.auto && table.primary && table.type === 'bigint'){
+        } else if(table.auto && table.primary && !suppressPk && table.type === 'bigint'){
             type = "BIGSERIAL";
             auto = "";
             primaryKey = " PRIMARY KEY";
@@ -222,6 +223,7 @@ class migrationPostgresQuery {
 
     createTable(table){
         let queryVar = "";
+        const compositePk = compositePrimaryKeyClause(table, (n) => '"' + String(n).replace(/"/g, '""') + '"');
 
         for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
@@ -239,10 +241,11 @@ class migrationPostgresQuery {
                         continue;
                     }
 
-                    queryVar += `${this.#columnMapping(col)}, `;
+                    queryVar += `${this.#columnMapping(col, !!compositePk)}, `;
                 }
             }
         }
+        if (compositePk) queryVar += `${compositePk}, `;   // EF HasKey(a, b)
 
         const completeQuery = `CREATE TABLE IF NOT EXISTS "${table.__name}" (${queryVar.replace(/,\s*$/, "")});`;
         return completeQuery;

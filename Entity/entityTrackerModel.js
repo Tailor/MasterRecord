@@ -184,20 +184,20 @@ class EntityTrackerModel {
                 throw new Error('Cannot reload: entity is not attached to a context');
             }
 
-            // Get primary key
-            const primaryKey = tools.getPrimaryKeyObject(this.__entity);
-            const primaryKeyValue = this[primaryKey];
+            // Get primary key (all columns of a composite key — EF HasKey(a, b))
+            const keys = tools.primaryKeys(this.__entity);
+            const keyValues = keys.map(k => this[k]);
 
-            if (!primaryKeyValue) {
+            if (!keys.length || keyValues.some(v => v === undefined || v === null || v === '')) {
                 throw new Error('Cannot reload: entity has no primary key value');
             }
 
             // Fetch fresh from database
             const EntityClass = this.__context[this.__name];
-            const fresh = await EntityClass.findById(primaryKeyValue);
+            const fresh = await EntityClass.findById(...keyValues);
             if (!fresh) {
                 throw new Error(
-                    `Cannot reload: ${this.__name} with ${primaryKey}=${primaryKeyValue} not found`
+                    `Cannot reload: ${this.__name} with ${keys.map((k, i) => `${k}=${keyValues[i]}`).join(', ')} not found`
                 );
             }
 

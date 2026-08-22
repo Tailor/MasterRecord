@@ -2169,10 +2169,15 @@ class context {
                 return entity.reload();
             },
             async getDatabaseValues() {
-                const pk = tools.getPrimaryKeyObject(entity.__entity);
-                const id = entity[pk];
-                if (id === undefined || id === null) return null;
-                const fresh = await ctx[entity.__entity.__name].asNoTracking().ignoreQueryFilters().where(`r => r.${pk} == $$`, id).single();
+                const keys = tools.primaryKeys(entity.__entity);
+                if (!keys.length) return null;
+                let q = ctx[entity.__entity.__name].asNoTracking().ignoreQueryFilters();
+                for (let i = 0; i < keys.length; i++) {
+                    const v = tools.dataValue(entity, keys[i]);
+                    if (v === undefined || v === null) return null;
+                    q = i === 0 ? q.where(`r => r.${keys[i]} == $$`, v) : q.and(`r => r.${keys[i]} == $$`, v);
+                }
+                const fresh = await q.single();
                 if (!fresh) return null;
                 const o = {};
                 for (const c of ctx._scalarColumns(entity)) o[c] = ctx._backingValue(fresh, c);
@@ -2899,7 +2904,8 @@ class context {
                 primaryKeyValue: cleanCurrentModel[primaryKey],
                 // Optimistic concurrency: ORIGINAL token values into the WHERE,
                 // and the rowVersion column bumped atomically in the SET.
-                concurrency: this._concurrencyClause(currentModel),
+                // (+ the remaining columns of a composite key — EF HasKey(a, b))
+                concurrency: [...this._concurrencyClause(currentModel), ...this._compositeKeyClause(currentModel)],
                 rowVersionColumn,
             };
             const result = await this._SQLEngine.update(sqlUpdate);
@@ -2970,7 +2976,8 @@ class context {
             // Entities with concurrency tokens need a per-row DELETE so each
             // can carry its own token WHERE + rows-affected check; the rest go
             // through the set-based WHERE IN with a total-rows-affected check.
-            const tokenEntities = entities.filter(e => this._concurrencyTokenColumns(e).length > 0);
+            // (composite-key entities too: a WHERE IN on one column cannot address them)
+            const tokenEntities = entities.filter(e => this._concurrencyTokenColumns(e).length > 0 || tools.isCompositeKey(e.__entity));
             const tokenSet = new Set(tokenEntities);
             for (const entity of tokenEntities) {
                 const deleteObject = new deleteManager(this._SQLEngine, this.__entities);
@@ -3439,6 +3446,22 @@ class context {
     }
 
     /** Raw stored (DB-side) value of a column on a tracked entity. */
+    /**
+     * Composite keys (EF HasKey(a, b)): the first key column is addressed as the
+     * primary key; the remaining key columns are added to the UPDATE/DELETE
+     * WHERE exactly like concurrency tokens ({ column, value }).
+     */
+    _compositeKeyClause(entity) {
+        const def = entity && entity.__entity;
+        const keys = tools.primaryKeys(def);
+        if (keys.length < 2) return [];
+        return keys.slice(1).map(k => {
+            const f = def[k];
+            const column = (f.relationshipType === 'belongsTo' && f.foreignKey) ? f.foreignKey : (f.name || k);
+            return { column, value: tools.dataValue(entity, k) };
+        });
+    }
+
     _backingValue(entity, column) {
         const proto = Object.getPrototypeOf(entity);
         if (proto && ('_' + column) in proto) return proto['_' + column];

@@ -50,6 +50,36 @@ export function assertDdlOptions(col) {
     if (col.auto) throw new Error(`masterrecord: computed column '${col.name}' cannot be auto-increment.`);
 }
 
+/**
+ * Primary-key DB column names of an entity definition. More than one means a
+ * composite key (EF HasKey(a, b)): the builders then emit a table-level
+ * `PRIMARY KEY (a, b)` and no inline PRIMARY KEY / auto-increment.
+ */
+export function primaryKeyColumns(table) {
+    const out = [];
+    for (const key of Object.keys(table || {})) {
+        if (key.startsWith('__') || key === 'indexes') continue;
+        const col = table[key];
+        if (!col || typeof col !== 'object' || col.primary !== true) continue;
+        if (col.type === 'hasOne' || col.type === 'hasMany' || col.type === 'hasManyThrough') continue;
+        out.push((col.relationshipType === 'belongsTo' && col.foreignKey) ? col.foreignKey : (col.name || key));
+    }
+    return out;
+}
+
+export function compositePrimaryKeyClause(table, quote) {
+    const cols = primaryKeyColumns(table);
+    if (cols.length < 2) return '';
+    for (const key of Object.keys(table)) {
+        const col = table[key];
+        if (col && typeof col === 'object' && col.primary === true && col.auto) {
+            throw new Error(`masterrecord: composite key on '${table.__name}' cannot include the auto-increment column '${col.name || key}' (EF: identity columns are not part of composite keys).`);
+        }
+    }
+    const q = quote || ((n) => n);
+    return `PRIMARY KEY (${cols.map(q).join(', ')})`;
+}
+
 /** True when the column's value is produced by the database (never written by the ORM). */
 export function isComputedColumn(col) {
     return !!(col && typeof col === 'object' && col.computedSql);

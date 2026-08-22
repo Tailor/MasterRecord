@@ -64,7 +64,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 
 | Method | EF Core equivalent | Description |
 |--------|-------------------|-------------|
-| `.find(pk)` | `Find` | Identity-map first (no query if tracked), then database |
+| `.find(pk)` / `.find(a, b)` / `.find({ a, b })` | `Find` | Identity-map first (no query if tracked), then database; composite keys (two+ `.primary()` columns = EF `HasKey(a, b)`) |
 | `.include('p => p.tags').thenInclude('t => t.category')` | `Include().ThenInclude()` | Nested eager loading; split query (one batched query per level) |
 | `.asSplitQuery()` (before `include()`) | `AsSplitQuery` | Each include loads as a separate batched query |
 | `.any([lambda, ...args])` | `Any` | Does at least one row match? |

@@ -1,5 +1,14 @@
 # MasterRecord Changelog
 
+## v1.20.0 — composite primary keys (EF Core `HasKey(a, b)`)
+
+- **Two or more `.primary()` columns form a composite key.** DDL on all three engines emits a table-level `PRIMARY KEY (a, b)` (key columns NOT NULL, no inline PRIMARY KEY / auto-increment; an `auto()` column inside a composite key is rejected, as EF rejects identity columns there).
+- **UPDATE and DELETE address the row by every key column** (the extra key columns ride in the WHERE like concurrency tokens); bulk deletes of composite-key entities run per row (a `WHERE IN` on one column cannot address them); rows-affected checks still apply.
+- **`find(a, b)` / `find({ a, b })` / `findById(a, b)`** (EF `Find(a, b)`), identity-map first; `reload()`, `entry().getDatabaseValues()` and the post-insert read-back of generated columns use every key. Wrong arity fails with a clear message naming the key columns.
+- Not supported (documented): FKs *to* a composite-key entity and `manyToMany()` owners with composite keys.
+
+New tests: `test/composite-keys.test.js`.
+
 ## v1.19.0 — table-per-hierarchy inheritance (EF Core's default inheritance mapping)
 
 - **`dbset(Cat, { extends: Animal })`** maps a derived model onto its base's table (TPH). The hierarchy table gains a **discriminator column** (`discriminator` by default, values = model names — EF's convention; override with `{ discriminator, value }`) and the derived models' own columns (nullable — rows of other types leave them NULL). Migrations see **one table**; base rows carry the base name.

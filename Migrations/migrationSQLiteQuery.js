@@ -1,4 +1,4 @@
-import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions, compositePrimaryKeyClause } from "./ddlClauses.js";
 
 // verison 0.0.7
 class migrationSQLiteQuery {
@@ -22,7 +22,7 @@ class migrationSQLiteQuery {
         return columnList.join(',');
     }
 
-    #columnMapping(table){
+    #columnMapping(table, suppressPk = false){
         /*
         var mapping = {
             "name": "id", // if this chnages then call rename column
@@ -39,10 +39,11 @@ class migrationSQLiteQuery {
         */
         // name TEXT NOT NULL,
 
-        const auto = table.auto ? " AUTOINCREMENT":"";
-        const primaryKey = table.primary ? " PRIMARY KEY" : "";
-        const nullName = table.nullable ? "" : " NOT NULL";
-        const unique = table.unique ? " UNIQUE" : "";
+        // suppressPk: part of a composite key -> emitted as a table-level PRIMARY KEY (a, b)
+        const auto = (table.auto && !suppressPk) ? " AUTOINCREMENT":"";
+        const primaryKey = (table.primary && !suppressPk) ? " PRIMARY KEY" : "";
+        const nullName = (table.nullable && !(table.primary && suppressPk)) ? "" : " NOT NULL";
+        const unique = (table.unique && !(table.primary && suppressPk)) ? " UNIQUE" : "";   // primary() implies unique; a composite key is unique as a whole
         const type = this.#typeManager(table.type);
         let colName = table.name;
         if(table.relationshipType === 'belongsTo' && table.foreignKey){
@@ -182,6 +183,7 @@ class migrationSQLiteQuery {
 
     createTable(table){
         let queryVar = "";
+        const compositePk = compositePrimaryKeyClause(table);   // '' unless 2+ primary columns
         for (const key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
             if(key === 'indexes' || key.startsWith('__')){
@@ -201,9 +203,10 @@ class migrationSQLiteQuery {
                     continue;
                 }
 
-                queryVar += `${this.#columnMapping(col)}, `;
+                queryVar += `${this.#columnMapping(col, !!compositePk)}, `;
             }
         }
+        if (compositePk) queryVar += `${compositePk}, `;   // EF HasKey(a, b): table-level PRIMARY KEY (a, b)
 
         // FOREIGN KEY constraints (resolved by schema.js into table.__foreignKeys).
         // SQLite cannot ADD CONSTRAINT after the fact, so they must be inline.
