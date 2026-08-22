@@ -89,6 +89,28 @@ Missing vs EF: **`thenInclude`** (nested eager load), explicit loading (`entry.c
 
 ---
 
+## Addendum — additional verified findings from the full inventory
+
+A second, exhaustive pass over the code surfaced items the targeted check missed. Each was re-verified by hand.
+
+### Correctness / data-safety (treat as Tier 1)
+- **No foreign-key constraints are ever emitted in DDL.** `REFERENCES` / `FOREIGN KEY` appear only in comments (`migrationSQLiteQuery.js:471,485`, `migrationPostgresQuery.js:333`); `createTable` emits columns only. EF always creates FK constraints (+ an index on the FK). MasterRecord relationships are purely ORM-level — the database enforces nothing, so orphans are possible via raw SQL or any non-ORM writer. **Do:** emit `REFERENCES parent(pk) ON DELETE <behavior>` for `belongsTo`/`hasMany` FKs in all three builders, with `addForeignKey`/`dropForeignKey` on `schema.js`, and EF11's `excludeForeignKeyFromMigrations()` escape hatch for legacy DBs.
+- **`stopCascadeOnDelete()` is a no-op.** `cascadeOnDelete` is read nowhere outside `entityModel.js` (the builders only mention it in a doc-comment example); `deleteManager.js:48-106` cascades purely by relationship type into *loaded* values and never consults the flag. Once FK DDL exists, map this to EF's `OnDelete(Cascade|Restrict|SetNull|NoAction)` and honor it in both DDL and the in-process cascade.
+- **Lazy-loaded navigation properties return an un-awaited Promise.** The lazy getters call `.single()`/`.toList()` without `await` and assign the result (`entityTrackerModel.js:573,634`), so `post.author` is a `Promise`, not an entity; the SQL is also hand-built SQLite-shaped string interpolation (`TODO` at `:563,595`). EF's lazy loading is proxy-based and synchronous-looking by design. **Do:** either make lazy loading an explicit `await entity.load('author')` (EF explicit loading) and remove the broken auto-getter, or keep it off by default — today it is *on* by default (`entityModel.js:43`).
+- **`RedisQueryCache` is broken in the query path.** Its `get`/`set` are `async`, but the read path calls `_queryCache.get(cacheKey)` without `await` and tests truthiness (`queryMethods.js:548,604`) — a Promise is always truthy, so `.cache()` returns a Promise-of-entity. The readme (`:1151-1165`) tells users to swap it in. **Do:** `await` the cache in the read path (the in-memory cache stays sync-compatible), or drop the Redis cache until it is wired.
+- **A column/table rename is diffed as drop + add.** `renameTable` exists on the SQLite builder (`migrationSQLiteQuery.js:224`) but `schema.js` has no wrapper and the differ never emits rename — a renamed column in a generated migration is `dropColumn` + `addColumn`, i.e. **data loss on apply**. EF's `migrations add` detects renames (with `RenameColumn`). **Do:** detect renames in the differ (name change with identical type/constraints → `renameColumn`/`renameTable`) and prompt/flag ambiguous cases.
+- **Index create/drop are generated up-only** (`migrations.js:649-663`) — no `down()` for indexes, so rollback leaves indexes behind.
+
+### API / docs integrity
+- **Readme documents APIs that don't exist:** a terminal `.any()` (`readme.md:1452`; the real method is `.exists()`), `context.remove(entity)` / `db.remove(alice)` (`readme.md:340,1415`; only `ctx.Entity.remove()` exists). `docs/METHODS_REFERENCE.md` omits `asNoTracking/asTracking/cache/last/exists/pluck/findById/count/removeRange/track`. Fix the docs (or add the aliases — EF has `context.Remove(entity)`).
+- `pluck(field)` loads full entities then maps in JS (`queryMethods.js:366`) — not a SQL projection. Should emit `SELECT field`.
+- `take/skip` are interpolated into `LIMIT/OFFSET` (validated non-negative int) rather than parameterized — safe, but noted.
+- No `usePostgres()` convenience (Postgres only via `env()`); no `renameTable`, `remove-migration`, `database drop`, migration checksum verification, or command timeout.
+- Health checks exist only for Postgres (`postgresSyncConnect.healthCheck`); nothing for MySQL/SQLite or on the context.
+- The only public transaction wrapper is Postgres-specific `postgresSyncConnect.transaction(cb)` — reinforces Tier 1 #2 (make it engine-agnostic on the context).
+
+These addenda raise two items into the "do first" bucket alongside concurrency/transactions: **FK constraint DDL** (EF's baseline referential integrity) and the **rename-as-drop+add migration diff** (silent data loss on apply).
+
 ## Deliberately out of scope (EF features that don't map to a JS/SQLite-MySQL-PG ORM)
 
 SQL Server vector type / `VECTOR_SEARCH` and JSON indexes, Azure Cosmos DB (full-text, hybrid search, transactional batches, session tokens), temporal tables, `System.Transactions`/ambient transactions, compiled models / Roslyn migration compilation, .NET-specific LINQ translations (`DateOnly`, `DateTimeOffset`, `UInt128`), PowerShell PMC tooling. Don't chase these.
