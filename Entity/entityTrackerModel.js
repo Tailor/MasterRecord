@@ -488,7 +488,13 @@ class EntityTrackerModel {
 
     buildObject(){
         return {
-            __ID : Math.floor((Math.random() * 100000) + 1),
+            // Do NOT assign an identity here. A random __ID in [1,100000] collided
+            // catastrophically once the tracked set grew (birthday paradox): a new
+            // entity whose random __ID already existed hit __track's dedup guard,
+            // was never added to the tracked set, and its writes were silently
+            // dropped — the monotonic write-loss decay in long-lived contexts.
+            // __track() assigns a process-unique, collision-free sequential id.
+            __ID : null,
             __dirtyFields : [],
             __state : "track",
             __entity : null,

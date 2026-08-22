@@ -216,8 +216,12 @@ class context {
     // Entity collections
     __entities = [];
     __builderEntities = [];
-    __trackedEntities = [];
-    __trackedEntitiesMap = new Map();  // Performance: O(1) entity lookup instead of O(n) linear search
+    // Change tracking has a SINGLE source of truth: the identity map
+    // (__ID -> entity). The tracked-entity LIST is a derived read-only view, so
+    // the two can never desynchronise — a dual array+map registry silently lost
+    // writes whenever the two disagreed (a stale/colliding id in one but not the
+    // other). All mutations go through __track / __untrack / __clearTracked.
+    __trackedEntitiesMap = new Map();  // O(1) identity lookup; the authority
     __relationshipModels = [];
     __contextSeedData = {};  // Store seed data by table name
     __contextSeedConfig = {  // Seed data configuration
@@ -2185,12 +2189,16 @@ class context {
         //      silently lose the UPDATE (returning true). Committing only the
         //      change set makes an empty save a true no-op that never touches
         //      another unit of work's entities.
-        const changeSet = this.__trackedEntities.filter(
-            e => e && e.__state && e.__state !== 'track'
-        );
+        // Iterate the identity map directly rather than materializing the whole
+        // tracked list — a read-heavy context can track tens of thousands of
+        // clean rows, and only the dirty ones are the unit of work.
+        const changeSet = [];
+        for (const e of this.__trackedEntitiesMap.values()) {
+            if (e && e.__state && e.__state !== 'track') changeSet.push(e);
+        }
 
         if (changeSet.length === 0) {
-            // Nothing dirty — do NOT touch the shared tracked list.
+            // Nothing dirty — do NOT touch the shared tracked set.
             return true;
         }
 
@@ -2286,14 +2294,12 @@ class context {
      */
     __untrack(batch) {
         if (!batch || !batch.length) return;
-        // Remove exactly the entities passed in. The caller (saveChanges) curates
-        // this to the rows it actually wrote and that were not re-mutated in
-        // flight, so no state test is needed here — and none should be applied,
-        // or an entity with a falsy __state could be dropped or kept wrongly.
-        const drop = new Set(batch);
-        this.__trackedEntities = this.__trackedEntities.filter(e => !drop.has(e));
+        // Remove exactly the entities passed in, from the single registry (the
+        // map). The caller (saveChanges) curates this to the rows it flushed and
+        // that were not re-mutated in flight, so no state test is applied here (a
+        // state test is what stranded deletes, whose state stays 'delete').
         for (const e of batch) {
-            if (e && e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
+            if (e && e.__ID != null) this.__trackedEntitiesMap.delete(e.__ID);
         }
     }
 
@@ -2750,8 +2756,7 @@ class context {
         const previous = entity.__context;
         if (previous && previous !== this && entity.__ID &&
             previous.__trackedEntitiesMap && previous.__trackedEntitiesMap.has(entity.__ID)) {
-            previous.__trackedEntitiesMap.delete(entity.__ID);
-            previous.__trackedEntities = previous.__trackedEntities.filter(e => e.__ID !== entity.__ID);
+            previous.__trackedEntitiesMap.delete(entity.__ID);  // list view follows the map
         }
 
         // Mark entity as modified
@@ -2871,19 +2876,27 @@ class context {
      * @param {object} model - Entity to track
      * @returns {object} The tracked entity
      */
+    /**
+     * The tracked-entity list — a DERIVED view over the identity map, which is
+     * the single source of truth. Rebuilt on read so it always exactly matches
+     * the map (same set, no duplicates, no orphans). Never assign to this.
+     */
+    get __trackedEntities() {
+        return Array.from(this.__trackedEntitiesMap.values());
+    }
+
     __track(model) {
-        // Performance: Use Map for O(1) lookup instead of O(n) linear search
         if (!model.__ID) {
-            // Generate sequential ID (collision-safe)
+            // Every entity gets a process-unique, collision-free sequential id.
+            // (Queried entities used to arrive with a random __ID from
+            // buildObject, which collided as the tracked set grew and made this
+            // dedup guard silently drop them — the write-loss bug.)
             model.__ID = `entity_${context._nextEntityId++}`;
         }
-
-        // O(1) check if already tracked
-        if (!this.__trackedEntitiesMap.has(model.__ID)) {
-            this.__trackedEntities.push(model);
-            this.__trackedEntitiesMap.set(model.__ID, model);
-        }
-
+        // Idempotent: keyed by the unique __ID, so re-tracking the same object is
+        // a no-op and distinct objects never collide. Map is the sole registry;
+        // the list view derives from it, so they cannot desynchronise.
+        this.__trackedEntitiesMap.set(model.__ID, model);
         return model;
     }
 
@@ -2908,8 +2921,7 @@ class context {
      * @private
      */
     __clearTracked() {
-        this.__trackedEntities = [];
-        this.__trackedEntitiesMap.clear();  // Clear Map for proper garbage collection
+        this.__trackedEntitiesMap.clear();  // sole registry; the list view follows
     }
 
     /**

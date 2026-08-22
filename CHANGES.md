@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.5.12 — collision-free tracking identity + single source of truth (THE write-loss root cause)
+
+**Bug (silent write loss with monotonic decay — the one behind 1.5.8→1.5.11):** queried entities were assigned a **random `__ID` in `[1, 100000]`** (`entityTrackerModel.buildObject`). Added entities used a collision-free sequential id, but read-only `.toList()` results used random ones. In a long-lived, read-heavy singleton context the tracked set grows toward tens of thousands, and by the birthday paradox a new entity's random `__ID` increasingly collides with one already in the identity map. `__track()` dedups by id (`if (!map.has(id))`), so the colliding entity was **never added to the tracked set** — `changeSet` never saw it, its INSERT/UPDATE was never issued, and `saveChanges()` still returned `true`. This is exactly why the library **passed in isolation** (small set, no collisions) but **decayed over a server's lifetime** (22/22 fresh → 16/22 → 14/22 as the set filled), with no exception, no rollback, and nothing between the SELECT and the missing UPDATE in the SQL log. Proven: 3000 queried rows → 52 dropped by collision, and a dropped entity's write is lost.
+
+**Fix:**
+1. **Collision-free identity** — `buildObject` no longer assigns a random id; every entity (queried or added) gets a process-unique sequential id in `__track`. No collisions, so no entity is ever silently dropped from tracking.
+2. **Single source of truth** — the identity map (`__ID → entity`) is now the sole registry; `__trackedEntities` is a **derived read-only view** over it (`get __trackedEntities()`), so the list and the map can never desynchronise. `__track`/`__untrack`/`__clearTracked`/`attach` mutate only the map. This structurally guarantees the invariant "the tracked list and the map are the same set at all times," and `changeSet` iterates the map directly (no O(N) list materialization for read-heavy contexts).
+
+**Also:** relaxed `engines.node` from `>=22.12.0` back to `>=20.0.0`. The `better-sqlite3` dependency range already allows 12.x (Node-20 compatible), so the hard 22.12 floor only produced spurious `EBADENGINE` warnings on Node 20; the library code runs on Node 20+.
+
+New tests: `test/tracking-identity-unique.test.js` — 3000 queried entities get unique ids with zero collisions and the derived list equals the map; and 40 load→mutate→save cycles against a large tracked set lose zero writes (no decay). Full suite green (0 fail, 304 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.11 — deletes are released after commit (fix 1.5.10 "zombie delete" latch); lifecycle reconciliation centralized
 
 **Regression fixed (introduced in 1.5.10):** 1.5.10 released a flushed entity only if its state was back to `'track'`. Inserts and updates are reset to `'track'` by the batch processors, but a **delete stays in state `'delete'`** after `_processBatchDeletes`, so it failed the release check and was **never untracked**. Each deleted entity then became a permanent "zombie" in the change set: every later `saveChanges()` re-included it and **re-issued its DELETE** (hundreds of redundant deletes), the cross-context "unsaved changes" warning fired forever and grew, and — because the unit of work was permanently non-empty and stuck — **real writes stopped persisting after a round or two** (an admin block/unblock UPDATE and session revocation both silently failed). No exception, no rollback.
