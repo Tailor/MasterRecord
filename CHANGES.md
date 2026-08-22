@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.5.11 — deletes are released after commit (fix 1.5.10 "zombie delete" latch); lifecycle reconciliation centralized
+
+**Regression fixed (introduced in 1.5.10):** 1.5.10 released a flushed entity only if its state was back to `'track'`. Inserts and updates are reset to `'track'` by the batch processors, but a **delete stays in state `'delete'`** after `_processBatchDeletes`, so it failed the release check and was **never untracked**. Each deleted entity then became a permanent "zombie" in the change set: every later `saveChanges()` re-included it and **re-issued its DELETE** (hundreds of redundant deletes), the cross-context "unsaved changes" warning fired forever and grew, and — because the unit of work was permanently non-empty and stuck — **real writes stopped persisting after a round or two** (an admin block/unblock UPDATE and session revocation both silently failed). No exception, no rollback.
+
+**Root cause (design):** entity-lifecycle transitions were **scattered** across three batch processors plus a release filter, and the delete path had no reset — an asymmetry that made the gap inevitable.
+
+**Fix (Unit-of-Work reconciliation, one place, one rule):** `saveChanges()` now captures each committed entity's mutation **generation** at flush time and, after the transaction commits, runs a single `_reconcileFlushed()` step with one uniform rule for insert/update/delete:
+- **re-mutated in flight** (generation changed) → leave it in its new pending state so the next save persists it;
+- **otherwise committed cleanly** → insert/modified reset to `'track'` then **detached**; delete **detached** (the row is gone).
+
+The per-processor state resets were removed, so there is no longer any state-specific branch that can strand an entity. This also fixes the falsy-`__state` edge and corrects the stale `__untrack` doc comment.
+
+New tests: `test/delete-release-no-zombie.test.js` — a committed delete is detached (no replay); repeated update-then-delete does not latch (UPDATEs keep persisting); a mixed insert+update+delete change set reconciles all three. Full suite green (0 fail, 302 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.10 — saveChanges() is a proper unit of work: commits only its change set (real shared-context lost-write fix)
 
 **Bug (silent lost write, 60–75% under load):** `saveChanges()` snapshotted the **entire tracked-entity list**, and after writing untracked **all of it**. On a shared/singleton context (one instance serving many requests) this is corrupting, because queried rows are auto-tracked and read-only `.toList()` handlers leave thousands of clean entities tracked forever. So one caller's `saveChanges()` — **even an empty one with nothing dirty** — snapshotted and untracked another in-flight caller's freshly loaded/mutated row, and that caller's own `saveChanges()` then found nothing tracked and **issued no UPDATE while resolving `true`**. Frequency scaled with the size of the shared list (~43k tracked entities → 60–75% loss; ~4 entities → never). The 1.5.9 `__untrack` guard didn't catch it: the interfering save evaluated the victim's state before the pending mutation, and an empty save still snapshotted/untracked everything. Emitted no SQL of its own, so nothing appeared in the log between the SELECT and the missing UPDATE.

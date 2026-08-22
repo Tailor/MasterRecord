@@ -1868,11 +1868,6 @@ class context {
             }
         }
 
-        // Capture mutation versions before the async write so the state reset
-        // below skips any entity a concurrent request re-mutated in flight.
-        const __preWriteVersion = new Map();
-        for (const entity of entities) { __preWriteVersion.set(entity, entity.__version || 0); }
-
         if (entities.length === 1) {
             // Single insert - use existing insertManager (already sets ID)
             const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
@@ -1952,26 +1947,14 @@ class context {
             }
         }
 
-        // Transition inserted entities to tracked state so subsequent
-        // property changes trigger UPDATE instead of a second INSERT.
-        //
-        // A plain `new Model()` passed to add() has ordinary own-property
-        // fields, NOT the change-tracking accessors a queried entity has — so
-        // without this a later edit (`row.name = 'x'`) is a silent write that
-        // never marks the entity modified, and the change is dropped on the next
-        // saveChanges(). attachTrackingTo() installs those accessors in place so
-        // the just-inserted entity is update-trackable, exactly like one loaded
-        // from the database.
+        // Install change-tracking accessors on each inserted entity so later
+        // edits are tracked: a plain `new Model()` passed to add() has ordinary
+        // own-property fields, NOT the accessors a queried entity has, so without
+        // this a later `row.name = 'x'` would be a silent write. Lifecycle state
+        // (insert -> clean, then detached) is transitioned centrally in
+        // _reconcileFlushed after the transaction commits — not here.
         const tracker = new EntityTrackerModel();
         for (const entity of entities) {
-            // Only mark the just-inserted entity clean if it was not re-mutated
-            // during the async insert. If a concurrent request changed a field in
-            // flight, leave it dirty so that change is persisted as an UPDATE on
-            // the next save instead of being silently reset away.
-            if ((entity.__version || 0) === __preWriteVersion.get(entity)) {
-                entity.__state = 'track';
-                entity.__dirtyFields = [];
-            }
             try {
                 tracker.attachTrackingTo(entity);
             } catch (attachErr) {
@@ -1993,13 +1976,6 @@ class context {
                 await entity.beforeSave.call(entity);
             }
         }
-
-        // Capture each entity's mutation version AFTER beforeSave and BEFORE the
-        // async write. The reset at the end uses it to skip any entity a
-        // concurrent request re-mutated during the write — resetting such an
-        // entity would clear the new dirty state and silently drop that update.
-        const __preWriteVersion = new Map();
-        for (const entity of entities) { __preWriteVersion.set(entity, entity.__version || 0); }
 
         if (entities.length === 1) {
             // Single update - use existing logic.
@@ -2063,18 +2039,11 @@ class context {
             }
         }
 
-        // Reset tracker state on the entity itself so a subsequent
-        // saveChanges() doesn't re-emit the same UPDATE for the same fields —
-        // but ONLY for entities that were not re-mutated during the async write.
-        // If a concurrent request mutated an entity after we captured its
-        // version, resetting it here would clear the new dirty state and its
-        // UPDATE would never be issued (a silent lost write on a shared context).
-        // Leaving it dirty lets its own saveChanges() persist the newer value.
-        for (const entity of entities) {
-            if ((entity.__version || 0) !== __preWriteVersion.get(entity)) continue;
-            entity.__state = 'track';
-            entity.__dirtyFields = [];
-        }
+        // Lifecycle state (modified -> clean, then detached) is transitioned
+        // centrally in _reconcileFlushed after the transaction commits — not
+        // here. Keeping it in one place, applied uniformly to inserts, updates
+        // and deletes, is what prevents state-specific gaps (a delete never
+        // becomes 'track', so a per-processor reset here would strand it).
     }
 
     /**
@@ -2225,10 +2194,18 @@ class context {
             return true;
         }
 
-        // Capture each entity's mutation version so that, after the async write,
-        // we can tell whether it was re-mutated in flight and keep it tracked.
-        const versions = new Map();
-        for (const e of changeSet) { versions.set(e, e.__version || 0); }
+        // Snapshot the committed unit of work: for each entity in the change set,
+        // capture the exact pending change we are about to flush — its mutation
+        // GENERATION (version) and whether it was a delete. All post-commit
+        // lifecycle transitions are driven from this snapshot in ONE place
+        // (_reconcileFlushed), by ONE uniform rule, rather than being scattered
+        // across the per-state batch processors — which is how a delete (never
+        // reset to 'track') used to be stranded forever.
+        const captured = changeSet.map(e => ({
+            entity: e,
+            generation: e.__version || 0,
+            wasDelete: e.__state === 'delete',
+        }));
 
         const affectedTables = new Set();
         for (const e of changeSet) { if (e.__name) affectedTables.add(e.__name); }
@@ -2252,15 +2229,7 @@ class context {
                 this._queryCache.invalidateTable(tableName);
             }
 
-            // Release ONLY the entities we actually wrote and that were not
-            // re-mutated during the write (state back to 'track' AND version
-            // unchanged). An entity re-mutated in flight has a bumped __version
-            // (and the batch processors leave it dirty) — keep it tracked so its
-            // own saveChanges() still persists the newer change.
-            const done = changeSet.filter(
-                e => e.__state === 'track' && (e.__version || 0) === versions.get(e)
-            );
-            this.__untrack(done);
+            this._reconcileFlushed(captured);
             return true;
         } catch (error) {
             this.__clearErrorHandler();
@@ -2273,26 +2242,47 @@ class context {
     }
 
     /**
-     * Remove a batch of entities from change tracking after a save — but ONLY
-     * entities that are currently CLEAN (state 'track').
+     * Post-commit reconciliation for a flushed unit of work — the SINGLE place
+     * that transitions entity lifecycle state after a successful save. Driven by
+     * the generation snapshot captured at flush time, with one uniform rule for
+     * inserts, updates and deletes (no per-state special cases — that asymmetry
+     * is what stranded deletes as replaying "zombies").
      *
-     * saveChanges() snapshots the tracked list, writes the dirty rows (which are
-     * then reset to 'track'), and calls this to drop the batch. A batched entity
-     * that is STILL dirty at this point (insert/modified/delete) was NOT written
-     * by this save — it became dirty AFTER the snapshot. That happens when a
-     * context instance is shared across concurrent units of work (e.g. a
-     * singleton context serving many requests): request A's save snapshots a row
-     * that request B loaded, B mutates it while A's save is in flight, and if A
-     * then untracked it unconditionally, B's own saveChanges() would find it
-     * untracked and silently drop the UPDATE. Skipping dirty entities keeps
-     * B's pending change tracked so B's save still writes it. (In the normal
-     * per-request context the whole batch is clean here, so behavior is
-     * unchanged.)
+     * For each committed entity:
+     *   - Re-mutated in flight (generation changed): a NEW change arrived during
+     *     the async write. Leave the entity in its current pending state so the
+     *     next saveChanges() persists it — never reset it, or that change is lost.
+     *   - Otherwise it was fully persisted with no newer change:
+     *       * insert / modified -> reset to the clean 'track' state, then detach
+     *         from the unit of work (remove from tracking).
+     *       * delete            -> detach from the unit of work (the row is gone;
+     *         it never becomes 'track', so it is released on the delete branch).
      *
-     * NOTE: a context is a unit of work and is safest scoped per request.
-     * Sharing one instance across requests still risks cross-request
-     * transaction conflation; this guard removes the silent-lost-write, not the
-     * need for request-scoped contexts.
+     * @param {Array<{entity:object, generation:number, wasDelete:boolean}>} captured
+     */
+    _reconcileFlushed(captured) {
+        const detach = [];
+        for (const { entity, generation, wasDelete } of captured) {
+            if ((entity.__version || 0) !== generation) {
+                // A mutation landed during the flush; keep the new pending change.
+                continue;
+            }
+            if (!wasDelete) {
+                entity.__state = 'track';
+                entity.__dirtyFields = [];
+            }
+            detach.push(entity);
+        }
+        this.__untrack(detach);
+    }
+
+    /**
+     * Remove an exact set of entities from change tracking (identity map +
+     * tracked list). The caller curates the set — saveChanges passes only the
+     * entities it fully flushed and that were not re-mutated in flight — so this
+     * removes precisely what it is given and applies NO state test of its own
+     * (a state test here is what stranded deletes, whose state stays 'delete').
+     * Also used by detach()/clearChangeTracker() and attach()'s re-home path.
      */
     __untrack(batch) {
         if (!batch || !batch.length) return;
