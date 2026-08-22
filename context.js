@@ -1834,7 +1834,14 @@ class context {
      * skipped. Returns the flat list of loaded children (the next level's parents).
      * @private
      */
-    async __batchLoadNavigation(parents, nav) {
+    async __batchLoadNavigation(parents, nav, opts = {}) {
+        // EF: IgnoreQueryFilters() on the root query applies to every included level.
+        const withFilters = (set) => {
+            const ig = opts.ignoredFilters;
+            if (ig === true) return set.ignoreQueryFilters();
+            if (ig instanceof Set) return set.ignoreQueryFilters([...ig]);
+            return set;
+        };
         const list = (parents || []).filter(p => p && p.__entity);
         if (!list.length) return [];
         const ownerDef = list[0].__entity;
@@ -1865,7 +1872,7 @@ class context {
             const pk = tools.getPrimaryKeyObject(parentSet.__entity) || 'id';
             const keys = uniq(pending.map(p => tools.foreignKeyValue(p, nav)));
             const byKey = new Map();
-            for (const c of chunks(keys)) for (const t of await parentSet.where(`r => $$.includes(r.${pk})`, c).toList()) byKey.set(String(tools.dataValue(t, pk)), t);
+            for (const c of chunks(keys)) for (const t of await withFilters(parentSet).where(`r => $$.includes(r.${pk})`, c).toList()) byKey.set(String(tools.dataValue(t, pk)), t);
             for (const p of pending) {
                 const k = tools.foreignKeyValue(p, nav);
                 const t = (k === undefined || k === null) ? null : (byKey.get(String(k)) || null);
@@ -1880,11 +1887,11 @@ class context {
         if (def.type === 'hasManyThrough') {
             const { joinSet, toThis, toTarget, targetSet } = this._joinSides(ownerDef, { ...def, foreignTable: def.foreignTable || nav });
             const links = [];
-            for (const c of chunks(parentKeys)) links.push(...await joinSet.asNoTracking().where(`r => $$.includes(r.${toThis.foreignKey})`, c).toList());
+            for (const c of chunks(parentKeys)) links.push(...await withFilters(joinSet.asNoTracking()).where(`r => $$.includes(r.${toThis.foreignKey})`, c).toList());
             const targetPk = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
             const targetIds = uniq(links.map(l => l[toTarget.foreignKey]));
             const byId = new Map();
-            for (const c of chunks(targetIds)) for (const t of await targetSet.where(`r => $$.includes(r.${targetPk})`, c).toList()) byId.set(String(tools.dataValue(t, targetPk)), t);
+            for (const c of chunks(targetIds)) for (const t of await withFilters(targetSet).where(`r => $$.includes(r.${targetPk})`, c).toList()) byId.set(String(tools.dataValue(t, targetPk)), t);
             const grouped = new Map();
             for (const l of links) {
                 const t = byId.get(String(l[toTarget.foreignKey]));
@@ -1908,7 +1915,7 @@ class context {
         const childCol = tools.findForeignTable(ownerDef.__name, childSet.__entity);
         const fkCol = childCol && childCol.foreignKey ? childCol.foreignKey : (def.foreignKey || `${ownerDef.__name.toLowerCase()}_id`);
         const children = [];
-        for (const c of chunks(parentKeys)) children.push(...await childSet.where(`r => $$.includes(r.${fkCol})`, c).toList());
+        for (const c of chunks(parentKeys)) children.push(...await withFilters(childSet).where(`r => $$.includes(r.${fkCol})`, c).toList());
         const grouped = new Map();
         for (const ch of children) {
             const fk = tools.dataValue(ch, fkCol);

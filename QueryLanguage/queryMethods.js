@@ -416,7 +416,15 @@ class queryMethods{
         // navigation AFTER the main query, batched per level (EF AsSplitQuery).
         const nav = this.__navNameFrom(query);
         const def = nav ? this.__entity[nav] : null;
-        if ((def && typeof def === 'object' && def.implicitJoin) || this.__splitQuery) {
+        // EF applies global query filters to included navigations too: when the
+        // target entity has active filters, load it through the split loader
+        // (the dbset query applies them; ignoreQueryFilters() propagates).
+        const targetOf = (d) => !d || typeof d !== 'object' ? null
+            : d.relationshipType === 'belongsTo' ? d.foreignTable
+            : d.type === 'hasManyThrough' ? (d.targetTable || null)
+            : (d.foreignTable || nav);
+        const targetHasFilters = (t) => !!(t && this.__context && typeof this.__context._queryFiltersFor === 'function' && this.__context._queryFiltersFor(t).length > 0);
+        if ((def && typeof def === 'object' && def.implicitJoin) || this.__splitQuery || targetHasFilters(targetOf(def))) {
             if (args && args.length) throw new Error('masterrecord: include() parameters are not supported for split-query / many-to-many includes; filter with where() on the result or use a query filter.');
             this.__postIncludes.push([nav]);
             return this;
@@ -482,7 +490,7 @@ class queryMethods{
         for (const path of paths) {
             let level = roots;
             for (const nav of path) {
-                level = await this.__context.__batchLoadNavigation(level, nav);
+                level = await this.__context.__batchLoadNavigation(level, nav, { ignoredFilters: this.__ignoredFilters });
                 if (!level.length) break;
             }
         }

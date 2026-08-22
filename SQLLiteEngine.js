@@ -97,7 +97,7 @@ class SQLLiteEngine {
         const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;
         const sql = `SELECT ${fn}(${alias}.[${column}]) AS value ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)}`;
         const params = q.parameters ? q.parameters.getParams() : [];
-        const row = this._observed(sql, params, () => this.db.prepare(sql).get(...params));
+        const row = this._observed(sql, params, () => this.db.prepare(sql).get(...this._bind(params)));
         return row ? row.value : null;
     }
 
@@ -200,7 +200,7 @@ class SQLLiteEngine {
             if(queryString.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                const queryReturn = this._observed(queryString.query, params, () => this.db.prepare(queryString.query).get(...params));
+                const queryReturn = this._observed(queryString.query, params, () => this.db.prepare(queryString.query).get(...this._bind(params)));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -276,7 +276,7 @@ class SQLLiteEngine {
                 const queryCount = queryString.query
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                const queryReturn = this._observed(queryCount, params, () => this.db.prepare(queryCount).get(...params));
+                const queryReturn = this._observed(queryCount, params, () => this.db.prepare(queryCount).get(...this._bind(params)));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -303,7 +303,7 @@ class SQLLiteEngine {
             if(selectQuery.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                const queryReturn = this._observed(selectQuery.query, params, () => this.db.prepare(selectQuery.query).all(...params));
+                const queryReturn = this._observed(selectQuery.query, params, () => this.db.prepare(selectQuery.query).all(...this._bind(params)));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -1473,7 +1473,7 @@ class SQLLiteEngine {
 
     _executeWithParams(query, params = []){
         // Migration DDL: logged at info (unless MR_SILENT_MIGRATIONS) via logging.js
-        return this._observed(query, params, () => this.db.prepare(query).run(...params), { migration: true });
+        return this._observed(query, params, () => this.db.prepare(query).run(...this._bind(params)), { migration: true });
     }
 
     _run(query){
@@ -1481,7 +1481,7 @@ class SQLLiteEngine {
     }
 
     _runWithParams(query, params = []){
-        return this._observed(query, params, () => this.db.prepare(query).run(...params));
+        return this._observed(query, params, () => this.db.prepare(query).run(...this._bind(params)));
     }
 
     // ---- Command observation (EF IDbCommandInterceptor / CommandExecuted) ----
@@ -1499,6 +1499,24 @@ class SQLLiteEngine {
         }
     }
     /** Run `exec` (sync), time it, notify logger + observers; rethrows errors. */
+    /**
+     * Normalize bound parameters for better-sqlite3, which binds only numbers,
+     * strings, bigints, buffers and null: booleans -> 1/0 (the engine stores
+     * booleans as INTEGER), undefined -> null, Date -> ISO string. Applied at
+     * every statement execution so `where('x => x.flag == $$', true)` and
+     * boolean query filters work like on MySQL/Postgres.
+     */
+    _bind(params){
+        if (!Array.isArray(params)) return [];
+        return params.map(v => {
+            if (v === true) return 1;
+            if (v === false) return 0;
+            if (v === undefined) return null;
+            if (v instanceof Date) return v.toISOString();
+            return v;
+        });
+    }
+
     _observed(sql, params, exec, extra){
         const start = process.hrtime.bigint();
         try {
@@ -1518,7 +1536,7 @@ class SQLLiteEngine {
     query(query, params = []){
         const stmt = this.db.prepare(query);
         const args = Array.isArray(params) ? params : (params === undefined ? [] : [params]);
-        return this._observed(query, args, () => (stmt.reader ? stmt.all(...args) : stmt.run(...args)));
+        return this._observed(query, args, () => (stmt.reader ? stmt.all(...this._bind(args)) : stmt.run(...this._bind(args))));
     }
 
     setDB(db, type){

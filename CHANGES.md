@@ -1,5 +1,14 @@
 # MasterRecord Changelog
 
+## v1.18.0 — global query filters inside include() (EF HasQueryFilter on navigations, IgnoreQueryFilters for the whole query)
+
+- **Included navigations honor the target entity's global query filters** (soft delete, tenant…), as in EF Core: `include()` of a navigation whose target has active filters loads through the split loader, whose dbset queries apply them; lazy/explicit loading already did. A filtered-out `belongsTo` parent reads `null`.
+- **`ignoreQueryFilters()` / `ignoreQueryFilters([names])` on the root query propagate to every included level** (EF: `IgnoreQueryFilters` applies to the whole query), including `thenInclude()` levels.
+- Previously only the root entity was filtered; the joined (SQL) include returned soft-deleted / foreign-tenant rows.
+- **SQLite: boolean (and Date / undefined) query parameters are now bindable** — `where('x => x.flag == $$', true)` and boolean query filters threw `SQLite3 can only bind numbers, strings, bigints, buffers, and null`; every statement now normalizes `true/false → 1/0`, `undefined → NULL`, `Date → ISO` (MySQL/Postgres already accepted them).
+
+New tests: `test/include-query-filters.test.js`.
+
 ## v1.17.0 — `thenInclude()` and `asSplitQuery()` (EF Core ThenInclude / AsSplitQuery)
 
 - **`include('p => p.tags').thenInclude('t => t.category')`** (chain `thenInclude()` again for deeper levels): implemented as EF's **split query** — after the main query, **one batched query per navigation level** (`IN` on the parent keys, chunked by 500), on every engine; no cartesian explosion, no N+1. Works for belongsTo, hasOne, hasMany, hasManyThrough and manyToMany at any depth; `single()`/`first()` run it too. Levels already hydrated by the eager (SQL) `include()` are reused; the rest are batch-loaded.
