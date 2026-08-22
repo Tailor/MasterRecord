@@ -222,6 +222,12 @@ class context {
     // writes whenever the two disagreed (a stale/colliding id in one but not the
     // other). All mutations go through __track / __untrack / __clearTracked.
     __trackedEntitiesMap = new Map();  // O(1) identity lookup; the authority
+    // Dirty index (like EF Core's StateManager): the subset of tracked entities
+    // that are insert/modified/delete. Entities enter it the moment a setter /
+    // add() / remove() makes them dirty, and leave it when flushed or detached.
+    // saveChanges() reads ONLY this set, so a flush is O(changes) — not O(total
+    // tracked) — and an empty save is O(1), even with tens of thousands tracked.
+    __dirtyEntities = new Set();
     __relationshipModels = [];
     __contextSeedData = {};  // Store seed data by table name
     __contextSeedConfig = {  // Seed data configuration
@@ -2189,16 +2195,18 @@ class context {
         //      silently lose the UPDATE (returning true). Committing only the
         //      change set makes an empty save a true no-op that never touches
         //      another unit of work's entities.
-        // Iterate the identity map directly rather than materializing the whole
-        // tracked list — a read-heavy context can track tens of thousands of
-        // clean rows, and only the dirty ones are the unit of work.
+        // Read ONLY the dirty index — the change set is O(changes), never
+        // O(total tracked). A read-heavy context can track tens of thousands of
+        // clean rows; none of them are scanned here. (Self-heals if a clean
+        // entity ever lingers in the index.)
         const changeSet = [];
-        for (const e of this.__trackedEntitiesMap.values()) {
+        for (const e of this.__dirtyEntities) {
             if (e && e.__state && e.__state !== 'track') changeSet.push(e);
+            else this.__dirtyEntities.delete(e);
         }
 
         if (changeSet.length === 0) {
-            // Nothing dirty — do NOT touch the shared tracked set.
+            // Nothing dirty — O(1) no-op; do NOT touch the tracked set.
             return true;
         }
 
@@ -2299,7 +2307,9 @@ class context {
         // that were not re-mutated in flight, so no state test is applied here (a
         // state test is what stranded deletes, whose state stays 'delete').
         for (const e of batch) {
-            if (e && e.__ID != null) this.__trackedEntitiesMap.delete(e.__ID);
+            if (!e) continue;
+            if (e.__ID != null) this.__trackedEntitiesMap.delete(e.__ID);
+            this.__dirtyEntities.delete(e);   // keep the dirty index in lockstep
         }
     }
 
@@ -2793,8 +2803,9 @@ class context {
         // Ensure context reference
         entity.__context = this;
 
-        // Track the entity
-        this.__track(entity);
+        // Attach() marks the entity modified, so it is dirty — register it in the
+        // dirty index so saveChanges() actually flushes it.
+        this.__markDirty(entity);
 
         return entity;
     }
@@ -2897,6 +2908,31 @@ class context {
         // a no-op and distinct objects never collide. Map is the sole registry;
         // the list view derives from it, so they cannot desynchronise.
         this.__trackedEntitiesMap.set(model.__ID, model);
+        // Robustness: if the entity being tracked is ALREADY dirty, enqueue it in
+        // the dirty index too. This guarantees the index is complete no matter
+        // how an entity gets tracked (setter, add/remove, or a direct __track
+        // after a state change) — a dirty entity can never be tracked yet missed
+        // by the change set.
+        if (model.__state && model.__state !== 'track' && !model.__noTracking) {
+            this.__dirtyEntities.add(model);
+        }
+        return model;
+    }
+
+    /**
+     * Mark an entity dirty (insert/modified/delete): track it in the identity map
+     * AND add it to the dirty index that saveChanges() reads. EVERY dirty-state
+     * transition (setters, add(), remove(), delete(), attach()) funnels through
+     * here, so the dirty index is complete — an entity that is dirty is always in
+     * the change set and therefore always flushed.
+     *
+     * No-tracking entities (AsNoTracking query results) are intentionally ignored
+     * — like EF, mutating a no-tracking entity does not enqueue a write.
+     */
+    __markDirty(model) {
+        if (!model || model.__noTracking) return model;
+        this.__track(model);
+        this.__dirtyEntities.add(model);
         return model;
     }
 
@@ -2922,6 +2958,7 @@ class context {
      */
     __clearTracked() {
         this.__trackedEntitiesMap.clear();  // sole registry; the list view follows
+        this.__dirtyEntities.clear();
     }
 
     /**

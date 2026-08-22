@@ -1,5 +1,17 @@
 # MasterRecord Changelog
 
+## v1.5.13 — EF-Core-style change tracking: O(changes) saves (dirty index) + asNoTracking()
+
+Fixing the write loss in 1.5.12 exposed two costs of correct retention in a long-lived context — unbounded memory and O(total-tracked) saves. Both are addressed the way EF Core does.
+
+**1. Dirty index (EF's `StateManager`) — a flush is O(changes), not O(total tracked).** The context keeps a `__dirtyEntities` set: the subset of tracked entities that are insert/modified/delete. Entities enter it the instant a setter / `add()` / `remove()` / `delete()` / `attach()` makes them dirty (all funnel through a new `__markDirty()`), and leave it when flushed or detached. `saveChanges()` now reads **only** this set, so an empty save is O(1) and a flush is O(changes) even with tens of thousands of clean rows tracked. Belt-and-suspenders for completeness: `__track()` also enqueues any entity that is already dirty when tracked, so no dirty entity can ever be tracked yet missed by the change set.
+
+**2. `asNoTracking()` (EF's `AsNoTracking`) — read-only queries retain nothing.** `db.Model.asNoTracking().toList()` returns entities without entering them into the change tracker, so a read-heavy endpoint that lists a whole table no longer grows the tracked set. Mutating a no-tracking entity does not enqueue a write (it is detached), matching EF. This is the fix for the memory growth a process-lifetime singleton context accumulated from read-only `.toList()` calls.
+
+**Guidance (also EF's):** a context is a unit of work — prefer a **short-lived, request-scoped** context (EF disposes the DbContext per request). For read-only work on a shared/long-lived context, use `asNoTracking()`. `clearChangeTracker()` remains, but it drops pending changes, so it is not safe as a per-request mitigation on a shared context — scope the context or use `asNoTracking()` instead.
+
+New tests: `test/no-tracking-and-dirty-index.test.js` — asNoTracking retains nothing and its mutations don't persist; a normal query tracks and its edits persist; a save over 2000 tracked rows with 3 dirty puts exactly 3 in the change set and flushes only those. Full suite green (0 fail, 307 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.12 — collision-free tracking identity + single source of truth (THE write-loss root cause)
 
 **Bug (silent write loss with monotonic decay — the one behind 1.5.8→1.5.11):** queried entities were assigned a **random `__ID` in `[1, 100000]`** (`entityTrackerModel.buildObject`). Added entities used a collision-free sequential id, but read-only `.toList()` results used random ones. In a long-lived, read-heavy singleton context the tracked set grows toward tens of thousands, and by the birthday paradox a new entity's random `__ID` increasingly collides with one already in the identity map. `__track()` dedups by id (`if (!map.has(id))`), so the colliding entity was **never added to the tracked set** — `changeSet` never saw it, its INSERT/UPDATE was never issued, and `saveChanges()` still returned `true`. This is exactly why the library **passed in isolation** (small set, no collisions) but **decayed over a server's lifetime** (22/22 fresh → 16/22 → 14/22 as the set filled), with no exception, no rollback, and nothing between the SELECT and the missing UPDATE in the SQL log. Proven: 3000 queried rows → 52 dropped by collision, and a dropped entity's write is lost.

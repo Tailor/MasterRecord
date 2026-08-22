@@ -150,11 +150,12 @@ class EntityTrackerModel {
                 throw new Error('Cannot delete: entity is not attached to a context');
             }
 
-            // Mark entity for deletion
+            // Mark entity for deletion — dirty, so register it in the dirty index
+            // (a delete that isn't in the change set would never be issued).
             this.__state = 'delete';
-
-            // Ensure entity is tracked
-            if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
+            if (typeof this.__context.__markDirty === 'function') {
+                this.__context.__markDirty(this);
+            } else if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
                 this.__context.__track(this);
             }
 
@@ -392,7 +393,9 @@ class EntityTrackerModel {
                 // Ensure this entity is tracked on any modification. THIS is the
                 // line that makes a just-inserted, attached entity's later edits
                 // persist instead of being silently dropped.
-                if (this.__context && typeof this.__context.__track === 'function') {
+                if (this.__context && typeof this.__context.__markDirty === 'function') {
+                    this.__context.__markDirty(this);
+                } else if (this.__context && typeof this.__context.__track === 'function') {
                     this.__context.__track(this);
                 }
                 const fieldDefForSet = currentEntity[modelField];
@@ -531,7 +534,11 @@ class EntityTrackerModel {
                             modelClass.__state = "modified";
                             modelClass.__version = (modelClass.__version || 0) + 1;
                             modelClass.__dirtyFields.push(entityField);
-                             modelClass.__context.__track(modelClass);
+                            if (typeof modelClass.__context.__markDirty === 'function') {
+                                modelClass.__context.__markDirty(modelClass);
+                            } else {
+                                modelClass.__context.__track(modelClass);
+                            }
                         }
                         this["__proto__"]["_" + entityField] = value;
                     },

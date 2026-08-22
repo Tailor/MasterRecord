@@ -28,6 +28,20 @@ class queryMethods{
         this.__context = context;
         this.__queryObject = new queryScript();
         this.__useCache = false;  // Disable caching by default (opt-in with .cache())
+        this.__noTracking = false; // opt-in with .asNoTracking() for read-only reads
+    }
+
+    /**
+     * Read-only query: do NOT enter results into the change tracker (like EF
+     * Core's AsNoTracking). Nothing is retained, so a read-heavy endpoint that
+     * `.toList()`s a large table no longer grows the tracked set. Mutations on
+     * the returned entities are not persisted (they are detached), matching EF.
+     *
+     * @example db.Users.asNoTracking().toList();
+     */
+    asNoTracking(){
+        this.__noTracking = true;
+        return this;
     }
 
     // build a single entity
@@ -37,7 +51,13 @@ class queryMethods{
             const ent = new entityTrackerModel();
             const mod = ent.build(dataModel, $that.__entity, $that.__context);
             mod.__state = "track";
-            $that.__context.__track(mod);
+            if ($that.__noTracking) {
+                // AsNoTracking: flag it so a later mutation won't enqueue a write
+                // (__markDirty ignores no-tracking entities) and never track it.
+                mod.__noTracking = true;
+            } else {
+                $that.__context.__track(mod);
+            }
             return mod;
         }else{
             return null;
@@ -714,7 +734,9 @@ class queryMethods{
                                 if (this.__state === 'track') {
                                     this.__state = 'modified';
                                 }
-                                if (this.__context && typeof this.__context.__track === 'function') {
+                                if (this.__context && typeof this.__context.__markDirty === 'function') {
+                                    this.__context.__markDirty(this);
+                                } else if (this.__context && typeof this.__context.__track === 'function') {
                                     this.__context.__track(this);
                                 }
                             },
@@ -762,7 +784,9 @@ class queryMethods{
                                         if (this.__state === 'track') {
                                             this.__state = 'modified';
                                         }
-                                        if (this.__context && typeof this.__context.__track === 'function') {
+                                        if (this.__context && typeof this.__context.__markDirty === 'function') {
+                                            this.__context.__markDirty(this);
+                                        } else if (this.__context && typeof this.__context.__track === 'function') {
                                             this.__context.__track(this);
                                         }
                                     },
@@ -882,11 +906,11 @@ class queryMethods{
                 throw new Error('Cannot delete: entity is not attached to a context');
             }
 
-            // Mark entity for deletion
+            // Mark entity for deletion — dirty, so register it in the dirty index.
             this.__state = 'delete';
-
-            // Ensure entity is tracked
-            if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
+            if (typeof this.__context.__markDirty === 'function') {
+                this.__context.__markDirty(this);
+            } else if (!this.__context.__trackedEntitiesMap.has(this.__ID)) {
                 this.__context.__track(this);
             }
 
@@ -1032,14 +1056,14 @@ class queryMethods{
                 entityValue[f] = undefined;
             }
         }
-        this.__context.__track(entityValue);
+        this.__context.__markDirty(entityValue);   // insert is dirty
     }
-    
+
     remove(entityValue){
         entityValue.__state = "delete";
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
-        this.__context.__track(entityValue);
+        this.__context.__markDirty(entityValue);   // delete is dirty
     }
 
     removeRange(entityValues){
@@ -1048,7 +1072,7 @@ class queryMethods{
             entityValue.__state = "delete";
             entityValue.__entity = this.__entity;
             entityValue.__context = this.__context;
-            this.__context.__track(entityValue);
+            this.__context.__markDirty(entityValue);   // delete is dirty
         }
     }
 
