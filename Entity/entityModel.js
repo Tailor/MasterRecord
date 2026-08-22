@@ -212,6 +212,43 @@ class EntityModel {
         return this;
     }
 
+    /**
+     * Database-side default EXPRESSION (EF Core `HasDefaultValueSql`), e.g.
+     * `db.datetime().defaultSql('CURRENT_TIMESTAMP')` or `defaultSql("gen_random_uuid()")`.
+     * Unlike default(value) the SQL is emitted verbatim (parenthesized when it is
+     * not a literal / CURRENT_*), so it can be any expression the engine accepts.
+     */
+    defaultSql(sql){
+        if (typeof sql !== 'string' || !sql.trim()) throw new Error('masterrecord: defaultSql(sql) requires a non-empty SQL string.');
+        this.obj.defaultSql = sql.trim();
+        return this;
+    }
+
+    /**
+     * Computed column (EF Core `HasComputedColumnSql`): the database derives the
+     * value from an expression — `GENERATED ALWAYS AS (<sql>) STORED|VIRTUAL`.
+     * The ORM never writes it (skipped on INSERT/UPDATE) and reads it back after
+     * insert. `stored` defaults to true; Postgres supports STORED only.
+     * @example priceCents(db){ db.integer().computed('CAST(price * 100 AS INTEGER)'); }
+     */
+    computed(sql, { stored = true } = {}){
+        if (typeof sql !== 'string' || !sql.trim()) throw new Error('masterrecord: computed(sql) requires a non-empty SQL expression.');
+        this.obj.computedSql = sql.trim();
+        this.obj.computedStored = stored !== false;
+        return this;
+    }
+
+    /**
+     * CHECK constraint on this column (EF Core `HasCheckConstraint`):
+     * `db.integer().check('qty >= 0', 'CK_Product_qty')`. The name is optional.
+     */
+    check(sql, name){
+        if (typeof sql !== 'string' || !sql.trim()) throw new Error('masterrecord: check(sql) requires a non-empty SQL predicate.');
+        this.obj.check = sql.trim();
+        this.obj.checkName = name || null;
+        return this;
+    }
+
     get(func){
         this.obj.get = func;
         return this;

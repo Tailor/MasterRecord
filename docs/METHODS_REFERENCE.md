@@ -86,6 +86,9 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `context.setQueryTrackingBehavior('no-track')` / `clearChangeTracker()` / `reset()` / `close()` | `QueryTrackingBehavior` / `ChangeTracker.Clear` / `Dispose` | Tracker lifetime |
 | `db.rowVersion()` / `db.concurrencyToken()` (model builder) | `IsRowVersion` / `IsConcurrencyToken` | Optimistic concurrency (throws `ConcurrencyError`) |
 | `db.belongsTo(...).onDelete('cascade'\|'restrict'\|'setNull'\|'noAction')` / `.excludeForeignKeyFromMigrations()` | `OnDelete` / EF 11 | FK constraint behavior |
+| `db.defaultSql('CURRENT_TIMESTAMP')` | `HasDefaultValueSql` | Database-side default expression (read back after insert) |
+| `db.computed('expr', { stored: true })` | `HasComputedColumnSql` | `GENERATED ALWAYS AS (expr) STORED\|VIRTUAL`; never written, read back after insert |
+| `db.check('qty >= 0', 'CK_name')` | `HasCheckConstraint` | Column CHECK constraint |
 
 Not yet supported (throw a clear error): `join()`, `leftJoin()`, `groupBy()`, `thenInclude` (nested include).
 

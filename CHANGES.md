@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.14.0 — DDL modeling parity: defaultSql / computed / check (EF HasDefaultValueSql, HasComputedColumnSql, HasCheckConstraint)
+
+Closes the Tier-3 "computed columns / default SQL / check constraints" gap on all three engines.
+
+- **`db.defaultSql('CURRENT_TIMESTAMP')`** (EF `HasDefaultValueSql`): a database-side default *expression*, emitted verbatim (parenthesized when it is not a literal/`CURRENT_*`; on MySQL always parenthesized except literals, because masterrecord maps temporal types to TEXT and MySQL only accepts expression defaults there). Postgres `alterColumn` emits `SET DEFAULT (expr)`. The SQLite schema sync compares the stored expression so a `defaultSql` column no longer looks "changed" on every run.
+- **`db.computed('CAST(ROUND(price * 100) AS INTEGER)', { stored })`** (EF `HasComputedColumnSql`): renders `GENERATED ALWAYS AS (expr) STORED|VIRTUAL` (Postgres: STORED only). The ORM **never writes** a computed column — it is skipped on INSERT and UPDATE in all three engines, even when `entry(e).state = 'modified'` marks everything — and its value is **read back onto the entity after INSERT** (EF fetches generated values after `SaveChanges`). SQLite introspection now uses `PRAGMA table_xinfo` so generated columns are seen by schema sync (`table_info` hides them); adding a computed column to an existing SQLite table rebuilds it (SQLite cannot `ADD` a STORED generated column — EF's SQLite provider rebuilds too), and the rebuild's data copy excludes generated columns.
+- **`db.check('qty >= 0', 'CK_Product_qty')`** (EF `HasCheckConstraint`): `[CONSTRAINT name] CHECK (expr)` on the column, all engines; violations surface as the engine's constraint error on `saveChanges()`.
+- **DB defaults are read back after INSERT** when the entity left the column unset (`default()` / `defaultSql()`), so a later full `Update()` writes the real value instead of NULL over the database default.
+- Contradictory modeling (`computed()` + `default()`/`defaultSql()`/primary/auto) fails loudly, naming the column.
+- **Bug fixed (1.12.0):** `entry(e).state = 'modified'` marked entity metadata (`__compositeIndexes`) as a dirty column (`no such column: __compositeIndexes`) and used the FK *column* name for `belongsTo` fields, which the engines could not resolve. New `_scalarFields()` marks exactly the writable fields.
+- Shared `Migrations/ddlClauses.js` renders the clauses for SQLite / MySQL / Postgres identically.
+
+New tests: `test/ddl-modeling.test.js` (all three builders: DEFAULT expr / GENERATED ALWAYS AS STORED|VIRTUAL / CHECK with and without name, Postgres STORED-only and `SET DEFAULT (expr)`, contradictory options; SQLite end-to-end: default applied, computed derived + read back + never written on INSERT/UPDATE incl. full `Update()`, recomputed, DB default preserved, CHECK enforced, schema sync sees the generated column and is idempotent without losing rows).
+
 ## v1.13.0 — navigation loading done the EF way (explicit/lazy loading, fix-up) + async query cache
 
 Closes the three "outright bugs" from the EF gap analysis addendum.

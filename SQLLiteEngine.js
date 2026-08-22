@@ -234,7 +234,10 @@ class SQLLiteEngine {
             // PRAGMA on a non-existent table returns an empty list (not an
             // error), so a genuinely-absent table is [] — only real failures
             // throw.
-            const rows = this.db.prepare(`PRAGMA table_info(${tableName})`).all();
+            // table_xinfo (not table_info): it also lists GENERATED columns
+            // (hidden = 2 VIRTUAL / 3 STORED), which table_info omits — without
+            // it a computed() column would look missing on every schema sync.
+            const rows = this.db.prepare(`PRAGMA table_xinfo(${tableName})`).all();
             return rows || [];
         }catch(err){
             throw new Error(`masterrecord: could not read columns for table '${tableName}' (SQLite introspection failed): ${err.message}`);
@@ -859,7 +862,7 @@ class SQLLiteEngine {
     _buildSQLEqualTo(model){
         const $that = this;
         let argument = null;
-        const dirtyFields = model.__dirtyFields;
+        const dirtyFields = (model.__dirtyFields || []).filter(f => !(model.__entity[f] && model.__entity[f].computedSql));   // computed columns are never written
 
         for (const column in dirtyFields) {
 
@@ -982,7 +985,7 @@ class SQLLiteEngine {
         const $that = this;
         const sqlParts = [];
         const params = [];
-        const dirtyFields = model.__dirtyFields;
+        const dirtyFields = (model.__dirtyFields || []).filter(f => !(model.__entity[f] && model.__entity[f].computedSql));   // computed columns are never written
 
         for (const column in dirtyFields) {
             // Validate non-nullable constraints on updates
@@ -1254,6 +1257,7 @@ class SQLLiteEngine {
         for (let column in modelEntity) {
             // column1 = value1, column2 = value2, ...
             if(column.indexOf("__") === -1 ){
+                if (modelEntity[column] && modelEntity[column].computedSql) continue;   // computed column: DB-generated, never written
                 // call the get method if avlable
                 let fieldColumn = "";
                 // check if get function is avaliable if so use that
@@ -1326,6 +1330,7 @@ class SQLLiteEngine {
         for (const column in modelEntity) {
             // Skip internal properties
             if(column.indexOf("__") === -1 ){
+                if (modelEntity[column] && modelEntity[column].computedSql) continue;   // computed column: DB-generated, never written
                 // belongsTo: persist the FK VALUE (assigned entity -> its PK, or
                 // the primitive / FK column), never the navigation getter.
                 let fieldColumn = (modelEntity[column] && modelEntity[column].relationshipType === "belongsTo")

@@ -781,7 +781,7 @@ class postgresEngine {
         const $that = this;
         const sqlParts = [];
         const params = [];
-        const dirtyFields = model.__dirtyFields;
+        const dirtyFields = (model.__dirtyFields || []).filter(f => !(model.__entity[f] && model.__entity[f].computedSql));   // computed columns are never written
         let paramIndex = 1;
 
         for (const column in dirtyFields) {
@@ -943,6 +943,7 @@ class postgresEngine {
 
         for (const column in modelEntity) {
             if (column.indexOf("__") === -1) {
+                if (modelEntity[column] && modelEntity[column].computedSql) continue;   // computed column: DB-generated, never written
                 // belongsTo: persist the FK VALUE (assigned entity -> its PK, or
                 // the primitive / FK column), never the navigation getter.
                 let fieldColumn = (modelEntity[column] && modelEntity[column].relationshipType === "belongsTo")

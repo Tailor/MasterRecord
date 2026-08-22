@@ -95,6 +95,13 @@ class InsertManager {
             currentModel[primaryKey] = SQL.id;
         }
 
+        // Database-generated values — computed columns (EF HasComputedColumnSql)
+        // and defaults the entity left unset (HasDefaultValue / HasDefaultValueSql)
+        // — are read back so the in-memory entity reflects the stored row (EF
+        // fetches generated values after SaveChanges). Without this a later
+        // "mark everything modified" update would write NULL over a DB default.
+        await this._readBackGeneratedColumns(currentModel, modelEntity, primaryKey);
+
         const proto = Object.getPrototypeOf(currentModel);
         const props = Object.getOwnPropertyNames(proto);
         const cleanPropList = tools.returnEntityList(props, modelEntity);
@@ -160,6 +167,34 @@ class InsertManager {
         // TODO: if you try to add belongs to you must have a tag added first. if you dont throw error
         await this.belongsToInsert(currentModel, currentModel.__entity);
         return cleanCurrentModel;
+    }
+
+    /**
+     * After INSERT, load database-generated (computed) column values onto the
+     * entity. Engine-agnostic: goes through the context's query builder.
+     * @private
+     */
+    async _readBackGeneratedColumns(currentModel, modelEntity, primaryKey) {
+        const isUnset = (v) => v === undefined || v === null || typeof v === 'function';
+        const computedCols = Object.keys(modelEntity).filter(k => {
+            const f = modelEntity[k];
+            if (!f || typeof f !== 'object' || k.startsWith('__')) return false;
+            if (f.computedSql) return true;
+            const hasDbDefault = (f.defaultSql !== undefined && f.defaultSql !== null) || (f.default !== undefined && f.default !== null);
+            return hasDbDefault && isUnset(tools.dataValue(currentModel, k));
+        });
+        if (computedCols.length === 0) return;
+        const ctx = currentModel.__context;
+        const dbset = ctx && modelEntity.__name ? ctx[modelEntity.__name] : null;
+        const pkVal = currentModel[primaryKey];
+        if (!dbset || typeof dbset.asNoTracking !== 'function' || pkVal === undefined || pkVal === null) return;
+        if (!this._isValidIdentifier(primaryKey)) return;
+        const rows = await dbset.asNoTracking().where(`r => r.${primaryKey} == $$`, pkVal).toObjectList();
+        const row = rows && rows[0];
+        if (!row) return;
+        for (const col of computedCols) {
+            if (row[col] !== undefined) currentModel[col] = row[col];
+        }
     }
 
     /**

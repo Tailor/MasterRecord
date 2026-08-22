@@ -1709,9 +1709,31 @@ class context {
         if (!def) return out;
         for (const key of Object.keys(def)) {
             const f = def[key];
-            if (!f || typeof f !== 'object') continue;
+            // skip entity metadata (__name, __compositeIndexes, __foreignKeys, …) and navigations
+            if (key.startsWith('__') || !f || typeof f !== 'object' || Array.isArray(f)) continue;
             if (f.type === 'hasOne' || f.type === 'hasMany' || f.type === 'hasManyThrough') continue;
             out.push((f.relationshipType === 'belongsTo' && f.foreignKey) ? f.foreignKey : (f.name || key));
+        }
+        return out;
+    }
+
+    /**
+     * Entity FIELD keys the ORM may write (what `__dirtyFields` holds): excludes
+     * metadata, navigations, virtual and computed (DB-generated) columns and,
+     * with `{ includePrimary: false }`, the primary key. belongsTo fields are
+     * returned by their field key (the engines map it to the FK column).
+     */
+    _scalarFields(entity, { includePrimary = false } = {}) {
+        const def = entity && entity.__entity;
+        const out = [];
+        if (!def) return out;
+        for (const key of Object.keys(def)) {
+            const f = def[key];
+            if (key.startsWith('__') || !f || typeof f !== 'object' || Array.isArray(f)) continue;
+            if (f.type === 'hasOne' || f.type === 'hasMany' || f.type === 'hasManyThrough') continue;
+            if (f.virtual === true || f.computedSql) continue;
+            if (!includePrimary && f.primary === true) continue;
+            out.push(key);
         }
         return out;
     }
@@ -1748,11 +1770,9 @@ class context {
                     ctx.__track(entity);
                 } else {
                     if (s === 'modified' && (!entity.__dirtyFields || entity.__dirtyFields.length === 0)) {
-                        // Like EF's Update(): mark every column modified.
-                        entity.__dirtyFields = ctx._scalarColumns(entity).filter(c => {
-                            const pk = tools.getPrimaryKeyObject(entity.__entity);
-                            return c !== pk;
-                        });
+                        // Like EF's Update(): mark every writable column modified
+                        // (not the PK, navigations, virtual or computed columns).
+                        entity.__dirtyFields = ctx._scalarFields(entity);
                     }
                     ctx.__markDirty(entity);
                 }

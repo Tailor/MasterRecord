@@ -447,6 +447,7 @@ class schema{
         // Build a set of existing columns (sqlite: name, mysql: name)
         const existingNames = new Set((existing || []).map(c => (c.name || c.COLUMN_NAME))); // both engines map to name
         // Add missing columns only (safe path)
+        let sqliteForceRebuild = false;
         for (var key in table) {
             // Skip metadata properties (indexes, __compositeIndexes, __name, etc.)
             if(key === 'indexes' || key.startsWith('__')) continue;
@@ -471,6 +472,10 @@ class schema{
                     };
                     // MySQL path uses addColum with realDataType
                     if(this.context.isSQLite){
+                        // A generated (computed) column cannot be ADDed as STORED in
+                        // SQLite — rebuild the table from the definition instead
+                        // (EF's SQLite provider rebuilds for unsupported ALTERs).
+                        if (col.computedSql) { sqliteForceRebuild = true; continue; }
                                                 var queryBuilder = new sqliteQuery();
                         // Build a conservative column add (no NOT NULL without default)
                         const add = queryBuilder.addColum({ tableName, name: colName });
@@ -506,6 +511,7 @@ class schema{
 
         const needRebuildSQLite = () => {
             if(!this.context.isSQLite) return false;
+            if(sqliteForceRebuild) return true;
             const sqliteBuilder = new sqliteQuery();
             const byName = {};
             for(const row of existing){ byName[row.name] = row; }
@@ -520,9 +526,14 @@ class schema{
                 if(typeof exDef === 'string' && exDef.length >= 2 && exDef.startsWith("'") && exDef.endsWith("'")){
                     exDef = exDef.slice(1, -1);
                 }
-                const dsDef = d.col.default == null ? null : String(d.col.default);
+                // defaultSql() is an expression: compare it to the stored
+                // expression text (SQLite keeps it verbatim, possibly parenthesized).
+                const normExpr = (s) => s == null ? null : String(s).trim().replace(/^\((.*)\)$/s, '$1').trim().toUpperCase();
+                const hasDefaultSql = d.col.default == null && d.col.defaultSql != null;
+                const dsDef = hasDefaultSql ? normExpr(d.col.defaultSql) : (d.col.default == null ? null : String(d.col.default));
+                const exCmp = hasDefaultSql ? normExpr(exDefRaw) : exDef;
                 if(desiredNotNull !== notnull) return true;
-                if(exDef !== dsDef) return true;
+                if(exCmp !== dsDef) return true;
                 // Type change at SQLite's AFFINITY level. Compare the resolved
                 // SQLite type of the desired column to the existing column's
                 // declared type. This catches ANY real change (integer->text,
@@ -655,8 +666,11 @@ class schema{
                     // before it was required. Copying those verbatim fails the
                     // constraint and costs the whole table, so they take the
                     // column's default — or a typed zero value when it has none.
-                    const cols = common.map(d => d.name).join(',');
-                    const selects = common.map(d => {
+                    // Computed (generated) columns cannot be inserted into — the
+                    // rebuilt table derives them again.
+                    const copyable = common.filter(d => !(d.col && d.col.computedSql));
+                    const cols = copyable.map(d => d.name).join(',');
+                    const selects = copyable.map(d => {
                         if(d.col.nullable !== false) return d.name;
                         let fallback = d.col.default;
                         if(fallback == null){

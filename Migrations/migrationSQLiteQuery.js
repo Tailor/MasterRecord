@@ -1,3 +1,4 @@
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
 
 // verison 0.0.7
 class migrationSQLiteQuery {
@@ -64,7 +65,12 @@ class migrationSQLiteQuery {
             }
         }
 
-        return `${colName} ${type}${nullName}${defaultClause}${unique}${primaryKey}${auto}`;
+        assertDdlOptions(table);
+        if (table.computedSql) {
+            // DB-generated: no default / PK / autoincrement; the ORM never writes it.
+            return `${colName} ${type}${computedClause(table, 'sqlite')}${nullName}${unique}${checkClause(table)}`;
+        }
+        return `${colName} ${type}${nullName}${defaultClause || defaultSqlClause(table, 'sqlite')}${checkClause(table)}${unique}${primaryKey}${auto}`;
     }
 
     // Public accessor for the resolved SQLite column type (affinity) of a

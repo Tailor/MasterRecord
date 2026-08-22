@@ -1,3 +1,4 @@
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
 
 // verison 0.0.4
 class migrationMySQLQuery {
@@ -63,7 +64,13 @@ class migrationMySQLQuery {
             }
         }
 
-        return `\`${tableName}\` ${type}${nullName}${defaultValue}${unique}${primaryKey}${auto}`;
+        assertDdlOptions(table);
+        const q = (n) => '`' + String(n).replace(/`/g, '``') + '`';
+        if (table.computedSql) {
+            // DB-generated: no default / PK / autoincrement; the ORM never writes it.
+            return `${q(tableName)} ${type}${computedClause(table, 'mysql')}${nullName}${unique}${checkClause(table, q)}`;
+        }
+        return `${q(tableName)} ${type}${nullName}${defaultValue || defaultSqlClause(table, 'mysql')}${checkClause(table, q)}${unique}${primaryKey}${auto}`;
     }
 
     boolType(type){

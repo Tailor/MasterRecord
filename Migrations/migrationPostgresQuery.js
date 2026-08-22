@@ -1,3 +1,4 @@
+import { defaultSqlClause, computedClause, checkClause, assertDdlOptions } from "./ddlClauses.js";
 // Version 1.0.0 - PostgreSQL migration query builder
 class migrationPostgresQuery {
 
@@ -77,7 +78,13 @@ class migrationPostgresQuery {
             }
         }
 
-        return `"${tableName}" ${type}${nullName}${defaultValue}${unique}${primaryKey}${auto}`;
+        assertDdlOptions(table);
+        const q = (n) => '"' + String(n).replace(/"/g, '""') + '"';
+        if (table.computedSql) {
+            // DB-generated (Postgres: STORED only); no default / PK / serial.
+            return `${q(tableName)} ${type}${computedClause(table, 'postgres')}${nullName}${unique}${checkClause(table, q)}`;
+        }
+        return `${q(tableName)} ${type}${nullName}${defaultValue || defaultSqlClause(table, 'postgres')}${checkClause(table, q)}${unique}${primaryKey}${auto}`;
     }
 
     typeManager(type){
@@ -168,6 +175,11 @@ class migrationPostgresQuery {
                     const esc = String(def).replace(/'/g, "''");
                     statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET DEFAULT '${esc}'`);
                 }
+            }
+
+            // Default EXPRESSION (EF HasDefaultValueSql)
+            if ((col.default === undefined || col.default === null) && col.defaultSql) {
+                statements.push(`ALTER TABLE "${tableName}" ALTER COLUMN "${colName}" SET${defaultSqlClause(col, 'postgres')}`);
             }
 
             // Return array of statements or join them with semicolons
