@@ -1673,6 +1673,34 @@ class context {
         return v !== undefined && v !== null && typeof v.then !== 'function';
     }
 
+    // ---- Health check (EF Database.CanConnect / ASP.NET DbContext health check) -
+
+    /**
+     * Probe the database connection: `{ healthy, engine, latencyMs, ... }` on
+     * success, `{ healthy: false, engine, error }` on failure — never throws.
+     * Same shape on SQLite, MySQL and Postgres (engine-specific extras such as
+     * pool counters / server version are added when available).
+     */
+    async healthCheck() {
+        const engine = this.isSQLite ? 'sqlite' : this.isMySQL ? 'mysql' : this.isPostgres ? 'postgres' : 'unknown';
+        const started = Date.now();
+        try {
+            await this._ensureReady();
+            const eng = this._SQLEngine;
+            if (!eng || typeof eng.healthCheck !== 'function') return { healthy: false, engine, error: 'engine not initialized' };
+            const res = await eng.healthCheck();
+            return { engine, latencyMs: Date.now() - started, ...res };
+        } catch (err) {
+            return { healthy: false, engine, latencyMs: Date.now() - started, error: err && err.message ? err.message : String(err) };
+        }
+    }
+
+    /** EF `Database.CanConnect()`: true when a round-trip to the database succeeds. */
+    async canConnect() {
+        const res = await this.healthCheck();
+        return res.healthy === true;
+    }
+
     // ---- Context-level Add / Remove (EF DbContext.Add / Remove) ----------------
 
     /** Resolve the dbset (query builder) that owns an entity instance. */

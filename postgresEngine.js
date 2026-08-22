@@ -110,6 +110,18 @@ class postgresEngine {
     }
 
     /** Rows matched by the last UPDATE/DELETE (pg Result.rowCount). */
+    /** Connection probe (context.healthCheck()): never throws. */
+    async healthCheck(){
+        try {
+            if (!this.pool) return { healthy: false, error: 'Not connected' };
+            const res = await this._runWithParams('SELECT NOW() AS time, version() AS version', []);
+            const row = res && res.rows ? res.rows[0] : undefined;
+            return { healthy: true, serverTime: row ? row.time : undefined, version: row ? row.version : undefined, poolSize: this.pool.totalCount, idleCount: this.pool.idleCount, waitingCount: this.pool.waitingCount };
+        } catch (err) {
+            return { healthy: false, error: err.message };
+        }
+    }
+
     affectedRows(result){
         if (!result) return 0;
         if (typeof result.rowCount === 'number') return result.rowCount;

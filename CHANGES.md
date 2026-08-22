@@ -1,5 +1,12 @@
 # MasterRecord Changelog
 
+## v1.15.0 — health checks on every engine + `remove-migration` (EF `migrations remove`)
+
+- **`await context.healthCheck()`** → `{ healthy, engine, latencyMs, version, … }` on SQLite, MySQL and Postgres (pool counters / server time where the driver exposes them); **never throws** — on failure `{ healthy: false, engine, error }`. **`await context.canConnect()`** (EF `Database.CanConnect()`). Previously only the Postgres sync-connect helper had a health check.
+- **`masterrecord remove-migration <context>`** (alias `rm`; EF `dotnet ef migrations remove`): deletes the latest migration file. Like EF it **refuses an applied migration** with instructions, unless **`--force`**, which reverts it first (down, in its own transaction via the atomic step) and updates the snapshot's `latestMigration` to the previous applied one. A pending migration is simply deleted — the snapshot needs no rewrite because masterrecord's snapshot reflects the *applied* database state.
+
+New tests: `test/health-check.test.js`, `remove-migration` cases in `test/migrations-tooling.test.js`.
+
 ## v1.14.0 — DDL modeling parity: defaultSql / computed / check (EF HasDefaultValueSql, HasComputedColumnSql, HasCheckConstraint)
 
 Closes the Tier-3 "computed columns / default SQL / check constraints" gap on all three engines.

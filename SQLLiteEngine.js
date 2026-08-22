@@ -48,6 +48,17 @@ class SQLLiteEngine {
        return Promise.resolve(this._runWithParams(sqlQuery, params));
     }
 
+    /** Connection probe (context.healthCheck()): never throws. */
+    async healthCheck(){
+        try {
+            if (!this.db) return { healthy: false, error: 'Not connected' };
+            const row = this.db.prepare('SELECT sqlite_version() AS version').get();
+            return { healthy: true, version: row ? row.version : undefined, open: this.db.open !== false, inTransaction: !!this.db.inTransaction };
+        } catch (err) {
+            return { healthy: false, error: err.message };
+        }
+    }
+
     /** Rows matched by the last UPDATE/DELETE (driver-specific result shape). */
     affectedRows(result){
         if (!result) return 0;

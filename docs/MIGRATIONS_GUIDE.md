@@ -301,6 +301,15 @@ await this.createIndex({
 
 You can also declare these on the entity/context (`this.compositeIndex(Model, ['scope_id'], { unique: true, where: 'is_default = 1' })`) and `add-migration` will generate the call for you.
 
+### Removing a migration (EF `migrations remove`)
+
+```bash
+masterrecord remove-migration AppContext          # deletes the latest migration file (must be pending)
+masterrecord remove-migration AppContext --force  # applied? revert it (down, transactional) first, then delete
+```
+
+Like Entity Framework, a migration that has already been applied to the database is refused unless `--force`, which runs its `down()` in its own transaction (via the same atomic step as `update-database`), removes its tracking row, updates the snapshot's `latestMigration`, and then deletes the file.
+
 ## Reliability & observability
 
 Migrations are designed to fail loudly and be observable — there are no silent no-ops:

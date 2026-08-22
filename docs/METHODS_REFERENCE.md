@@ -83,6 +83,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `context.queryFilter(model, name, lambda, ...args)` | `HasQueryFilter` | Global (named) query filters |
 | `context.on(event, fn)` | `SavingChanges`/interceptors | `savingChanges`, `savedChanges`, `saveChangesFailed`, `tracked`, `stateChanged`, `command`, `retry` |
 | `context.setRetryOnFailure(opts)` | `EnableRetryOnFailure` | Transient-error retry |
+| `await context.healthCheck()` / `await context.canConnect()` | `Database.CanConnect` / health check | `{ healthy, engine, latencyMs, version, … }`; never throws |
 | `context.setQueryTrackingBehavior('no-track')` / `clearChangeTracker()` / `reset()` / `close()` | `QueryTrackingBehavior` / `ChangeTracker.Clear` / `Dispose` | Tracker lifetime |
 | `db.rowVersion()` / `db.concurrencyToken()` (model builder) | `IsRowVersion` / `IsConcurrencyToken` | Optimistic concurrency (throws `ConcurrencyError`) |
 | `db.belongsTo(...).onDelete('cascade'\|'restrict'\|'setNull'\|'noAction')` / `.excludeForeignKeyFromMigrations()` | `OnDelete` / EF 11 | FK constraint behavior |

@@ -987,6 +987,65 @@ program.hook('preAction', () => {
    }
  });
 
+  // EF `dotnet ef migrations remove`: delete the LATEST migration file. Like EF
+  // it refuses when that migration has been applied to the database, unless
+  // `--force`, which reverts it (down, in its own transaction) first. The
+  // snapshot needs no rewrite for a pending migration: masterrecord's snapshot
+  // reflects the APPLIED database state (it is updated by update-database).
+  program
+  .command('remove-migration <contextFileName>')
+  .alias('rm')
+  .option('-f, --force', 'revert the migration if it has been applied, then remove it')
+  .description('Remove the latest migration file (EF: migrations remove); refuses an applied migration unless --force')
+  .action(async function(contextFileName, cmdOpts){
+    let contextInstance = null;
+    try {
+      const plan = await __resolveMigrationPlan(contextFileName);
+      if (!plan.mFiles.length) {
+        console.log(`No migration files found in ${plan.migBase}.`);
+        process.exit(0);
+      }
+      const latest = plan.mFiles[plan.mFiles.length - 1];
+      const name = path.basename(latest);
+      contextInstance = await instantiateReadyContext(plan.ContextCtor);
+      const rows = await __getAppliedMigrationRows(contextInstance);
+      const appliedNames = new Set(rows.map(r => r.migration_name));
+      if (appliedNames.has(name)) {
+        if (!(cmdOpts && cmdOpts.force)) {
+          console.error(`❌ Migration '${name}' has been applied to the database. Revert it first with 'masterrecord update-database-down ${plan.contextFileName}', or pass --force to revert and remove it.`);
+          await __cleanupAndExit(contextInstance, 1);
+          return;
+        }
+        // --force: revert (down) atomically, then remove.
+        const migration = new Migration();
+        const cleanEntities = migration.cleanEntities(contextInstance.__entities);
+        const tableObj = migration.buildUpObject(plan.contextSnapshot.schema, cleanEntities);
+        const MigCtor = await __loadUserModule(latest);
+        const instance = new MigCtor(plan.ContextCtor);
+        if (typeof instance.down !== 'function') throw new Error(`Migration '${name}' has no down() method; cannot revert it.`);
+        const mode = await __applyMigrationStep(contextInstance, instance, tableObj, name, 'down');
+        console.log(`↩  Reverted '${name}' (${mode})`);
+        try { if (instance.context && instance.context !== contextInstance && typeof instance.context.close === 'function') await instance.context.close(); } catch (_) { /* best-effort */ }
+        // Snapshot follows the applied state: previous applied migration becomes the latest.
+        const remaining = plan.mFiles.filter(f => path.basename(f) !== name && appliedNames.has(path.basename(f)));
+        migration.createSnapShot({
+          file: plan.contextAbs, executedLocation: plan.executedLocation, context: contextInstance,
+          contextEntities: cleanEntities,
+          contextSeedData: contextInstance.__contextSeedData || {},
+          contextSeedConfig: contextInstance.__contextSeedConfig || {},
+          contextFileName: plan.contextFileName,
+          latestMigration: remaining.length ? path.basename(remaining[remaining.length - 1]) : null,
+        });
+      }
+      fs.unlinkSync(latest);
+      console.log(`✓ Removed migration '${name}'`);
+      await __cleanupAndExit(contextInstance, 0);
+    } catch (e) {
+      console.error(`❌ remove-migration failed: ${e.message}`);
+      await __cleanupAndExit(contextInstance, 1);
+    }
+  });
+
  // EF `dotnet ef migrations script`: the SQL for pending migrations, NOT applied.
  program
  .command('script <contextFileName>')

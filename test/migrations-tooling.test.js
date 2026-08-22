@@ -127,3 +127,33 @@ test('--connection <json> overrides the env-file connection for the run', () => 
     assert.ok(!fs.existsSync(dbFile(dbDir)), 'the env-file location was not used');
     assert.ok(tables(path.join(altDir, 'toolctx.sqlite')).includes('Author'));
 });
+
+test('remove-migration deletes the latest PENDING migration; refuses an APPLIED one unless --force, which reverts it first (EF migrations remove)', () => {
+    const { projectDir, dbDir, migrationsDir } = makeProject();
+    // Pending: just delete the file.
+    let r = run(['remove-migration', 'toolctx'], projectDir);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /Removed migration '1700000002000_CreateBook_migration\.js'/);
+    assert.ok(!fs.existsSync(path.join(migrationsDir, '1700000002000_CreateBook_migration.js')));
+    assert.ok(fs.existsSync(path.join(migrationsDir, '1700000001000_CreateAuthor_migration.js')));
+
+    // Apply the remaining one, then refuse to remove it without --force.
+    r = run(['update-database', 'toolctx'], projectDir);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(appliedRows(dbFile(dbDir)), ['1700000001000_CreateAuthor_migration.js']);
+    r = run(['remove-migration', 'toolctx'], projectDir);
+    assert.equal(r.status, 1, 'applied migration must be refused');
+    assert.match(r.stderr, /has been applied to the database/);
+    assert.ok(fs.existsSync(path.join(migrationsDir, '1700000001000_CreateAuthor_migration.js')), 'file untouched');
+    assert.ok(tables(dbFile(dbDir)).includes('Author'), 'database untouched');
+
+    // --force: revert (down) then remove; snapshot's latestMigration follows.
+    r = run(['remove-migration', 'toolctx', '--force'], projectDir);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /Reverted '1700000001000_CreateAuthor_migration\.js'/);
+    assert.ok(!fs.existsSync(path.join(migrationsDir, '1700000001000_CreateAuthor_migration.js')));
+    assert.ok(!tables(dbFile(dbDir)).includes('Author'), 'table dropped by down()');
+    assert.deepEqual(appliedRows(dbFile(dbDir)), [], 'tracking row removed');
+    const snap = JSON.parse(fs.readFileSync(path.join(migrationsDir, 'toolctx_contextSnapShot.json'), 'utf8'));
+    assert.equal(snap.latestMigration, null);
+});
