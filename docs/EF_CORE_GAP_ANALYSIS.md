@@ -6,7 +6,7 @@ MasterRecord has deliberately adopted EF Core's architecture for change tracking
 
 ---
 
-> **Status (Aug 2026):** Tier 1 #1 (optimistic concurrency + rows-affected check) and #2 (explicit transactions) shipped in **1.6.0**; FK constraint DDL + honored cascade behaviors + rename advisories shipped in **1.7.0**; #3 `executeUpdate`/`executeDelete` + set-based `bulkUpdate`/`bulkDelete` shipped in **1.8.0**; #4 named global query filters and #10 context events/interceptors (+ `command` observer) shipped in **1.9.0**. Remaining items are tracked below in their original ranking.
+> **Status (Aug 2026):** Tier 1 #1 (optimistic concurrency + rows-affected check) and #2 (explicit transactions) shipped in **1.6.0**; FK constraint DDL + honored cascade behaviors + rename advisories shipped in **1.7.0**; #3 `executeUpdate`/`executeDelete` + set-based `bulkUpdate`/`bulkDelete` shipped in **1.8.0**; #4 named global query filters and #10 context events/interceptors (+ `command` observer) shipped in **1.9.0**; #5 retry/resiliency and #6 pluggable logging with parameter redaction shipped in **1.10.0**. Remaining items are tracked below in their original ranking.
 
 ## Tier 1 — Production correctness / safety (do first)
 

@@ -170,7 +170,7 @@ class queryMethods{
             // Inside a user transaction this context already holds the engine
             // lock; otherwise serialize with other units of work on the shared
             // connection.
-            return (ctx.__engineLockDepth > 0) ? await run() : await ctx._withEngineLock(run);
+            return (ctx.__engineLockDepth > 0) ? await run() : await ctx._withEngineLock(() => ctx._execWithRetry(run));
         } finally {
             this.__reset();
         }
@@ -404,21 +404,21 @@ class queryMethods{
 
         if(this.__context.isSQLite){
             // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
         }
         else if(this.__context.isMySQL){
             // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
         }
         else if(this.__context.isPostgres){
             // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
             var val = entityValue[Object.keys(entityValue)[0]];
             this.__reset();
             return val;
@@ -681,15 +681,15 @@ class queryMethods{
         await this.__context._ensureReady();
         let result = null;
         if(this.__context.isSQLite){
-            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context));
             result = this.__singleEntityBuilder(entityValue);
         }
         else if(this.__context.isMySQL){
-            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context));
             result = this.__singleEntityBuilder(entityValue);
         }
         else if(this.__context.isPostgres){
-            var entityValue = await this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.get(this.__queryObject.script, this.__entity, this.__context));
             result = this.__singleEntityBuilder(entityValue);
         }
         else {
@@ -738,15 +738,15 @@ class queryMethods{
         await this.__context._ensureReady();
         let result = [];
         if(this.__context.isSQLite){
-            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context));
             result = this.__multipleEntityBuilder(entityValue);
         }
         else if(this.__context.isMySQL){
-            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context));
             result = this.__multipleEntityBuilder(entityValue);
         }
         else if(this.__context.isPostgres){
-            var entityValue = await this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context);
+            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.all(this.__queryObject.script, this.__entity, this.__context));
             result = this.__multipleEntityBuilder(entityValue);
         }
         else {

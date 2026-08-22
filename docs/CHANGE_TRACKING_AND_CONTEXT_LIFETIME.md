@@ -208,6 +208,34 @@ db.on('tracked', …); db.on('stateChanged', …);
 
 `on()` returns an unsubscribe function; `once()` fires a single time. `savingChanges` runs before the flush and the change set is re-collected afterwards, so edits made by handlers ship in the same save.
 
+## Logging & diagnostics (EF's `LogTo` / `EnableSensitiveDataLogging`)
+
+Nothing is logged by default, and parameter values are **redacted** unless you opt in — exactly EF's defaults:
+
+```javascript
+import masterrecord from 'masterrecord';
+masterrecord.configureLogging({
+    logger: myLogger,        // { debug, info, warn, error } — default console
+    level: 'debug',          // min level
+    logSql: true,            // log every command (or LOG_SQL=true)
+    sensitiveData: false,    // show parameter values? (or MR_SENSITIVE_LOGGING=true)
+    slowQueryMs: 250,        // warn on slow commands even when logSql is off (or MR_SLOW_QUERY_MS)
+    migrations: true,        // log migration DDL at info (MR_SILENT_MIGRATIONS=true to silence)
+});
+```
+
+Every command on every engine flows through one timed path → the logger and the `command` event (`{ sql, params, durationMs, engine, error? }`).
+
+## Connection resiliency (EF's `EnableRetryOnFailure`)
+
+```javascript
+db.setRetryOnFailure({ maxRetries: 3, maxDelayMs: 2000 });   // per context (false to disable)
+masterrecord.configureRetry({ maxRetries: 3 });               // process-wide default
+db.on('retry', ({ attempt, delayMs, error }) => …);
+```
+
+Transient errors (deadlocks, lock timeouts, busy SQLite, dropped connections) are retried with capped exponential backoff; constraint/syntax errors and `ConcurrencyError` are not. Queries, `saveChanges()` and `executeUpdate`/`executeDelete` are covered; nothing is retried inside an explicit transaction — re-run the whole transaction (EF semantics). Off by default.
+
 ## Why not a singleton context?
 
 A singleton context shared across concurrent requests is the root cause of an entire class of bugs (and is unsupported in EF for the same reasons):

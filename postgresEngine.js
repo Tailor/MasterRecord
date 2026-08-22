@@ -1,6 +1,7 @@
 // Version 0.1.0 - Complete PostgreSQL implementation with pg 8.16.3
 import tools from './Tools.js';
 import FieldTransformer from './Entity/fieldTransformer.js';
+import { logCommand } from './logging.js';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -101,6 +102,7 @@ class postgresEngine {
     addCommandObserver(fn){ (this.__commandObservers ||= new Set()).add(fn); }
     removeCommandObserver(fn){ if (this.__commandObservers) this.__commandObservers.delete(fn); }
     _notifyCommand(info){
+        logCommand(info);
         if (!this.__commandObservers || this.__commandObservers.size === 0) return;
         for (const fn of Array.from(this.__commandObservers)) {
             try { fn(info); } catch (e) { console.error('[PostgreSQL] command observer threw:', e); }
@@ -1120,17 +1122,14 @@ class postgresEngine {
             // migrations are observable; runtime queries stay behind the
             // dev/LOG_SQL gate.
             const isMigration = opts.migration === true;
-            if (isMigration ? process.env.MR_SILENT_MIGRATIONS !== 'true'
-                            : (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production')) {
-                console.log(isMigration ? "[masterrecord:migration]" : "[SQL]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
-                if (params && params.length) console.log(isMigration ? "[masterrecord:migration] params" : "[Params]", params);
-            }
+            // Logging (redacted params, slow-query warnings, migration DDL) is
+            // handled centrally by logging.js via _notifyCommand below.
 
             // Inside a transaction, reuse the transaction's client so every
             // statement is part of the same BEGIN..COMMIT unit (and don't
             // release it — endTransaction/errorTransaction owns its lifecycle).
             const start = process.hrtime.bigint();
-            const done = (error) => this._notifyCommand({ sql: query, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'postgres', ...(error ? { error } : {}) });
+            const done = (error) => this._notifyCommand({ sql: query, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'postgres', migration: isMigration, ...(error ? { error } : {}) });
             if (this._txnClient) {
                 try { const r = await this._txnClient.query(query, params); done(); return r; }
                 catch (error) { done(error); throw error; }

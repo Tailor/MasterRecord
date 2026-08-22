@@ -4,6 +4,8 @@ import schema from './Migrations/schema.js';
 import ContextPool from './ContextPool.js';
 import { sql, RawSql } from './QueryLanguage/rawSql.js';
 import { ConcurrencyError } from './errors.js';
+import { configureLogging, getLoggingConfig } from './logging.js';
+import { isTransientError } from './resilience.js';
 
 class masterrecord {
     constructor() {
@@ -13,6 +15,10 @@ class masterrecord {
         this.sql = sql;                   // raw SET fragment for executeUpdate (EF SetProperty(b => b.X + 1))
         this.RawSql = RawSql;
         this.ConcurrencyError = ConcurrencyError;
+        this.configureLogging = configureLogging;   // EF LogTo / EnableSensitiveDataLogging
+        this.getLoggingConfig = getLoggingConfig;
+        this.configureRetry = (opts) => context.configureRetry(opts);   // EF EnableRetryOnFailure (global default)
+        this.isTransientError = isTransientError;
     }
 }
 

@@ -1,5 +1,21 @@
 # MasterRecord Changelog
 
+## v1.10.0 — pluggable logging with parameter redaction (EF LogTo/EnableSensitiveDataLogging) + retry on transient failures (EF EnableRetryOnFailure)
+
+Closes gap-analysis #5 (resiliency) and #6 (logging/diagnostics), the way EF Core does them.
+
+**Logging (`logging.js`, `masterrecord.configureLogging(...)`)**
+- **Behavior change (security):** SQL is **no longer logged by default**. Previously every SQL statement **with its parameter values** was printed whenever `NODE_ENV !== 'production'` — PII and secrets in dev logs. Like EF, nothing is logged unless you ask (`configureLogging({ logSql: true })` or `LOG_SQL=true`), and **parameter values are redacted to `?` by default** — opt in with `sensitiveData: true` / `MR_SENSITIVE_LOGGING=true` (EF `EnableSensitiveDataLogging`).
+- Pluggable `logger` (`{ debug, info, warn, error }`, default `console`) and min `level`; `slowQueryMs` warns on slow commands **even when SQL logging is off** (`MR_SLOW_QUERY_MS`); migration DDL logged at `info` unless `migrations: false` / `MR_SILENT_MIGRATIONS=true`; failed commands logged at `error` with duration.
+- All three engines route **every** command (reads, writes, DDL, raw) through one timed path that feeds the logger and the `command` event; the SQLite no-param `_execute` path (previously unobserved) is included. Query-cache debug chatter now goes through the logger at `debug` instead of `console.debug` in non-production.
+- `masterrecord.getLoggingConfig()`; exports `masterrecord/logging`.
+
+**Connection resiliency (`resilience.js`, `ctx.setRetryOnFailure(...)`, `masterrecord.configureRetry(...)`)**
+- Retries operations on **transient** errors with capped exponential backoff + jitter (EF's execution strategy): SQLite `SQLITE_BUSY`/`LOCKED`, MySQL deadlock/lock-wait-timeout/too-many-connections, Postgres `40001`/`40P01`/`57P0x`/`08xxx`, and network `ECONNRESET`/`ETIMEDOUT`/`PROTOCOL_CONNECTION_LOST` on any engine. Non-transient errors (constraints, syntax, `ConcurrencyError`) are never retried.
+- Applies to queries (`toList`/`single`/`count`…), `saveChanges()` (the whole unit of work is re-run; a failed attempt rolled back and left entities dirty) and `executeUpdate`/`executeDelete`. **Not** inside an explicit transaction (EF: the transaction is the retry unit). Off by default (EF default); per-context `setRetryOnFailure({ maxRetries, maxDelayMs, baseDelayMs, onRetry })` or `false`; process-wide default via `masterrecord.configureRetry(...)`. A `retry` event `{ attempt, maxRetries, delayMs, error }` fires before each wait. `masterrecord.isTransientError(err, engine)`; exports `masterrecord/resilience`.
+
+New tests: `test/logging-redaction.test.js` (nothing logged by default; SQL logged with redacted params; values only when opted in; slow-query warning with logSql off; migration DDL at info / silenced; failed command at error; config validation) and `test/retry-on-failure.test.js` (classifier per engine; query retry with `retry` events and exhaustion; non-transient not retried; no retry inside a transaction; saveChanges retry commits exactly once; global default + per-context override). Full suite green (0 fail, 356 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.9.0 — named global query filters (EF HasQueryFilter) + context events/interceptors
 
 Closes gap-analysis #4 (query filters) and #10 (context-level interceptors) — together they deliver EF's soft-delete, multi-tenancy and audit recipes.

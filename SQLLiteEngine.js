@@ -1,6 +1,7 @@
 // Version 0.0.23
 import tools from './Tools.js';
 import FieldTransformer from './Entity/fieldTransformer.js';
+import { logCommand } from './logging.js';
 
 class SQLLiteEngine {
 
@@ -178,10 +179,6 @@ class SQLLiteEngine {
             if(queryString.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryString.query);
-                    console.debug("[Params]", params);
-                }
                 const queryReturn = this._observed(queryString.query, params, () => this.db.prepare(queryString.query).get(...params));
                 return Promise.resolve(queryReturn);
             }
@@ -255,10 +252,6 @@ class SQLLiteEngine {
                 const queryCount = queryString.query
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", queryCount);
-                    console.debug("[Params]", params);
-                }
                 const queryReturn = this._observed(queryCount, params, () => this.db.prepare(queryCount).get(...params));
                 return Promise.resolve(queryReturn);
             }
@@ -286,10 +279,6 @@ class SQLLiteEngine {
             if(selectQuery.query){
                 // Get parameters from query script
                 const params = query.parameters ? query.parameters.getParams() : [];
-                if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-                    console.debug("[SQL]", selectQuery.query);
-                    console.debug("[Params]", params);
-                }
                 const queryReturn = this._observed(selectQuery.query, params, () => this.db.prepare(selectQuery.query).all(...params));
                 return Promise.resolve(queryReturn);
             }
@@ -1445,53 +1434,45 @@ class SQLLiteEngine {
         if (process.env.MR_SILENT_MIGRATIONS !== 'true') {
             console.log("[masterrecord:migration]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
         }
-        return this.db.exec(query);
+        return this._observed(query, [], () => this.db.exec(query));
     }
 
     _executeWithParams(query, params = []){
-        if (process.env.MR_SILENT_MIGRATIONS !== 'true') {
-            console.log("[masterrecord:migration]", typeof query === 'string' ? query.replace(/\s+/g, ' ').trim() : query);
-            if (params && params.length) console.log("[masterrecord:migration] params", params);
-        }
-        return this.db.prepare(query).run(...params);
+        // Migration DDL: logged at info (unless MR_SILENT_MIGRATIONS) via logging.js
+        return this._observed(query, params, () => this.db.prepare(query).run(...params), { migration: true });
     }
 
     _run(query){
-        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-            console.debug("[SQL]", query);
-        }
-        return this.db.prepare(query).run();
+        return this._observed(query, [], () => this.db.prepare(query).run());
     }
 
     _runWithParams(query, params = []){
-        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-            console.debug("[SQL]", query);
-            console.debug("[Params]", params);
-        }
         return this._observed(query, params, () => this.db.prepare(query).run(...params));
     }
 
     // ---- Command observation (EF IDbCommandInterceptor / CommandExecuted) ----
-    // Observers registered by contexts sharing this engine receive
-    // { sql, params, durationMs, engine: 'sqlite', error? } for every command.
+    // Every command is timed and reported to (a) the central logger (logging.js:
+    // redacted params by default, slow-query warnings) and (b) any observers
+    // registered by contexts sharing this engine ('command' event):
+    // { sql, params, durationMs, engine: 'sqlite', error?, migration? }.
     addCommandObserver(fn){ (this.__commandObservers ||= new Set()).add(fn); }
     removeCommandObserver(fn){ if (this.__commandObservers) this.__commandObservers.delete(fn); }
     _notifyCommand(info){
+        logCommand(info);
         if (!this.__commandObservers || this.__commandObservers.size === 0) return;
         for (const fn of Array.from(this.__commandObservers)) {
             try { fn(info); } catch (e) { console.error('[SQLite] command observer threw:', e); }
         }
     }
-    /** Run `exec` (sync) and notify observers with timing; rethrows errors. */
-    _observed(sql, params, exec){
-        if (!this.__commandObservers || this.__commandObservers.size === 0) return exec();
+    /** Run `exec` (sync), time it, notify logger + observers; rethrows errors. */
+    _observed(sql, params, exec, extra){
         const start = process.hrtime.bigint();
         try {
             const out = exec();
-            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite' });
+            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite', ...(extra || {}) });
             return out;
         } catch (error) {
-            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite', error });
+            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite', error, ...(extra || {}) });
             throw error;
         }
     }
@@ -1501,10 +1482,6 @@ class SQLLiteEngine {
     // RETURNING); for writes returns better-sqlite3's run info
     // ({ changes, lastInsertRowid }). `stmt.reader` tells the two apart.
     query(query, params = []){
-        if (process.env.LOG_SQL === 'true' || process.env.NODE_ENV !== 'production') {
-            console.debug("[SQL]", query);
-            if (params && params.length) console.debug("[Params]", params);
-        }
         const stmt = this.db.prepare(query);
         const args = Array.isArray(params) ? params : (params === undefined ? [] : [params]);
         return this._observed(query, args, () => (stmt.reader ? stmt.all(...args) : stmt.run(...args)));

@@ -23,6 +23,7 @@ import insertManager from './insertManager.js';
 import deleteManager from './deleteManager.js';
 import EntityTrackerModel from './Entity/entityTrackerModel.js';
 import { ConcurrencyError } from './errors.js';
+import { withRetry } from './resilience.js';
 import { globSync } from 'glob';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1574,6 +1575,60 @@ class context {
         eng.addCommandObserver(this.__commandObserver);
     }
 
+    // ---- Connection resiliency (EF EnableRetryOnFailure / execution strategy) ----
+
+    /** Process-wide default retry policy (see setRetryOnFailure). `false` disables. */
+    static configureRetry(options) {
+        context._defaultRetry = context._normalizeRetry(options);
+        return context._defaultRetry;
+    }
+
+    static _normalizeRetry(options) {
+        if (options === false || options === null || options === undefined) return null;
+        const o = (options === true) ? {} : options;
+        return {
+            maxRetries: Number.isInteger(o.maxRetries) && o.maxRetries >= 0 ? o.maxRetries : 3,
+            maxDelayMs: Number(o.maxDelayMs) > 0 ? Number(o.maxDelayMs) : 2000,
+            baseDelayMs: Number(o.baseDelayMs) > 0 ? Number(o.baseDelayMs) : 50,
+            onRetry: typeof o.onRetry === 'function' ? o.onRetry : null,
+        };
+    }
+
+    /**
+     * Retry this context's operations on TRANSIENT database errors (deadlock,
+     * lock timeout, dropped connection, busy SQLite) with capped exponential
+     * backoff — EF Core's EnableRetryOnFailure. Applies to queries,
+     * saveChanges() and executeUpdate/executeDelete. Like EF, nothing is
+     * retried inside an explicit transaction (re-run the whole transaction).
+     * Non-transient errors (constraints, syntax, ConcurrencyError) are never
+     * retried. A 'retry' event { attempt, maxRetries, delayMs, error } fires
+     * before each wait. Pass `false` to disable (also overrides a global default).
+     *
+     * @example db.setRetryOnFailure({ maxRetries: 5, maxDelayMs: 3000 });
+     */
+    setRetryOnFailure(options = {}) {
+        this.__retry = context._normalizeRetry(options);
+        return this;
+    }
+
+    _engineName() {
+        return this.isSQLite ? 'sqlite' : this.isMySQL ? 'mysql' : this.isPostgres ? 'postgres' : undefined;
+    }
+
+    /** Run `fn` under the active retry policy (none -> once; in a user transaction -> once). */
+    _execWithRetry(fn) {
+        const cfg = (this.__retry !== undefined) ? this.__retry : context._defaultRetry;
+        if (!cfg || this.__userTx) return fn();
+        return withRetry(fn, {
+            ...cfg,
+            engine: this._engineName(),
+            onRetry: (info) => {
+                this._emit('retry', { context: this, ...info });
+                if (cfg.onRetry) cfg.onRetry(info);
+            },
+        });
+    }
+
     // Walk every registered entity. For each column with relationshipType ===
     // 'belongsTo', look up the parent entity by foreignTable name and copy the
     // parent's primary-key type onto the FK column. Without this, FKs to a
@@ -2371,7 +2426,10 @@ class context {
         if (this.__engineLockDepth > 0) {
             return this._saveChangesExclusive();
         }
-        return this._withEngineLock(() => this._saveChangesExclusive());
+        // Retry policy (EF EnableRetryOnFailure) wraps the whole unit of work:
+        // a failed attempt rolled back and left entities dirty, so re-running
+        // the flush is safe.
+        return this._withEngineLock(() => this._execWithRetry(() => this._saveChangesExclusive()));
     }
 
     /**

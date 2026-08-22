@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { log } from '../logging.js';
 
 /**
  * Production-Grade Query Result Cache
@@ -57,10 +58,7 @@ class QueryCache {
         entry.lastAccess = Date.now();
         this.hitCount++;
 
-        // Log cache hit in dev
-        if (process.env.NODE_ENV !== 'production') {
-            console.debug(`[QueryCache HIT] Key: ${cacheKey.substring(0, 8)}... (${entry.hits} hits)`);
-        }
+        log('debug', `[QueryCache HIT] Key: ${cacheKey.substring(0, 8)}... (${entry.hits} hits)`);
 
         return entry.data;
     }
@@ -84,10 +82,7 @@ class QueryCache {
             tableName: tableName
         });
 
-        // Log cache set in dev
-        if (process.env.NODE_ENV !== 'production') {
-            console.debug(`[QueryCache SET] Key: ${cacheKey.substring(0, 8)}... Table: ${tableName}`);
-        }
+        log('debug', `[QueryCache SET] Key: ${cacheKey.substring(0, 8)}... Table: ${tableName}`);
     }
 
     /**
@@ -103,9 +98,7 @@ class QueryCache {
             }
         }
 
-        if (process.env.NODE_ENV !== 'production') {
-            console.debug(`[QueryCache INVALIDATE] Table: ${tableName} (${invalidated} entries)`);
-        }
+        log('debug', `[QueryCache INVALIDATE] Table: ${tableName} (${invalidated} entries)`);
     }
 
     /**
@@ -169,9 +162,7 @@ class QueryCache {
                 }
             }
 
-            if (cleaned > 0 && process.env.NODE_ENV !== 'production') {
-                console.debug(`[QueryCache CLEANUP] Removed ${cleaned} expired entries`);
-            }
+            if (cleaned > 0) log('debug', `[QueryCache CLEANUP] Removed ${cleaned} expired entries`);
         }, 60000);
         if (typeof timer.unref === 'function') timer.unref();
         this._cleanupTimer = timer;
