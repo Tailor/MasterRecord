@@ -59,11 +59,23 @@ class queryMethods{
 
     /** Append the entity's active global query filters to the WHERE (once). */
     __applyQueryFilters(){
-        if (this.__filtersApplied || this.__ignoredFilters === true) return;
+        if (this.__filtersApplied) return;
         this.__filtersApplied = true;
+        // TPH: a derived dbset always carries its discriminator predicate (EF:
+        // it is part of the type mapping, NOT a query filter — IgnoreQueryFilters
+        // never removes it).
+        const tph = this.__entity && this.__entity.__tph;
+        if (tph && tph.isDerived) {
+            const hasWhere = !!(this.__queryObject.script && this.__queryObject.script.where);
+            if (hasWhere) this.and(`r => r.${tph.column} == $$`, tph.value);
+            else this.where(`r => r.${tph.column} == $$`, tph.value);
+        }
+        if (this.__ignoredFilters === true) return;
         const ctx = this.__context;
         if (!ctx || typeof ctx._queryFiltersFor !== 'function') return;
-        const filters = ctx._queryFiltersFor(this.__entity.__name);
+        // base-type filters apply to derived sets (EF); plus the derived type's own
+        const filters = ctx._queryFiltersFor(this.__entity.__name)
+            .concat(tph && tph.isDerived ? ctx._queryFiltersFor(tph.typeName) : []);
         for (const f of filters) {
             if (this.__ignoredFilters instanceof Set && this.__ignoredFilters.has(f.name)) continue;
             // Function args are resolved at query time with the context
@@ -281,7 +293,15 @@ class queryMethods{
         const $that = this;
         if(dataModel){
             const ent = new entityTrackerModel();
-            const mod = ent.build(dataModel, $that.__entity, $that.__context);
+            // TPH: materialize the row as its DERIVED type when the discriminator
+            // names one (EF returns Cat/Dog instances from the Animal set).
+            let def = $that.__entity;
+            const tph = def && def.__tph;
+            if (tph && tph.derived && dataModel[tph.column] !== undefined && dataModel[tph.column] !== null) {
+                const derived = tph.derived.get(String(dataModel[tph.column]));
+                if (derived) def = derived;
+            }
+            const mod = ent.build(dataModel, def, $that.__context);
             mod.__state = "track";
             if ($that.__noTracking) {
                 // AsNoTracking: flag it so a later mutation won't enqueue a write
@@ -1149,6 +1169,9 @@ class queryMethods{
             }
         }
 
+        // TPH: a new entity of a derived/base set carries its discriminator (EF)
+        if (this.__entity.__tph) newEntity[this.__entity.__tph.column] = this.__entity.__tph.value;
+
         // Add Active Record-style .save() method
         newEntity.save = async function() {
             if (!this.__context) {
@@ -1390,6 +1413,8 @@ class queryMethods{
         entityValue.__entity = this.__entity;
         entityValue.__context = this.__context;
         entityValue.__name = this.__entity.__name;
+        // TPH: stamp the discriminator with this set's type value (EF)
+        if (this.__entity.__tph) entityValue[this.__entity.__tph.column] = this.__entity.__tph.value;
         // An UNSET declared field still resolves to its definition method on the
         // class prototype (e.g. `apiKey(db){...}`) — a truthy function — so
         // `!entity.apiKey` never fires. Blank those so an added entity reads

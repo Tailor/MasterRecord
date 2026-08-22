@@ -93,6 +93,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `db.computed('expr', { stored: true })` | `HasComputedColumnSql` | `GENERATED ALWAYS AS (expr) STORED\|VIRTUAL`; never written, read back after insert |
 | `db.check('qty >= 0', 'CK_name')` | `HasCheckConstraint` | Column CHECK constraint |
 | `db.manyToMany('Tag', { through?, foreignKey?, otherKey? })` | `HasMany().WithMany()` (skip navigation) | Implicit join entity (`PostTag`) synthesized by the context |
+| `ctx.dbset(Cat, { extends: Animal, discriminator?, value? })` | TPH (`HasDiscriminator().HasValue()`) | One table + discriminator; `ctx.Cat` filtered by type; `ctx.Animal` materializes derived types |
 | `(await post.tags).add(tag)` / `.remove(tag)`; `entry(e).collection(nav).add/remove/load`; `entry(e).reference(nav).load` | `Collection(n).Add/Remove/Load`, `Reference(n).Load` | Tracked; persisted by `saveChanges()` |
 
 Not yet supported (throw a clear error): `join()`, `leftJoin()`, `groupBy()`, `thenInclude` (nested include).

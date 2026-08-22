@@ -1376,6 +1376,15 @@ class context {
             );
         }
 
+        // dbset(Model, 'table') or dbset(Model, { table, extends, discriminator, value })
+        // — `extends` maps the model as a DERIVED type of an already-registered
+        // base (EF table-per-hierarchy).
+        if (name && typeof name === 'object') {
+            const opts = name;
+            name = opts.table;
+            if (opts.extends) return this.#dbsetDerived(model, opts);
+        }
+
         const validModel = modelBuilder.create(model);
         let tableName = name !== undefined ? name : model.name;
 
@@ -1465,6 +1474,80 @@ class context {
             seed: (data) => this.#addSeedData(tableName, data),
             // EF: modelBuilder.Entity<T>().HasQueryFilter([name,] predicate)
             queryFilter: (...a) => { this.queryFilter(tableName, ...a); return chain; },
+        };
+        return chain;
+    }
+
+    // ---- Table-per-hierarchy inheritance (EF Core default inheritance mapping) -
+
+    /**
+     * `dbset(Cat, { extends: Animal })`: map a derived model onto its base's
+     * table (EF TPH). The base table gains a discriminator column (default
+     * name 'discriminator', values = model names, like EF) and the derived
+     * model's own columns (nullable — rows of other types leave them NULL).
+     * `ctx.Cat` queries the base table with the discriminator predicate
+     * (always applied — it is not a query filter), inserts stamp the
+     * discriminator, and rows read through `ctx.Animal` are materialized as
+     * their derived type. Base-type query filters apply to derived sets.
+     * Options: `discriminator` (column name), `value` (this type's value).
+     */
+    #dbsetDerived(model, opts) {
+        const baseRef = opts.extends;
+        const baseName = typeof baseRef === 'string' ? baseRef : baseRef && baseRef.name;
+        const prefix = (this.tablePrefix && typeof this.tablePrefix === 'string') ? this.tablePrefix : '';
+        const baseDef = this.__entities.find(e => e && (e.__name === baseName || e.__name === prefix + baseName))
+            || (this.__derivedEntities || []).find(d => d.__tph && d.__tph.typeName === baseName);
+        if (!baseDef) {
+            throw new Error(`masterrecord: dbset(${model.name}, { extends: '${baseName}' }) — register the base entity with dbset() first (EF configures the base type before derived types).`);
+        }
+        const table = baseDef.__name;
+        const rootDef = baseDef.__tph ? (this.__entities.find(e => e && e.__name === baseDef.__tph.base) || baseDef) : baseDef;
+        const discCol = opts.discriminator || (rootDef.__tph ? rootDef.__tph.column : 'discriminator');
+        if (!rootDef.__tph) {
+            if (!rootDef[discCol]) {
+                rootDef[discCol] = { name: discCol, type: 'string', nullable: false, unique: false, auto: false, default: rootDef.__name.startsWith(prefix) && prefix ? rootDef.__name.slice(prefix.length) : rootDef.__name,
+                    cascadeOnDelete: true, lazyLoading: true, isNavigational: false, skipGetFunction: false, valueConversion: true };
+            }
+            Object.defineProperty(rootDef, '__tph', {
+                value: { column: discCol, value: baseName, typeName: baseName, base: table, isDerived: false, derived: new Map() },
+                enumerable: false, configurable: true, writable: true,
+            });
+        } else if (opts.discriminator && opts.discriminator !== rootDef.__tph.column) {
+            throw new Error(`masterrecord: hierarchy '${table}' already uses discriminator column '${rootDef.__tph.column}'.`);
+        }
+        const derivedRaw = modelBuilder.create(model);
+        const derivedDef = {};
+        for (const k of Object.keys(baseDef)) if (!k.startsWith('__')) derivedDef[k] = baseDef[k];   // inherited columns (shared objects)
+        const isRel = (c) => c && typeof c === 'object' && (c.type === 'hasOne' || c.type === 'hasMany' || c.type === 'hasManyThrough' || c.relationshipType === 'belongsTo');
+        for (const k of Object.keys(derivedRaw)) {
+            if (k.startsWith('__')) continue;
+            const col = derivedRaw[k];
+            if (!col || typeof col !== 'object') continue;
+            if (col.lifecycle) { derivedDef[k] = col; continue; }
+            if (derivedDef[k]) continue;                      // inherited property: the base definition wins (EF)
+            if (col.primary) throw new Error(`masterrecord: derived entity ${model.name} cannot declare its own primary key — it is inherited from ${baseName}.`);
+            if (!isRel(col) && !col.virtual) col.nullable = true;   // other types' rows leave it NULL
+            derivedDef[k] = col;
+            rootDef[k] = col;                                  // the physical column lives in the hierarchy table (migrations)
+        }
+        derivedDef.__name = table;
+        derivedDef.__compositeIndexes = rootDef.__compositeIndexes;
+        const value = opts.value || model.name;
+        Object.defineProperty(derivedDef, '__tph', {
+            value: { column: rootDef.__tph.column, value, typeName: model.name, base: table, isDerived: true, derived: rootDef.__tph.derived },
+            enumerable: false, configurable: true, writable: true,
+        });
+        rootDef.__tph.derived.set(String(value), derivedDef);
+        this.__derivedEntities = this.__derivedEntities || [];
+        this.__derivedEntities.push(derivedDef);
+        Object.defineProperty(this, model.name, {
+            get: function() { return tools.createNewInstance(derivedDef, query, this); },
+            configurable: true, enumerable: true,
+        });
+        this.#resolveBelongsToTypes();
+        const chain = {
+            seed: (data) => this.#addSeedData(table, data),
+            queryFilter: (...a) => { this.queryFilter(model.name, ...a); return chain; },
         };
         return chain;
     }

@@ -1,5 +1,14 @@
 # MasterRecord Changelog
 
+## v1.19.0 — table-per-hierarchy inheritance (EF Core's default inheritance mapping)
+
+- **`dbset(Cat, { extends: Animal })`** maps a derived model onto its base's table (TPH). The hierarchy table gains a **discriminator column** (`discriminator` by default, values = model names — EF's convention; override with `{ discriminator, value }`) and the derived models' own columns (nullable — rows of other types leave them NULL). Migrations see **one table**; base rows carry the base name.
+- **`ctx.Cat` / `ctx.Dog`** query the base table with the discriminator predicate — part of the type mapping, so `ignoreQueryFilters()` never removes it (EF) — and **inserts / `.new()` stamp the discriminator**; updates, `count`, `executeUpdate/Delete`, `find` etc. all scope to the type. **Base-type global query filters apply to derived sets** (EF), and a derived set can have its own.
+- **`ctx.Animal` returns the whole hierarchy, each row materialized as its derived type** (a Cat read through the Animal set has `lives` and `__entity.__tph.value === 'Cat'`), so updating it persists as a Cat.
+- Misuse fails loudly: derived registered before its base, a derived type declaring its own primary key, conflicting discriminator column names.
+
+New tests: `test/tph-inheritance.test.js` (model/DDL/migrations single table; insert via derived/base/.new(); filtered derived queries; base set materialization; updates through both; base filter on derived; set-based delete per type; misuse).
+
 ## v1.18.0 — global query filters inside include() (EF HasQueryFilter on navigations, IgnoreQueryFilters for the whole query)
 
 - **Included navigations honor the target entity's global query filters** (soft delete, tenant…), as in EF Core: `include()` of a navigation whose target has active filters loads through the split loader, whose dbset queries apply them; lazy/explicit loading already did. A filtered-out `belongsTo` parent reads `null`.
