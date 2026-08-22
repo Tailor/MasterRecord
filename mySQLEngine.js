@@ -124,6 +124,28 @@ class MySQLEngine {
     }
 
     /** Scalar aggregate over the query's rows (EF Sum/Average/Min/Max): fn in SUM|AVG|MIN|MAX. */
+    /** EF GroupBy + aggregates (see SQLite engine for the contract). */
+    async getGrouped(queryObject, entity, groups, aggs, having, orderBy){
+        const q = queryObject.script;
+        const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;
+        const qi = (n) => this._qi(n);
+        const sel = [
+            ...groups.map(g => `${alias}.${qi(g.column)} AS ${qi(g.column)}`),
+            ...aggs.map(a => `${a.fn}(${a.column ? `${alias}.${qi(a.column)}` : '*'}) AS ${qi(a.alias)}`),
+        ].join(', ');
+        const params = q.parameters ? [...q.parameters.getParams()] : [];
+        let sql = `SELECT ${sel} ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)} GROUP BY ${groups.map(g => `${alias}.${qi(g.column)}`).join(', ')}`;
+        if (having && having.length) {
+            sql += ' HAVING ' + having.map(h => { params.push(h.value); return `${h.agg.fn}(${h.agg.column ? `${alias}.${qi(h.agg.column)}` : '*'}) ${h.op} ?`; }).join(' AND ');
+        }
+        sql += (orderBy && orderBy.length) ? ` ORDER BY ${orderBy.map(o => `${qi(o.name)}${o.desc ? ' DESC' : ' ASC'}`).join(', ')}` : ` ORDER BY ${groups.map(g => qi(g.column)).join(', ')}`;
+        const lim = typeof this.buildLimit === 'function' ? this.buildLimit(q) : (typeof this.buildTake === 'function' ? this.buildTake(q) : '');
+        const off = typeof this.buildSkip === 'function' ? this.buildSkip(q) : '';
+        sql += ` ${lim} ${off}`;
+        const rows = await this._runWithParams(sql, params);
+        return Array.isArray(rows) ? rows : [];
+    }
+
     async getAggregate(queryObject, entity, fn, column){
         const q = queryObject.script;
         const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;

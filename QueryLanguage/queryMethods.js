@@ -354,6 +354,7 @@ class queryMethods{
         this.__postIncludes = [];
         this.__splitQuery = false;
         this.__lastSqlIncludeNav = null;
+        this.__groupBy = null;
     }
 
 
@@ -365,8 +366,89 @@ class queryMethods{
         throw new Error('masterrecord: join() is not supported yet. Use include() for eager-loaded relationships, or ctx.query()/ctx.execute() for a hand-written JOIN.');
     }
 
-    groupBy(){
-        throw new Error('masterrecord: groupBy() is not supported yet. Use count()/sum()/avg()/min()/max() with a where() for single-group aggregates, or ctx.query() for GROUP BY SQL.');
+    /**
+     * EF Core `GroupBy(x => x.status)` — group the filtered rows by one or more
+     * columns, then project aggregates with `.aggregate({...})`:
+     *
+     *   await db.Order.where('o => o.year == $$', 2026)
+     *       .groupBy('o => o.status')
+     *       .aggregate({ n: 'count', total: ['sum', 'amount'], avg: ['avg', 'amount'] },
+     *                  { having: { n: ['>', 1] }, orderBy: [['total', 'desc']] });
+     *   // -> [{ status: 'paid', n: 12, total: 980, avg: 81.6 }, ...]
+     *
+     * Translates to `SELECT <groups>, <aggregates> ... GROUP BY ... [HAVING] [ORDER BY]`
+     * on every engine (EF's GroupBy + Select(g => new { g.Key, g.Count(), g.Sum() })).
+     * Global query filters and where()/and() apply; take()/skip() page the groups.
+     */
+    groupBy(...fields){
+        const cols = fields.flat().map(f => this.__columnNameFrom(f, 'groupBy'));
+        if (!cols.length) throw new Error('masterrecord: groupBy() requires at least one column, e.g. groupBy("o => o.status").');
+        this.__groupBy = cols;
+        return this;
+    }
+
+    /** Terminal for groupBy(): project aggregates per group (see groupBy()). */
+    async aggregate(spec, opts = {}){
+        if (!this.__groupBy || !this.__groupBy.length) throw new Error('masterrecord: aggregate() must follow groupBy().');
+        if (!spec || typeof spec !== 'object' || !Object.keys(spec).length) throw new Error('masterrecord: aggregate({ alias: "count" | [fn, column] }) requires at least one aggregate.');
+        const FN = { count: 'COUNT', sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX' };
+        const ident = /^[A-Za-z_][A-Za-z0-9_]*$/;
+        const aggs = [];
+        for (const [alias, def] of Object.entries(spec)) {
+            if (!ident.test(alias)) throw new Error(`masterrecord: aggregate alias '${alias}' must be an identifier.`);
+            if (this.__groupBy.some(g => g.column === alias)) throw new Error(`masterrecord: aggregate alias '${alias}' collides with a group column.`);
+            let fn, column = null;
+            if (typeof def === 'string') { fn = def; }
+            else if (Array.isArray(def)) { [fn, column] = def; }
+            else throw new Error(`masterrecord: aggregate '${alias}' must be 'count' or [fn, column].`);
+            fn = String(fn).toLowerCase();
+            if (!FN[fn]) throw new Error(`masterrecord: unknown aggregate '${fn}' for '${alias}' (count, sum, avg, min, max).`);
+            if (fn !== 'count' || column) column = this.__columnNameFrom(column, 'aggregate').column;
+            aggs.push({ alias, fn: FN[fn], column });
+        }
+        const having = [];
+        for (const [alias, cond] of Object.entries(opts.having || {})) {
+            const agg = aggs.find(a => a.alias === alias);
+            if (!agg) throw new Error(`masterrecord: having refers to unknown aggregate '${alias}'.`);
+            const [op, value] = Array.isArray(cond) ? cond : ['==', cond];
+            const ops = { '==': '=', '=': '=', '!=': '<>', '<>': '<>', '>': '>', '>=': '>=', '<': '<', '<=': '<=' };
+            if (!ops[op]) throw new Error(`masterrecord: having operator '${op}' not supported (==, !=, >, >=, <, <=).`);
+            having.push({ agg, op: ops[op], value });
+        }
+        const orderBy = (opts.orderBy || []).map(o => {
+            const [name, dir] = Array.isArray(o) ? o : [o, 'asc'];
+            const known = aggs.some(a => a.alias === name) || this.__groupBy.some(g => g.column === name);
+            if (!known) throw new Error(`masterrecord: orderBy '${name}' must be a group column or an aggregate alias.`);
+            return { name, desc: String(dir).toLowerCase() === 'desc' };
+        });
+        this.__applyQueryFilters();
+        if (this.__queryObject.script.entityMap.length === 0) this.__queryObject.skipClause(this.__entity.__name);
+        const ctx = this.__context;
+        await ctx._ensureReady();
+        try {
+            const groups = this.__groupBy;
+            const rows = await ctx._execWithRetry(() => ctx._SQLEngine.getGrouped(this.__queryObject, this.__entity, groups, aggs, having, orderBy));
+            return (rows || []).map(r => {
+                const o = {};
+                for (const g of groups) o[g.field] = r[g.column];
+                for (const a of aggs) { const v = r[a.alias]; const n = Number(v); o[a.alias] = (v === null || v === undefined) ? null : (Number.isNaN(n) ? v : n); }
+                return o;
+            });
+        } finally {
+            this.__reset();
+        }
+    }
+
+    /** { field, column } for a lambda ('o => o.status') or bare column name; validates it is a scalar column. */
+    __columnNameFrom(query, method){
+        const field = this.__navNameFrom(query);
+        const def = field ? this.__entity[field] : null;
+        if (!def || typeof def !== 'object' || def.type === 'hasOne' || def.type === 'hasMany' || def.type === 'hasManyThrough') {
+            throw new Error(`masterrecord: ${method}('${field}') — '${field}' is not a column of ${this.__entity.__name}.`);
+        }
+        const column = (def.relationshipType === 'belongsTo' && def.foreignKey) ? def.foreignKey : (def.name || field);
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(column)) throw new Error(`masterrecord: ${method} — invalid column '${column}'.`);
+        return { field, column };
     }
 
     leftJoin(){

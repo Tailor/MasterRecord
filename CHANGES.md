@@ -1,5 +1,12 @@
 # MasterRecord Changelog
 
+## v1.21.0 — `groupBy().aggregate()` (EF Core GroupBy + Select(g => new { g.Key, g.Count(), g.Sum(…) }))
+
+- **`groupBy('o => o.status'[, 'region'…]).aggregate({ n: 'count', total: ['sum', 'amount'], avg: ['avg', 'amount'] }, { having: { n: ['>', 1] }, orderBy: [['total', 'desc']] })`** → `[{ status, region?, n, total, avg }]`, translated to `SELECT <groups>, <aggregates> … GROUP BY … [HAVING …] [ORDER BY …] [LIMIT/OFFSET]` on SQLite, MySQL and Postgres. `where()/and()`, global query filters (and `ignoreQueryFilters()`), `take()/skip()` apply to the groups. Aggregates: `count`, `sum`, `avg`, `min`, `max`; `having` operators `==, !=, >, >=, <, <=` (parameterized); identifiers are validated, unknown columns/aggregates/aliases fail loudly. `groupBy()` used to throw "not supported".
+- `join()` / `leftJoin()` remain unsupported by design — `include()`/`thenInclude()` cover relationship loading; use `ctx.query()` for hand-written joins.
+
+New tests: `test/group-by.test.js`.
+
 ## v1.20.0 — composite primary keys (EF Core `HasKey(a, b)`)
 
 - **Two or more `.primary()` columns form a composite key.** DDL on all three engines emits a table-level `PRIMARY KEY (a, b)` (key columns NOT NULL, no inline PRIMARY KEY / auto-increment; an `auto()` column inside a composite key is rejected, as EF rejects identity columns there).

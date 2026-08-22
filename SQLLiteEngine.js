@@ -91,6 +91,28 @@ class SQLLiteEngine {
         return this.affectedRows(this._runWithParams(sql, whereParams));
     }
 
+    /**
+     * EF GroupBy + aggregates: SELECT <groups>, <aggs> ... GROUP BY [HAVING] [ORDER BY] [LIMIT/OFFSET].
+     * groups: [{ column }], aggs: [{ alias, fn, column|null }], having: [{ agg, op, value }],
+     * orderBy: [{ name, desc }]. Identifiers are validated by the caller.
+     */
+    async getGrouped(queryObject, entity, groups, aggs, having, orderBy){
+        const q = queryObject.script;
+        const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;
+        const sel = [
+            ...groups.map(g => `${alias}.[${g.column}] AS [${g.column}]`),
+            ...aggs.map(a => `${a.fn}(${a.column ? `${alias}.[${a.column}]` : '*'}) AS [${a.alias}]`),
+        ].join(', ');
+        const params = q.parameters ? [...q.parameters.getParams()] : [];
+        let sql = `SELECT ${sel} ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)} GROUP BY ${groups.map(g => `${alias}.[${g.column}]`).join(', ')}`;
+        if (having && having.length) {
+            sql += ' HAVING ' + having.map(h => { params.push(h.value); return `${h.agg.fn}(${h.agg.column ? `${alias}.[${h.agg.column}]` : '*'}) ${h.op} ?`; }).join(' AND ');
+        }
+        sql += (orderBy && orderBy.length) ? ` ORDER BY ${orderBy.map(o => `[${o.name}]${o.desc ? ' DESC' : ' ASC'}`).join(', ')}` : ` ORDER BY ${groups.map(g => `[${g.column}]`).join(', ')}`;
+        sql += ` ${this.buildTake(q)} ${this.buildSkip(q)}`;
+        return this._observed(sql, params, () => this.db.prepare(sql).all(...this._bind(params)));
+    }
+
     /** Scalar aggregate over the query's rows (EF Sum/Average/Min/Max): fn in SUM|AVG|MIN|MAX. */
     async getAggregate(queryObject, entity, fn, column){
         const q = queryObject.script;

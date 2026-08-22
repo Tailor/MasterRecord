@@ -128,6 +128,6 @@ test('context.add / remove / addRange / removeRange (EF DbContext.Add/Remove) re
 test('join() / groupBy() fail loudly instead of returning undefined', () => {
     const ctx = makeCtx();
     assert.throws(() => ctx.Item.join(), /not supported yet/);
-    assert.throws(() => ctx.Item.groupBy(), /not supported yet/);
+    assert.throws(() => ctx.Item.groupBy(), /requires at least one column/);   // groupBy() is real since 1.21.0 (groupBy().aggregate())
     assert.throws(() => ctx.Item.leftJoin(), /not supported yet/);
 });

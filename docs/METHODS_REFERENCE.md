@@ -71,6 +71,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `.sum(field)` / `.avg(field)` / `.min(field)` / `.max(field)` | `Sum/Average/Min/Max` | Aggregates over the filtered query (`sum` of nothing → 0, others → null) |
 | `.thenBy(field)` / `.thenByDescending(field)` | `ThenBy` | Secondary sort keys after `orderBy` |
 | `.distinct()` | `Distinct` | `SELECT DISTINCT` |
+| `.groupBy('o => o.status').aggregate({ n: 'count', total: ['sum','amount'] }, { having, orderBy })` | `GroupBy` + `Select(g => new {…})` | `GROUP BY` / `HAVING` SQL; returns plain rows |
 | `.toObjectList([options])` | projection | Plain-object results (not tracked) |
 | `.pluck(field)` | — | One column, as a SQL projection |
 | `.asNoTracking()` / `.asTracking()` | `AsNoTracking/AsTracking` | Per-query tracking control |
