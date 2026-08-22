@@ -1,5 +1,21 @@
 # MasterRecord Changelog
 
+## v1.7.0 — FOREIGN KEY constraints in DDL (EF referential integrity) + rename advisories in migrations
+
+Closes gap-analysis items "no FK constraints", "cascade config is a no-op", and "rename diffed as drop+add", the way EF Core does.
+
+**FOREIGN KEY constraints** — relationships were ORM-only; no `REFERENCES`/`FOREIGN KEY` was ever emitted, so the database enforced nothing. Now every `belongsTo` column gets a FK constraint (EF always creates FK constraints for relationships):
+- **SQLite:** inline `CONSTRAINT fk_<table>_<col> FOREIGN KEY (...) REFERENCES parent(pk) ON DELETE …` in `CREATE TABLE` (SQLite has no `ADD CONSTRAINT`); the connection now enables **`PRAGMA foreign_keys = ON`** so constraints are enforced (`MR_SQLITE_FOREIGN_KEYS=off` opts out). The SQLite table rebuild in `syncTable` preserves FKs. New `belongsTo` columns added via `addColumn` get an inline `REFERENCES` when nullable/defaulted.
+- **MySQL/Postgres:** `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY` is issued **after** the table — immediately if the referenced table exists, otherwise **deferred** and flushed by the new **`schema.finalize()`**, which the CLI calls after each migration's `up()`/`down()`. Table creation order and cycles therefore never matter; a still-missing referenced table is reported as a clear model error.
+- **ON DELETE follows the model** (EF `OnDelete(DeleteBehavior.*)`): `CASCADE` by default; **`stopCascadeOnDelete()` is now honored** → `SET NULL` (nullable) / `RESTRICT` (required); new **`.onDelete('cascade'|'restrict'|'setNull'|'noAction')`** for explicit control.
+- New **`.excludeForeignKeyFromMigrations()`** (EF 11): keep the relationship in the ORM but emit no DB constraint (legacy DBs, data-sync).
+- An **index is created on every FK column** (SQLite/Postgres; MySQL auto-indexes FKs), as EF does.
+- New `schema.addForeignKey(fk)` / `schema.dropForeignKey(fk)` (MySQL/Postgres) for hand-written migrations — e.g. to add constraints to tables created before this release (the snapshot does not record constraints, so existing tables are not retrofitted automatically; write a migration calling `addForeignKey`).
+
+**Rename advisories (EF parity, not auto-rename)** — a renamed column was diffed as `dropColumn` + `addColumn`, which **destroys the column's data** on apply. EF Core's differ deliberately does *not* auto-detect renames (it cannot tell a rename from an unrelated drop+add — guessing wrong moves data under the wrong name) and tells you to review and change the scaffold to `RenameColumn`. MasterRecord now matches EF: drop+add is still emitted, but when exactly one removed and one added column share an identical definition, the generated migration carries a **`// POSSIBLE RENAME`** advisory with the exact `await this.renameColumn({...})` call to swap in, and `add-migration` prints a warning. Ambiguous cases get no advisory. New `schema.renameTable({tableName,newName})`; `renameColumn` now validates its spec.
+
+New tests: `test/foreign-key-constraints.test.js` (SQLite inline FK + ON DELETE variants incl. `onDelete`/`stopCascadeOnDelete`/`excludeForeignKeyFromMigrations`; MySQL/PG `ADD CONSTRAINT` SQL; end-to-end SQLite enforcement: pragma on, orphan insert rejected, CASCADE delete, FK index; `finalize()` error on a missing referenced table) and `test/migration-rename-detection.test.js` (advisory emitted with drop+add intact; none when ambiguous or when definitions differ). Full suite green (0 fail, 333 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.6.0 — optimistic concurrency (EF concurrency tokens) + explicit transactions
 
 Closes the last **silent lost-write** class identified in `docs/EF_CORE_GAP_ANALYSIS.md` (#1 and #2), implemented the way Entity Framework Core does.

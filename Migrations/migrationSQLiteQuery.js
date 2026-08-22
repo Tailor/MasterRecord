@@ -136,7 +136,11 @@ class migrationSQLiteQuery {
         // Fixed: Support direct column definitions (when table itself IS the column spec)
         // This matches MySQL/PostgreSQL behavior for explicit column definitions
         if(table.type && table.tableName && table.name){
-            const def = this.#columnMapping(table);
+            let def = this.#columnMapping(table);
+            // A new belongsTo column carries its FOREIGN KEY inline (SQLite
+            // allows REFERENCES on ADD COLUMN; the column must default to NULL
+            // when foreign keys are enforced, which schema.js ensures).
+            if (table.__fkRef) def += this.columnReferencesClause(table.__fkRef);
             return `ALTER TABLE ${table.tableName}
         ADD COLUMN ${def}`;
         }
@@ -195,6 +199,12 @@ class migrationSQLiteQuery {
             }
         }
 
+        // FOREIGN KEY constraints (resolved by schema.js into table.__foreignKeys).
+        // SQLite cannot ADD CONSTRAINT after the fact, so they must be inline.
+        for (const fk of (table.__foreignKeys || [])) {
+            queryVar += `${this.foreignKeyClause(fk)}, `;
+        }
+
         return `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
@@ -228,6 +238,21 @@ class migrationSQLiteQuery {
     renameColumn(table){
         return `ALTER TABLE ${table.tableName} RENAME COLUMN ${table.name} TO ${table.newName}`
     }
+
+    /** Table-level FOREIGN KEY clause (inline in CREATE TABLE). */
+    foreignKeyClause(fk){
+        return `CONSTRAINT [${fk.name}] FOREIGN KEY ([${fk.column}]) REFERENCES [${fk.refTable}]([${fk.refColumn}]) ON DELETE ${fk.onDelete || 'CASCADE'}`;
+    }
+
+    /** Column-level REFERENCES clause (SQLite allows it on ADD COLUMN). */
+    columnReferencesClause(fk){
+        return ` REFERENCES [${fk.refTable}]([${fk.refColumn}]) ON DELETE ${fk.onDelete || 'CASCADE'}`;
+    }
+
+    // SQLite has no ALTER TABLE ... ADD/DROP CONSTRAINT: constraints live in
+    // CREATE TABLE (inline above) or via a table rebuild (schema.syncTable).
+    addForeignKey(_fk){ return null; }
+    dropForeignKey(_fk){ return null; }
 
     createIndex(indexInfo){
         const indexName = indexInfo.indexName === true

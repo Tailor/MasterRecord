@@ -124,6 +124,64 @@ class Migrations{
             return tables;
     }
 
+    // Flag POSSIBLE column renames. Like EF Core, the differ does NOT silently
+    // turn a drop+add into a rename — it cannot know whether `title` became
+    // `headline` or `title` was dropped and an unrelated `headline` added, and
+    // guessing wrong would move the old column's data under the new name. EF
+    // scaffolds dropColumn + addColumn and tells you to review and change it to
+    // RenameColumn; we do the same, but make the review easy: when exactly ONE
+    // deleted column and ONE new column share an identical definition signature,
+    // the generated migration carries an advisory comment with the exact
+    // renameColumn(...) call to use instead (and add-migration prints a warning).
+    #findRenamedColumns(tables){
+        const columnByName = (schema, name) => {
+            for (const key of Object.keys(schema || {})) {
+                const c = schema[key];
+                if (c && typeof c === 'object' && c.name === name) return c;
+            }
+            return null;
+        };
+        const signature = (c) => JSON.stringify({
+            type: c.type, nullable: !!c.nullable, unique: !!c.unique,
+            primary: !!c.primary, auto: !!c.auto,
+            default: c.default === undefined ? null : c.default,
+            relationshipType: c.relationshipType || null,
+            foreignTable: c.foreignTable || null, foreignKey: c.foreignKey || null,
+        });
+        tables.forEach(function (item) {
+            item.possibleRenames = item.possibleRenames || [];
+            if (!item.deletedColumns || !item.newColumns) return;
+            if (item.deletedColumns.length === 0 || item.newColumns.length === 0) return;
+            if (item.newTables && item.newTables.length > 0) return;
+
+            const bySigOld = new Map(), bySigNew = new Map();
+            for (const name of item.deletedColumns) {
+                const c = columnByName(item.old, name); if (!c) continue;
+                const s = signature(c); if (!bySigOld.has(s)) bySigOld.set(s, []); bySigOld.get(s).push(name);
+            }
+            for (const name of item.newColumns) {
+                const c = columnByName(item.new, name); if (!c) continue;
+                const s = signature(c); if (!bySigNew.has(s)) bySigNew.set(s, []); bySigNew.get(s).push(name);
+            }
+            for (const [s, olds] of bySigOld) {
+                const news = bySigNew.get(s);
+                if (!news || olds.length !== 1 || news.length !== 1) continue;   // ambiguous -> no advisory
+                item.possibleRenames.push({ from: olds[0], to: news[0] });
+            }
+            if (item.possibleRenames.length && process.env.MR_SILENT_MIGRATIONS !== 'true') {
+                for (const r of item.possibleRenames) {
+                    console.warn(
+                        `[masterrecord:add-migration] ${item.name}: '${r.from}' was removed and '${r.to}' was added with the same definition. ` +
+                        `If this is a RENAME, edit the generated migration: replace the dropColumn/addColumn pair with ` +
+                        `await this.renameColumn({ tableName: '${item.name}', name: '${r.from}', newName: '${r.to}' }) ` +
+                        `(drop + add would DESTROY the column's data).`
+                    );
+                }
+            }
+        });
+        return tables;
+    }
+
     #findUpdatedColumns(tables){
 
 
@@ -207,6 +265,7 @@ class Migrations{
         tables = this.#findNewTables(tables);
         tables = this.#findNewColumns(tables);
         tables = this.#findDeletedColumns(tables);
+        tables = this.#findRenamedColumns(tables);
         tables = this.#findUpdatedColumns(tables);
         tables = this.#findNewIndexes(tables);
         tables = this.#findDeletedIndexes(tables);
@@ -619,6 +678,14 @@ class Migrations{
             item.newTables.forEach(function (_column, _ind) {
                 MT.createTable("up", item.name);
                 MT.dropTable("down", item.name);
+            });
+
+            // Possible renames: like EF, emit drop + add (below) but flag the
+            // likely rename in the migration so the developer can swap in the
+            // data-preserving renameColumn call before applying.
+            (item.possibleRenames || []).forEach(function (r) {
+                MT.renameAdvisory("up",   { tableName: item.name, name: r.from, newName: r.to });
+                MT.renameAdvisory("down", { tableName: item.name, name: r.to,   newName: r.from });
             });
 
             // Add new columns. Bake the FULL column spec into the generated

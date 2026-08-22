@@ -260,6 +260,17 @@ class schema{
             }
         }
 
+        // A new belongsTo column gets a FOREIGN KEY constraint (unless the
+        // relationship is excluded from migrations). SQLite: inline REFERENCES
+        // on ADD COLUMN (SQLite requires the new column to default to NULL when
+        // foreign keys are enforced, so an inline FK is only emitted for a
+        // nullable/defaulted column). MySQL/Postgres: ADD CONSTRAINT after the
+        // column, now or deferred to finalize().
+        const fkRef = this._fkRefFor(table, table.tableName);
+        if (fkRef && this.context.isSQLite && (table.nullable === true || (table.default !== undefined && table.default !== null))) {
+            Object.defineProperty(table, '__fkRef', { value: fkRef, enumerable: false, writable: true, configurable: true });
+        }
+
         if(this.context.isSQLite){
                                 var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.addColum(table);
@@ -278,6 +289,9 @@ class schema{
                 await this.context._execute(query);
             }
 
+        if (fkRef && !this.context.isSQLite) {
+            await this._addForeignKeyNowOrDefer(fkRef);
+        }
         // add column to database
     }
 
@@ -344,6 +358,17 @@ class schema{
             if(this.context._SQLEngine.tableExists && await this.context._SQLEngine.tableExists(tableName)){
                 await this.syncTable(table);
             } else {
+                // Resolve FOREIGN KEY constraints for this table's belongsTo
+                // columns (EF always creates FK constraints for relationships).
+                // SQLite: emitted inline in CREATE TABLE (it cannot ADD
+                // CONSTRAINT later). MySQL/Postgres: added AFTER the table via
+                // ALTER TABLE ... ADD CONSTRAINT — immediately if the referenced
+                // table already exists, otherwise deferred to finalize() (run at
+                // the end of the migration) so table creation order and cycles
+                // never matter.
+                const foreignKeys = this._foreignKeysFor(table);
+                Object.defineProperty(table, '__foreignKeys', { value: foreignKeys, enumerable: false, writable: true, configurable: true });
+
                 if(this.context.isSQLite){
                                         var queryBuilder = new sqliteQuery();
                     var query = queryBuilder.createTable(table);
@@ -360,6 +385,25 @@ class schema{
                                         var queryBuilder = new postgresQuery();
                     var query = queryBuilder.createTable(table);
                     await this.context._execute(query);
+                }
+
+                if(!this.context.isSQLite){
+                    for(const fk of foreignKeys){
+                        await this._addForeignKeyNowOrDefer(fk);
+                    }
+                }
+                // EF creates an index on every FK column. MySQL does this
+                // automatically for FK constraints; SQLite/Postgres do not.
+                if(!this.context.isMySQL){
+                    for(const fk of foreignKeys){
+                        try {
+                            await this.createIndex({ tableName, columnName: fk.column, indexName: `ix_${tableName}_${fk.column}` });
+                        } catch (e) {
+                            if(process.env.MR_SILENT_MIGRATIONS !== 'true'){
+                                console.log(`[masterrecord:migration] could not create FK index on ${tableName}.${fk.column}: ${e.message}`);
+                            }
+                        }
+                    }
                 }
 
                 // Create indexes for columns that have .index() defined
@@ -599,6 +643,8 @@ class schema{
 
             await this.context._execute(queryBuilder.renameTable({ tableName, newName: TEMP }));
             try {
+                // The rebuilt table must keep its FOREIGN KEY constraints.
+                Object.defineProperty(table, '__foreignKeys', { value: this._foreignKeysFor(table), enumerable: false, writable: true, configurable: true });
                 await this.context._execute(queryBuilder.createTable(table));
 
                 const oldInfo = await engine.getTableInfo(TEMP);
@@ -715,7 +761,11 @@ class schema{
     }
 
     async renameColumn(table){
+        await this._ensureReady();
         if(table){
+            if(!table.tableName || !table.name || !table.newName){
+                throw new Error(`masterrecord: renameColumn requires { tableName, name, newName }, got ${JSON.stringify(table)}`);
+            }
             if(this.context.isSQLite){
                                 var queryBuilder = new sqliteQuery();
                 var query = queryBuilder.renameColumn(table);
@@ -733,6 +783,121 @@ class schema{
                 var query = queryBuilder.renameColumn(table);
                 await this.context._execute(query);
             }
+        }
+    }
+
+    /** Rename a table: `{ tableName, newName }` (data-preserving). */
+    async renameTable(spec){
+        await this._ensureReady();
+        if(!spec || !spec.tableName || !spec.newName){
+            throw new Error(`masterrecord: renameTable requires { tableName, newName }, got ${JSON.stringify(spec)}`);
+        }
+        const builder = this.context.isSQLite ? new sqliteQuery() : this.context.isMySQL ? new sqlquery() : new postgresQuery();
+        await this.context._execute(builder.renameTable(spec));
+    }
+
+    // ---- Foreign keys (EF always creates FK constraints for relationships) ----
+
+    /** Primary-key column name of the entity that owns table `name` (default 'id'). */
+    _primaryKeyOf(name){
+        const ents = (this.context && this.context.__entities) || [];
+        const ent = ents.find(e => e && e.__name === name);
+        if(ent){
+            for(const key of Object.keys(ent)){
+                const f = ent[key];
+                if(f && typeof f === 'object' && f.primary === true) return f.name || key;
+            }
+        }
+        return 'id';
+    }
+
+    /**
+     * FK descriptor for ONE belongsTo column (or null): { tableName, column,
+     * refTable, refColumn, onDelete, name }. Honors `onDelete(...)`,
+     * `stopCascadeOnDelete()` (→ SET NULL if nullable else RESTRICT) and
+     * `excludeForeignKeyFromMigrations()`.
+     */
+    _fkRefFor(col, tableName){
+        if(!col || typeof col !== 'object') return null;
+        if(col.relationshipType !== 'belongsTo' || !col.foreignTable) return null;
+        if(col.fkConstraint === false) return null;
+        const column = col.foreignKey || col.name;
+        const refTable = col.foreignTable;
+        const refColumn = this._primaryKeyOf(refTable);
+        let onDelete = col.onDelete;
+        if(!onDelete){
+            onDelete = (col.cascadeOnDelete === false) ? (col.nullable ? 'SET NULL' : 'RESTRICT') : 'CASCADE';
+        }
+        return { tableName, column, refTable, refColumn, onDelete, name: `fk_${tableName}_${column}` };
+    }
+
+    /** All FK descriptors for a table definition. */
+    _foreignKeysFor(table){
+        const out = [];
+        if(!table) return out;
+        for(const key of Object.keys(table)){
+            if(key === 'indexes' || key.startsWith('__')) continue;
+            const fk = this._fkRefFor(table[key], table.__name);
+            if(fk) out.push(fk);
+        }
+        return out;
+    }
+
+    /** ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY (MySQL/Postgres; SQLite needs a rebuild). */
+    async addForeignKey(fk){
+        await this._ensureReady();
+        if(this.context.isSQLite){
+            throw new Error('masterrecord: SQLite cannot add a FOREIGN KEY to an existing table (no ADD CONSTRAINT). Declare it on the entity and let createTable/syncTable emit it inline.');
+        }
+        const builder = this.context.isMySQL ? new sqlquery() : new postgresQuery();
+        await this.context._execute(builder.addForeignKey(fk), undefined, { migration: true });
+    }
+
+    /** Drop a FOREIGN KEY constraint by name (MySQL/Postgres). */
+    async dropForeignKey(fk){
+        await this._ensureReady();
+        if(this.context.isSQLite){
+            throw new Error('masterrecord: SQLite cannot drop a FOREIGN KEY from an existing table (no DROP CONSTRAINT); remove it from the entity and rebuild via syncTable.');
+        }
+        const builder = this.context.isMySQL ? new sqlquery() : new postgresQuery();
+        await this.context._execute(builder.dropForeignKey(fk));
+    }
+
+    /** Add the FK now if the referenced table exists, else defer to finalize(). */
+    async _addForeignKeyNowOrDefer(fk){
+        const eng = this.context._SQLEngine;
+        const refExists = eng && typeof eng.tableExists === 'function' ? await eng.tableExists(fk.refTable) : true;
+        if(refExists){
+            await this.addForeignKey(fk);
+        } else {
+            this._pendingForeignKeys = this._pendingForeignKeys || [];
+            this._pendingForeignKeys.push(fk);
+        }
+    }
+
+    /**
+     * Flush deferred FOREIGN KEY constraints. Called by the CLI after a
+     * migration's up()/down() has run, so constraints whose referenced table
+     * was created later in the same migration are added once both exist.
+     * Throws if a referenced table still does not exist (a real model error).
+     */
+    async finalize(){
+        const pending = this._pendingForeignKeys || [];
+        this._pendingForeignKeys = [];
+        if(pending.length === 0) return;
+        const eng = this.context._SQLEngine;
+        const missing = [];
+        for(const fk of pending){
+            const refExists = eng && typeof eng.tableExists === 'function' ? await eng.tableExists(fk.refTable) : true;
+            if(refExists) await this.addForeignKey(fk);
+            else missing.push(fk);
+        }
+        if(missing.length){
+            throw new Error(
+                `masterrecord: cannot create FOREIGN KEY constraint(s) — referenced table(s) do not exist: ` +
+                missing.map(m => `${m.tableName}.${m.column} -> ${m.refTable}(${m.refColumn})`).join(', ') +
+                `. Create the referenced table first, or mark the relationship .excludeForeignKeyFromMigrations().`
+            );
         }
     }
 

@@ -240,6 +240,15 @@ class migrationPostgresQuery {
         return `DROP TABLE IF EXISTS "${name}"`;
     }
 
+    /** FOREIGN KEY constraint added after both tables exist. */
+    addForeignKey(fk){
+        return `ALTER TABLE "${fk.tableName}" ADD CONSTRAINT "${fk.name}" FOREIGN KEY ("${fk.column}") REFERENCES "${fk.refTable}" ("${fk.refColumn}") ON DELETE ${fk.onDelete || 'CASCADE'}`;
+    }
+
+    dropForeignKey(fk){
+        return `ALTER TABLE "${fk.tableName}" DROP CONSTRAINT IF EXISTS "${fk.name}"`;
+    }
+
     renameTable(table){
         return `ALTER TABLE "${table.tableName}" RENAME TO "${table.newName}"`;
     }

@@ -344,6 +344,34 @@ class EntityModel {
         return this
     }
 
+    /**
+     * Referential action for this belongsTo's FOREIGN KEY constraint (EF Core's
+     * OnDelete(DeleteBehavior.*)): 'cascade' | 'restrict' | 'setNull' | 'noAction'.
+     * Default: CASCADE when cascadeOnDelete is on (the default), otherwise
+     * SET NULL for a nullable column or RESTRICT for a required one.
+     */
+    onDelete(behavior){
+        const map = { cascade: 'CASCADE', restrict: 'RESTRICT', setnull: 'SET NULL', 'set null': 'SET NULL', noaction: 'NO ACTION', 'no action': 'NO ACTION' };
+        const key = String(behavior || '').toLowerCase();
+        if (!map[key]) {
+            throw new Error(`masterrecord: onDelete expects 'cascade' | 'restrict' | 'setNull' | 'noAction', got ${JSON.stringify(behavior)}`);
+        }
+        this.obj.onDelete = map[key];
+        this.obj.cascadeOnDelete = map[key] === 'CASCADE';
+        return this;
+    }
+
+    /**
+     * Keep the relationship in the ORM (queries, includes, change tracking) but
+     * do NOT create a FOREIGN KEY constraint in the database (EF Core 11's
+     * ExcludeForeignKeyFromMigrations). For legacy databases without
+     * constraints or data-sync scenarios where constraint order conflicts.
+     */
+    excludeForeignKeyFromMigrations(){
+        this.obj.fkConstraint = false;
+        return this;
+    }
+
     foreignTable(foreignTable){
         this.obj.foreignTable = foreignTable;
         this.obj.nullable = false;

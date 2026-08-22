@@ -6,6 +6,8 @@ MasterRecord has deliberately adopted EF Core's architecture for change tracking
 
 ---
 
+> **Status (Aug 2026):** Tier 1 #1 (optimistic concurrency + rows-affected check) and #2 (explicit transactions) shipped in **1.6.0**; FK constraint DDL + honored cascade behaviors + rename advisories shipped in **1.7.0**. Remaining items are tracked below in their original ranking.
+
 ## Tier 1 — Production correctness / safety (do first)
 
 These are the gaps where EF provides a guarantee MasterRecord currently lacks, and where the absence can cause **silent data loss or corruption**.
@@ -98,7 +100,7 @@ A second, exhaustive pass over the code surfaced items the targeted check missed
 - **`stopCascadeOnDelete()` is a no-op.** `cascadeOnDelete` is read nowhere outside `entityModel.js` (the builders only mention it in a doc-comment example); `deleteManager.js:48-106` cascades purely by relationship type into *loaded* values and never consults the flag. Once FK DDL exists, map this to EF's `OnDelete(Cascade|Restrict|SetNull|NoAction)` and honor it in both DDL and the in-process cascade.
 - **Lazy-loaded navigation properties return an un-awaited Promise.** The lazy getters call `.single()`/`.toList()` without `await` and assign the result (`entityTrackerModel.js:573,634`), so `post.author` is a `Promise`, not an entity; the SQL is also hand-built SQLite-shaped string interpolation (`TODO` at `:563,595`). EF's lazy loading is proxy-based and synchronous-looking by design. **Do:** either make lazy loading an explicit `await entity.load('author')` (EF explicit loading) and remove the broken auto-getter, or keep it off by default — today it is *on* by default (`entityModel.js:43`).
 - **`RedisQueryCache` is broken in the query path.** Its `get`/`set` are `async`, but the read path calls `_queryCache.get(cacheKey)` without `await` and tests truthiness (`queryMethods.js:548,604`) — a Promise is always truthy, so `.cache()` returns a Promise-of-entity. The readme (`:1151-1165`) tells users to swap it in. **Do:** `await` the cache in the read path (the in-memory cache stays sync-compatible), or drop the Redis cache until it is wired.
-- **A column/table rename is diffed as drop + add.** `renameTable` exists on the SQLite builder (`migrationSQLiteQuery.js:224`) but `schema.js` has no wrapper and the differ never emits rename — a renamed column in a generated migration is `dropColumn` + `addColumn`, i.e. **data loss on apply**. EF's `migrations add` detects renames (with `RenameColumn`). **Do:** detect renames in the differ (name change with identical type/constraints → `renameColumn`/`renameTable`) and prompt/flag ambiguous cases.
+- **A column/table rename is diffed as drop + add.** `renameTable` exists on the SQLite builder (`migrationSQLiteQuery.js:224`) but `schema.js` has no wrapper and the differ never emits rename — a renamed column in a generated migration is `dropColumn` + `addColumn`, i.e. **data loss on apply**. _Correction:_ EF Core's differ deliberately does **not** auto-detect renames either (it scaffolds drop+add and tells you to review/change to `RenameColumn`, because a guess can move data under the wrong name). **Done in 1.7.0 (EF-faithful):** drop+add is still emitted, but the generated migration carries a `// POSSIBLE RENAME` advisory with the exact `renameColumn(...)` call when one removed and one added column share a definition; `schema.renameTable` added.
 - **Index create/drop are generated up-only** (`migrations.js:649-663`) — no `down()` for indexes, so rollback leaves indexes behind.
 
 ### API / docs integrity

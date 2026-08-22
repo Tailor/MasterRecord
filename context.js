@@ -446,6 +446,12 @@ class context {
             // Create database connection with validated path
             const db = new Database(dbAddress, env);
             db.__name = sqlName;
+            // Enforce FOREIGN KEY constraints (off by default in SQLite, per
+            // connection). Without this, the FK clauses migrations now emit
+            // would be inert. Set MR_SQLITE_FOREIGN_KEYS=off to opt out.
+            if (process.env.MR_SQLITE_FOREIGN_KEYS !== 'off') {
+                try { db.pragma('foreign_keys = ON'); } catch (_) { /* older driver */ }
+            }
             this._SQLEngine = new SQLLiteEngine();
 
             return db;

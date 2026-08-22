@@ -253,6 +253,15 @@ class migrationMySQLQuery {
         return `ALTER TABLE \`${table.tableName}\` RENAME COLUMN \`${table.name}\` TO \`${table.newName}\``
     }
 
+    /** FOREIGN KEY constraint added after both tables exist (MySQL auto-indexes the FK column). */
+    addForeignKey(fk){
+        return `ALTER TABLE \`${fk.tableName}\` ADD CONSTRAINT \`${fk.name}\` FOREIGN KEY (\`${fk.column}\`) REFERENCES \`${fk.refTable}\` (\`${fk.refColumn}\`) ON DELETE ${fk.onDelete || 'CASCADE'}`;
+    }
+
+    dropForeignKey(fk){
+        return `ALTER TABLE \`${fk.tableName}\` DROP FOREIGN KEY \`${fk.name}\``;
+    }
+
     createIndex(indexInfo){
         // MySQL has no partial/filtered indexes — fail loudly rather than
         // silently emit a non-filtered index (which would enforce the wrong

@@ -54,6 +54,30 @@ export default ${this.name};
         }
     }
 
+    // Emit a data-preserving renameColumn call.
+    renameColumn(type, spec){
+        if(!spec || !spec.tableName || !spec.name || !spec.newName){ return; }
+        const stmt = `     await this.renameColumn(${JSON.stringify(spec)});`;
+        if(type === "up"){ this.#up += os.EOL + stmt; }
+        else{ this.#down += os.EOL + stmt; }
+    }
+
+    // Like EF Core, a possible rename is NOT applied automatically (the differ
+    // can't know a rename from an unrelated drop + add). Emit an advisory
+    // comment with the exact renameColumn call so the developer can replace
+    // the dropColumn/addColumn pair before applying — drop + add destroys data.
+    renameAdvisory(type, spec){
+        if(!spec || !spec.tableName || !spec.name || !spec.newName){ return; }
+        const lines = [
+            `     // POSSIBLE RENAME: '${spec.name}' -> '${spec.newName}' on ${spec.tableName} (same definition).`,
+            `     // If this is a rename, DELETE the dropColumn/addColumn pair for these columns below and use instead:`,
+            `     //   await this.renameColumn(${JSON.stringify(spec)});`,
+            `     // (dropColumn + addColumn would DESTROY the column's data.)`,
+        ].join(os.EOL);
+        if(type === "up"){ this.#up += os.EOL + lines; }
+        else{ this.#down += os.EOL + lines; }
+    }
+
     // A column statement needs a column name to produce valid DDL. When the
     // diff can't resolve one (e.g. a phantom column from a metadata key), the
     // spec is `{tableName}` with no `name` — emitting it would bake a malformed

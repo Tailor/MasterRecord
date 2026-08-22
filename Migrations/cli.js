@@ -595,6 +595,7 @@ program.option('-V', 'output the version');
              const MigrationCtor = await __loadUserModule(mFile);
              const instance = new MigrationCtor(ContextCtor);
              await instance.up(tableObj);
+             if (typeof instance.finalize === 'function') await instance.finalize();
              await __recordMigrationApplied(contextInstance, migrationName);
              console.log(`    ✓ applied`);
            } catch (err) {
@@ -745,6 +746,7 @@ program.option('-V', 'output the version');
        const migInstance = new MigCtor(ContextCtor);
        if(typeof migInstance.down === 'function'){
          await migInstance.down(tableObj);
+         if (typeof migInstance.finalize === 'function') await migInstance.finalize();
          await __removeMigrationApplied(contextInstance, rollbackName);
        }else{
          console.log(`Warning - Migration '${rollbackName}' has no down method; skipping.`);
@@ -847,6 +849,7 @@ program.option('-V', 'output the version');
             const newMigrationProjectInstance = new migrationProjectFile(ContextCtor);
             const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
             await newMigrationProjectInstance.up(tableObj);
+            if (typeof newMigrationProjectInstance.finalize === 'function') await newMigrationProjectInstance.finalize();
          }
          const snap = {
                file : contextAbs,
@@ -1004,6 +1007,7 @@ program.option('-V', 'output the version');
         const migInstance = new MigCtor(ContextCtor);
         if(typeof migInstance.down === 'function'){
           await migInstance.down(tableObj);
+         if (typeof migInstance.finalize === 'function') await migInstance.finalize();
         } else {
           console.log(`Warning - Migration '${path.basename(migFile)}' has no down method; skipping.`);
         }
@@ -1235,6 +1239,7 @@ program.option('-V', 'output the version');
               const MigrationCtor = await __loadUserModule(mFile);
               const inst = new MigrationCtor(ContextCtor);
               await inst.up(tableObj);
+              if (typeof inst.finalize === 'function') await inst.finalize();
               await __recordMigrationApplied(contextInstance, migrationName);
               appliedCount++;
               // Release the migration's own context (opened by its schema
