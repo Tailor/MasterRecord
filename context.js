@@ -2631,6 +2631,13 @@ class context {
      * db.close();  // Close connections
      */
     async close() {
+        // Release the change tracker (EF's Dispose clears the ChangeTracker):
+        // detach every tracked entity and drop the dirty index so a request-
+        // scoped context frees all its entities immediately on close, instead of
+        // only when the context object itself is garbage-collected. This is what
+        // makes scoped contexts the bounded-memory answer.
+        this.__clearTracked();
+
         // Deregister from the live-context registry so it stops appearing in
         // cross-context checks and doesn't linger until GC.
         //

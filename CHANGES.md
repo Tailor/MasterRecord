@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.5.15 — close() releases the change tracker (EF Dispose parity for request-scoped contexts)
+
+EF Core's bounded-memory model is a short-lived, request-scoped `DbContext` that is **disposed** per unit of work — disposal releases the whole `ChangeTracker`. masterrecord's `close()` did everything *except* that: it dropped the live-context registration and the connection-pool ref, but left the tracked-entity map and dirty index populated, so a scoped context only freed its entities when the context object itself was GC'd.
+
+`close()` now calls `__clearTracked()` first — detaching every tracked entity and clearing the dirty index — so a request-scoped context frees all its entities immediately on close. This makes request-scoped contexts the clean, EF-faithful bounded-memory answer: `new AppContext()` per request → work → `await ctx.close()`.
+
+No new API; behavior only. Full suite green (0 fail, 309 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.14 — context-level query tracking behavior (EF's QueryTrackingBehavior) + asTracking()
 
 The remaining memory issue: on a long-lived/singleton context, tracked entities are held with **strong references** for the life of the context, so read-only queries that track their results grow the tracked set without bound. `asNoTracking()` (1.5.13) bounds it only per call site.
