@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.16.0 — many-to-many skip navigations (EF Core 5+ `HasMany().WithMany()`) + collection Add/Remove
+
+- **`db.manyToMany('Tag')`**: the context **synthesizes the implicit join entity** (EF convention: the two entity names in alphabetical order, e.g. `PostTag`) with an auto primary key, `belongsTo()` to both sides (`post_id`, `tag_id`, FK constraints with ON DELETE CASCADE) and a **unique composite index** — registered through `dbset()` so table prefix, FK type resolution, migrations/snapshot, `ctx.PostTag` and the query builders all see it. Declaring the navigation on both sides maps to the same join entity. Options: `{ through, foreignKey, otherKey }` (self-referencing must pass both keys, as EF names them after the navigations).
+- **Insert:** `post.tags = [tagEntity, tagId, { label: 'new' }]` — persisted targets are linked by key, **new targets are inserted first** (EF cascade insert), then one join row per element.
+- **Load:** `await post.tags`, `ctx.entry(post).collection('tags').load()`, reverse side `await tag.posts` — join → targets, parameterized, every engine.
+- **Collections have EF's `add()` / `remove()`** (non-enumerable, JSON-safe) on loaded `hasMany` and `hasManyThrough`/`manyToMany` navigations, plus `ctx.entry(e).collection(nav)` (`load`, `isLoaded`, `add`, `remove`) and `ctx.entry(e).reference(nav)` (`load`, `isLoaded`) — EF's `Entry(e).Collection(n)` / `Reference(n)`. `add()` tracks a join row (or sets the child's FK; new targets/children are added to the tracker), `remove()` schedules the join row for DELETE (or NULLs a nullable FK / deletes an orphan of a required relationship, like EF); nothing hits the database until `saveChanges()`. Duplicate links fail at save on the unique index (EF throws too). Low-level: `ctx.linkNavigation(owner, nav, item)` / `ctx.unlinkNavigation(owner, nav, item)`.
+- Explicit `hasManyThrough` navigations gain the same collection API; `_joinSides()` resolves both FK sides (explicit keys first, then by table).
+
+New tests: `test/many-to-many.test.js` (synthesis once for both sides + model/migrations visibility; insert by entity/id/new object; lazy + explicit load both ways; add/remove incl. new target; duplicate rejected; cascade delete of join rows only; hasMany collection add/remove with nullable FK).
+
 ## v1.15.0 — health checks on every engine + `remove-migration` (EF `migrations remove`)
 
 - **`await context.healthCheck()`** → `{ healthy, engine, latencyMs, version, … }` on SQLite, MySQL and Postgres (pool counters / server time where the driver exposes them); **never throws** — on failure `{ healthy: false, engine, error }`. **`await context.canConnect()`** (EF `Database.CanConnect()`). Previously only the Postgres sync-connect helper had a health check.

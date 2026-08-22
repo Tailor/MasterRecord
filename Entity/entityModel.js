@@ -359,6 +359,46 @@ class EntityModel {
         return this;
     }
 
+    /**
+     * Many-to-many with an IMPLICIT join entity — Entity Framework Core 5+ skip
+     * navigations (`HasMany(p => p.Tags).WithMany(t => t.Posts)`).
+     *
+     * The context synthesizes the join entity (named by the two entity names in
+     * alphabetical order, e.g. `PostTag`) with an auto primary key, `belongsTo()`
+     * to both sides (`post_id`, `tag_id`, ON DELETE CASCADE) and a unique
+     * composite index, so migrations create it and loading / inserting /
+     * `collection.add()`/`remove()` go through it. Declaring the navigation on
+     * both sides is optional and maps to the same join entity.
+     *
+     * @param {string} foreignTable  the other entity, e.g. 'Tag'
+     * @param {{through?: string, foreignKey?: string, otherKey?: string}} [opts]
+     *        through: join entity name; foreignKey: this side's FK column in the
+     *        join (default `<this>_id`); otherKey: the other side's (default `<other>_id`).
+     *        Self-referencing many-to-many must pass both keys.
+     * @example tags(db){ db.manyToMany('Tag'); }          // on Post
+     *          posts(db){ db.manyToMany('Post'); }        // on Tag (optional)
+     */
+    manyToMany(foreignTable, opts = {}){
+        if (typeof foreignTable !== 'string' || !foreignTable.trim()) throw new Error('masterrecord: manyToMany(target) requires the target entity name.');
+        const owner = this.obj.name;                       // during model build this is the declaring entity's name
+        const target = foreignTable.trim();
+        const selfRef = owner === target;
+        if (selfRef && !(opts.foreignKey && opts.otherKey)) {
+            throw new Error(`masterrecord: self-referencing manyToMany('${target}') must pass { foreignKey, otherKey } (EF names them after the navigations, e.g. followers_id / following_id).`);
+        }
+        const [a, b] = [owner, target].sort();
+        this.obj.type = "hasManyThrough";
+        this.obj.relationshipType = "hasManyThrough";
+        this.obj.isNavigational = true;
+        this.obj.implicitJoin = true;
+        this.obj.foreignTable = opts.through || `${a}${b}`;              // the join entity
+        this.obj.targetTable = target;                                    // the other side
+        this.obj.joinForeignKey = opts.foreignKey || `${owner.toLowerCase()}_id`;
+        this.obj.joinOtherKey = opts.otherKey || `${target.toLowerCase()}_id`;
+        this.obj.foreignKey = this.obj.joinForeignKey;
+        return this;
+    }
+
     // will get info
     belongsTo(foreignTable, foreignKey){
 

@@ -57,6 +57,7 @@ If you set a `no-track` default on a shared/long-lived context, remember every w
 | `await ctx.entry(e).load('nav')` / `ctx.loadNavigation(e, 'nav')` | `Entry(e).Reference(n).Load()` / `Collection(n).Load()` | Explicit loading of a navigation on any engine (parameterized). `entry(e).isLoaded('nav')`. |
 | `await post.author` (lazy) | lazy-loading proxies | An unloaded navigation returns a Promise that loads it once and caches it; loaded navigations read synchronously. `lazyLoadingOff()` → `null` until loaded explicitly. |
 | `post.author = anAuthor` / `post.author_id = id` | relationship fix-up | Assigning a parent sets the FK and marks dirty; changing the FK invalidates a loaded parent. Engines persist the **key**, never the navigation object. |
+| `(await post.tags).add(tag)` / `.remove(tag)`, `ctx.entry(post).collection('tags')` | `Collection(n).Add/Remove` | `db.manyToMany('Tag')` synthesizes the join entity (EF skip navigation); add tracks a join row (new targets inserted first), remove schedules its DELETE; hasMany add sets the child FK. Persisted by `saveChanges()`. |
 
 `clearChangeTracker()` drops pending changes, so on a shared context it can destroy another in-flight request's writes — it is not a safe per-request mitigation. Use request-scoped contexts or `asNoTracking()` instead.
 

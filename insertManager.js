@@ -293,6 +293,14 @@ class InsertManager {
             );
         }
 
+        // EF 5+ skip navigation (manyToMany): the array holds TARGET entities
+        // (or their keys), not join rows — insert new targets first, then one
+        // join row per element.
+        if (entityProperty.implicitJoin) {
+            await this._processImplicitManyToMany(propertyModel, entityProperty, property, currentModel, SQL);
+            return;
+        }
+
         const propertyKeys = Object.keys(propertyModel);
         for (const propertykey of propertyKeys) {
             if (!propertyModel[propertykey]) {
@@ -336,6 +344,53 @@ class InsertManager {
      * @param {string} targetName - Target entity name
      * @returns {object|null} Resolved entity or null
      */
+    /**
+     * manyToMany() on insert: `post.tags = [tagEntity, tagId, { label: 'new' }]`.
+     * Persisted targets are referenced by key; new ones are inserted first
+     * (EF cascade insert); then a join row per element.
+     * @private
+     */
+    async _processImplicitManyToMany(propertyModel, entityProperty, property, currentModel, SQL) {
+        const joinDef = this._resolveEntityWithFallback(property, entityProperty.foreignTable);
+        const targetDef = this._resolveEntityWithFallback(property, entityProperty.targetTable);
+        if (!joinDef || !targetDef) {
+            throw new RelationshipError(
+                `manyToMany '${property}': join entity '${entityProperty.foreignTable}' or target '${entityProperty.targetTable}' is not registered on the context.`,
+                property, { joinTable: entityProperty.foreignTable, target: entityProperty.targetTable }
+            );
+        }
+        const isBt = (c) => c && typeof c === 'object' && c.relationshipType === 'belongsTo';
+        const toThisField = Object.keys(joinDef).find(k => !k.startsWith('__') && isBt(joinDef[k]) && joinDef[k].foreignKey === entityProperty.joinForeignKey);
+        const toTargetField = Object.keys(joinDef).find(k => !k.startsWith('__') && isBt(joinDef[k]) && joinDef[k].foreignKey === entityProperty.joinOtherKey);
+        if (!toThisField || !toTargetField) {
+            throw new RelationshipError(`manyToMany '${property}': join entity '${joinDef.__name}' lacks belongsTo fields for '${entityProperty.joinForeignKey}' / '${entityProperty.joinOtherKey}'.`, property, {});
+        }
+        const ownerPkName = tools.getPrimaryKeyObject(currentModel.__entity);
+        const ownerKeyRaw = tools.dataValue(currentModel, ownerPkName);
+        const ownerKey = (ownerKeyRaw === undefined || ownerKeyRaw === null || typeof ownerKeyRaw === 'function') ? SQL.id : ownerKeyRaw;
+        const targetPkName = tools.getPrimaryKeyObject(targetDef);
+        for (const key of Object.keys(propertyModel)) {
+            const el = propertyModel[key];
+            if (el === undefined || el === null) continue;
+            let targetKey;
+            if (typeof el !== 'object') {
+                targetKey = el;
+            } else {
+                targetKey = tools.dataValue(el, targetPkName);
+                if (targetKey === undefined || targetKey === null || typeof targetKey === 'function') {
+                    el.__entity = targetDef;                 // new target: insert it first
+                    await this.runQueries(el);
+                    targetKey = tools.dataValue(el, targetPkName);
+                }
+            }
+            const row = {};
+            row[toThisField] = ownerKey;
+            row[toTargetField] = targetKey;
+            row.__entity = joinDef;
+            await this.runQueries(row);
+        }
+    }
+
     _resolveEntityWithFallback(property, targetName) {
         // Try: exact match → capitalized → property name
         return tools.getEntity(targetName, this._allEntities)

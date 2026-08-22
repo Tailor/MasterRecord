@@ -1456,6 +1456,10 @@ class context {
         // column's type from its parent's primary-key type. Idempotent.
         this.#resolveBelongsToTypes();
 
+        // EF 5+ skip navigations: materialize the implicit join entity for every
+        // manyToMany() declaration (idempotent; no-op while synthesizing).
+        this.#synthesizeJoinEntities();
+
         // Return chainable object with seed() / queryFilter() methods
         const chain = {
             seed: (data) => this.#addSeedData(tableName, data),
@@ -1463,6 +1467,167 @@ class context {
             queryFilter: (...a) => { this.queryFilter(tableName, ...a); return chain; },
         };
         return chain;
+    }
+
+    // ---- Implicit many-to-many join entities (EF Core 5+ skip navigations) ---
+
+    /**
+     * For each `manyToMany()` navigation whose join entity is not registered,
+     * synthesize it exactly as a user-written model would be: an auto PK,
+     * `belongsTo()` to both sides (FK constraints, ON DELETE CASCADE) and a
+     * unique composite index on the two FK columns. Registered through dbset()
+     * so table prefix, validation, FK type resolution, migrations and query
+     * builders all see it. Idempotent.
+     */
+    #synthesizeJoinEntities() {
+        if (this.__synthesizingJoins) return;
+        const prefix = (this.tablePrefix && typeof this.tablePrefix === 'string') ? this.tablePrefix : '';
+        const registered = (name) => this.__entities.some(e => e && (e.__name === name || e.__name === prefix + name));
+        for (const ent of [...this.__entities]) {
+            if (!ent) continue;
+            for (const key of Object.keys(ent)) {
+                const def = ent[key];
+                if (key.startsWith('__') || !def || typeof def !== 'object' || !def.implicitJoin) continue;
+                const joinName = def.foreignTable;
+                if (!joinName || registered(joinName)) continue;
+                const ownerName = (prefix && ent.__name.startsWith(prefix)) ? ent.__name.slice(prefix.length) : ent.__name;
+                const targetName = def.targetTable;
+                const fkOwner = def.joinForeignKey;
+                const fkTarget = def.joinOtherKey;
+                const ownerField = fkOwner.replace(/_id$/i, '') || ownerName.toLowerCase();
+                const targetField = fkTarget.replace(/_id$/i, '') || targetName.toLowerCase();
+                if (ownerField === targetField) {
+                    throw new Error(`masterrecord: manyToMany join '${joinName}' would have two identical fields '${ownerField}'; pass distinct { foreignKey, otherKey }.`);
+                }
+                const Join = { [joinName]: class { id(db) { db.integer().primary().auto(); } } }[joinName];
+                Object.defineProperty(Join.prototype, ownerField, { value: function(db) { db.belongsTo(ownerName, fkOwner); }, writable: true, configurable: true, enumerable: false });
+                Object.defineProperty(Join.prototype, targetField, { value: function(db) { db.belongsTo(targetName, fkTarget); }, writable: true, configurable: true, enumerable: false });
+                Join.compositeIndexes = [{ columns: [fkOwner, fkTarget], unique: true, name: `ux_${joinName.toLowerCase()}_${fkOwner}_${fkTarget}` }];
+                this.__synthesizingJoins = true;
+                try { this.dbset(Join); } finally { this.__synthesizingJoins = false; }
+                const joinDef = this.__entities.find(e => e && e.__name === prefix + joinName);
+                if (joinDef) Object.defineProperty(joinDef, '__implicitJoin', { value: true, enumerable: false, configurable: true });
+            }
+        }
+    }
+
+    /**
+     * Resolve the two sides of a hasManyThrough / manyToMany navigation:
+     * the join dbset and the join entity's belongsTo fields pointing at this
+     * entity and at the target.
+     */
+    _joinSides(ownerDef, def) {
+        const joinSet = this._dbsetByName(def.foreignTable);
+        if (!joinSet) throw new Error(`masterrecord: join entity '${def.foreignTable}' is not registered on this context.`);
+        const joinDef = joinSet.__entity;
+        const isBt = (c) => c && typeof c === 'object' && c.relationshipType === 'belongsTo';
+        const entries = Object.keys(joinDef).filter(k => !k.startsWith('__') && isBt(joinDef[k])).map(k => [k, joinDef[k]]);
+        const toThisEntry = def.joinForeignKey
+            ? entries.find(([, c]) => c.foreignKey === def.joinForeignKey)
+            : entries.find(([, c]) => c.foreignTable === ownerDef.__name);
+        const toTargetEntry = def.joinOtherKey
+            ? entries.find(([, c]) => c.foreignKey === def.joinOtherKey)
+            : entries.find(([, c]) => c.foreignTable !== ownerDef.__name);
+        if (!toThisEntry || !toTargetEntry) throw new Error(`masterrecord: join entity '${joinDef.__name}' must declare belongsTo() to both '${ownerDef.__name}' and the target entity.`);
+        const targetSet = this._dbsetByName(toTargetEntry[1].foreignTable);
+        if (!targetSet) throw new Error(`masterrecord: entity '${toTargetEntry[1].foreignTable}' is not registered on this context.`);
+        return { joinSet, joinDef, toThisField: toThisEntry[0], toThis: toThisEntry[1], toTargetField: toTargetEntry[0], toTarget: toTargetEntry[1], targetSet };
+    }
+
+    /**
+     * EF `entry.Collection(nav).Add(item)` semantics — link `item` to `owner`
+     * through a collection navigation so saveChanges() persists it:
+     *  - manyToMany / hasManyThrough: a join entity row is added to the tracker
+     *    (an untracked new target is added first, like EF's cascade insert);
+     *  - hasMany: the child's FK is set to the owner's key (the child is added
+     *    to the tracker if it is new).
+     * Synchronous; nothing hits the database until saveChanges().
+     */
+    linkNavigation(owner, field, item) {
+        if (!owner || !owner.__entity) throw new TypeError('masterrecord: linkNavigation(owner, field, item) expects a tracked owner entity.');
+        const def = owner.__entity[field];
+        if (!def || (def.type !== 'hasMany' && def.type !== 'hasManyThrough')) throw new Error(`masterrecord: '${field}' on ${owner.__entity.__name} is not a collection navigation.`);
+        if (item === undefined || item === null) throw new TypeError('masterrecord: cannot add null/undefined to a collection navigation.');
+        const ownerPkName = tools.getPrimaryKeyObject(owner.__entity) || 'id';
+        const ownerKey = tools.dataValue(owner, ownerPkName);
+        if (ownerKey === undefined || ownerKey === null || typeof ownerKey === 'function') {
+            throw new Error(`masterrecord: ${owner.__entity.__name} has no primary key yet — save it first, or assign the collection (owner.${field} = [...]) before add().`);
+        }
+        if (def.type === 'hasManyThrough') {
+            const { joinSet, toThisField, toTargetField, targetSet } = this._joinSides(owner.__entity, def);
+            const targetPkName = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
+            let targetRef = item;
+            if (typeof item === 'object') {
+                const pk = tools.dataValue(item, targetPkName);
+                const tracked = item.__ID != null && this.__trackedEntitiesMap.has(item.__ID);
+                if ((pk === undefined || pk === null || typeof pk === 'function') && !tracked) targetSet.add(item);   // new target: insert first
+                targetRef = item;                 // the join row references the entity; the engine persists its key
+            }
+            const row = {};
+            row[toThisField] = owner;
+            row[toTargetField] = targetRef;
+            joinSet.add(row);
+            return row;
+        }
+        // hasMany: set the child's FK to the owner's key; add the child if new
+        const childSet = this._dbsetByName(def.foreignTable || field);
+        if (!childSet) throw new Error(`masterrecord: entity '${def.foreignTable || field}' is not registered on this context.`);
+        const childCol = tools.findForeignTable(owner.__entity.__name, childSet.__entity);
+        const navField = childCol && childCol.name ? childCol.name : null;
+        const fkCol = childCol && childCol.foreignKey ? childCol.foreignKey : `${owner.__entity.__name.toLowerCase()}_id`;
+        if (typeof item !== 'object') throw new TypeError(`masterrecord: ${owner.__entity.__name}.${field}.add() expects a ${childSet.__entity.__name} entity.`);
+        const tracked = item.__ID != null && this.__trackedEntitiesMap.has(item.__ID);
+        if (tracked && Object.getOwnPropertyDescriptor(item, fkCol) && Object.getOwnPropertyDescriptor(item, fkCol).set) item[fkCol] = ownerKey;
+        else if (navField) item[navField] = ownerKey;
+        else item[fkCol] = ownerKey;
+        if (!tracked) childSet.add(item);
+        return item;
+    }
+
+    /**
+     * EF `entry.Collection(nav).Remove(item)`: unlink `item` from `owner`.
+     *  - manyToMany / hasManyThrough: the join row(s) are scheduled for DELETE;
+     *  - hasMany: the child's FK is set to NULL when nullable, otherwise the
+     *    child is scheduled for DELETE (EF deletes orphans of required relationships).
+     * Resolves when the change is tracked; persisted by saveChanges().
+     */
+    async unlinkNavigation(owner, field, item) {
+        if (!owner || !owner.__entity) throw new TypeError('masterrecord: unlinkNavigation(owner, field, item) expects a tracked owner entity.');
+        const def = owner.__entity[field];
+        if (!def || (def.type !== 'hasMany' && def.type !== 'hasManyThrough')) throw new Error(`masterrecord: '${field}' on ${owner.__entity.__name} is not a collection navigation.`);
+        const ownerPkName = tools.getPrimaryKeyObject(owner.__entity) || 'id';
+        const ownerKey = tools.dataValue(owner, ownerPkName);
+        if (def.type === 'hasManyThrough') {
+            const { joinSet, toThis, toTarget, targetSet } = this._joinSides(owner.__entity, def);
+            const targetPkName = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
+            const targetKey = (item && typeof item === 'object') ? tools.dataValue(item, targetPkName) : item;
+            if (targetKey === undefined || targetKey === null) return 0;
+            const rows = await joinSet.where(`r => r.${toThis.foreignKey} == $$`, ownerKey).and(`r => r.${toTarget.foreignKey} == $$`, targetKey).toList();
+            for (const r of rows) joinSet.remove(r);
+            return rows.length;
+        }
+        const childSet = this._dbsetByName(def.foreignTable || field);
+        const childCol = tools.findForeignTable(owner.__entity.__name, childSet.__entity);
+        const fkCol = childCol && childCol.foreignKey ? childCol.foreignKey : `${owner.__entity.__name.toLowerCase()}_id`;
+        if (!item || typeof item !== 'object') return 0;
+        if (childCol && childCol.nullable === true) {
+            if (Object.getOwnPropertyDescriptor(item, fkCol) && Object.getOwnPropertyDescriptor(item, fkCol).set) item[fkCol] = null;
+            else item[childCol.name] = null;
+        } else {
+            childSet.remove(item);
+        }
+        return 1;
+    }
+
+    /** Give a loaded collection EF's `Add` / `Remove` (non-enumerable, JSON-safe). */
+    _decorateCollection(owner, field, arr) {
+        if (!Array.isArray(arr) || Object.prototype.hasOwnProperty.call(arr, 'add')) return arr;
+        const ctx = this;
+        Object.defineProperties(arr, {
+            add: { value(item) { if (arr.includes(item)) return arr; ctx.linkNavigation(owner, field, item); if (item && typeof item === 'object') arr.push(item); return arr; }, enumerable: false, configurable: true, writable: true },
+            remove: { value(item) { const i = arr.indexOf(item); if (i >= 0) arr.splice(i, 1); return ctx.unlinkNavigation(owner, field, item); }, enumerable: false, configurable: true, writable: true },
+        });
+        return arr;
     }
 
     // ---- Global query filters (EF Core HasQueryFilter / named filters) ------
@@ -1636,20 +1801,15 @@ class context {
             const pkVal = backing(thisPk);
             if (def.type === 'hasManyThrough') {
                 // through (join) table -> target table, two parameterized queries
-                const joinSet = this._dbsetByName(def.foreignTable || field);
-                if (!joinSet) throw new Error(`masterrecord: join entity '${def.foreignTable || field}' is not registered on this context.`);
-                const joinDef = joinSet.__entity;
-                const toThis = Object.values(joinDef).find(c => c && typeof c === 'object' && c.relationshipType === 'belongsTo' && c.foreignTable === entity.__entity.__name);
-                const toTarget = Object.values(joinDef).find(c => c && typeof c === 'object' && c.relationshipType === 'belongsTo' && c.foreignTable !== entity.__entity.__name);
-                if (!toThis || !toTarget) throw new Error(`masterrecord: join entity '${joinDef.__name}' must declare belongsTo() to both '${entity.__entity.__name}' and the target entity.`);
+                const { joinSet, toThis, toTarget, targetSet } = this._joinSides(entity.__entity, { ...def, foreignTable: def.foreignTable || field });
                 const links = (pkVal === undefined || pkVal === null) ? [] : await joinSet.asNoTracking().where(`r => r.${toThis.foreignKey} == $$`, pkVal).toList();
                 const ids = links.map(l => l[toTarget.foreignKey]).filter(v => v !== undefined && v !== null);
                 if (ids.length === 0) value = [];
                 else {
-                    const targetSet = this._dbsetByName(toTarget.foreignTable);
                     const targetPk = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
                     value = await targetSet.where(`r => $$.includes(r.${targetPk})`, ids).toList();
                 }
+                this._decorateCollection(entity, field, value);
             } else {
                 const childSet = this._dbsetByName(def.foreignTable || field);
                 if (!childSet) throw new Error(`masterrecord: entity '${def.foreignTable || field}' (referenced by ${entity.__entity.__name}.${field}) is not registered on this context.`);
@@ -1660,6 +1820,7 @@ class context {
                     const q = childSet.where(`r => r.${fkCol} == $$`, pkVal);
                     value = def.type === 'hasMany' ? await q.toList() : await q.single();
                 }
+                if (def.type === 'hasMany') this._decorateCollection(entity, field, value);
             }
         }
         if (proto) proto['_' + field] = value; else entity['_' + field] = value;
@@ -1833,6 +1994,22 @@ class context {
             /** EF Reference(nav).Load() / Collection(nav).Load(): explicit loading. */
             load(nav) { return ctx.loadNavigation(entity, nav); },
             isLoaded(nav) { return ctx.isNavigationLoaded(entity, nav); },
+            /** EF `Entry(e).Collection(nav)`: Load / IsLoaded / Add / Remove. */
+            collection(nav) {
+                return {
+                    load: () => ctx.loadNavigation(entity, nav),
+                    get isLoaded() { return ctx.isNavigationLoaded(entity, nav); },
+                    add: (item) => ctx.linkNavigation(entity, nav, item),
+                    remove: (item) => ctx.unlinkNavigation(entity, nav, item),
+                };
+            },
+            /** EF `Entry(e).Reference(nav)`: Load / IsLoaded. */
+            reference(nav) {
+                return {
+                    load: () => ctx.loadNavigation(entity, nav),
+                    get isLoaded() { return ctx.isNavigationLoaded(entity, nav); },
+                };
+            },
         };
     }
 
