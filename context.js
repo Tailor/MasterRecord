@@ -1827,11 +1827,109 @@ class context {
         return value;
     }
 
+    /**
+     * EF split query: load ONE navigation for MANY parents with a single
+     * batched query per table (IN on the parent keys, chunked), setting each
+     * parent's navigation slot. Parents whose navigation is already loaded are
+     * skipped. Returns the flat list of loaded children (the next level's parents).
+     * @private
+     */
+    async __batchLoadNavigation(parents, nav) {
+        const list = (parents || []).filter(p => p && p.__entity);
+        if (!list.length) return [];
+        const ownerDef = list[0].__entity;
+        const def = ownerDef[nav];
+        if (!def || typeof def !== 'object') throw new Error(`masterrecord: '${nav}' is not a navigation of ${ownerDef.__name}.`);
+        const isBt = def.relationshipType === 'belongsTo';
+        if (!isBt && def.type !== 'hasOne' && def.type !== 'hasMany' && def.type !== 'hasManyThrough') {
+            throw new Error(`masterrecord: '${nav}' on ${ownerDef.__name} is a column, not a navigation.`);
+        }
+        const slotOf = (e) => Object.getPrototypeOf(e);
+        const setSlot = (e, v) => { const p = slotOf(e); if (p) p['_' + nav] = v; else e['_' + nav] = v; };
+        const CHUNK = 500;
+        const chunks = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
+        const uniq = (arr) => [...new Set(arr.filter(v => v !== undefined && v !== null && typeof v !== 'function'))];
+        const loadedOut = [];
+        const pending = [];
+        for (const p of list) {
+            if (this.isNavigationLoaded(p, nav)) {
+                const v = slotOf(p)['_' + nav];
+                if (Array.isArray(v)) loadedOut.push(...v); else if (v && typeof v === 'object') loadedOut.push(v);
+            } else pending.push(p);
+        }
+        if (!pending.length) return loadedOut;
+
+        if (isBt) {
+            const parentSet = this._dbsetByName(def.foreignTable);
+            if (!parentSet) throw new Error(`masterrecord: entity '${def.foreignTable}' (referenced by ${ownerDef.__name}.${nav}) is not registered on this context.`);
+            const pk = tools.getPrimaryKeyObject(parentSet.__entity) || 'id';
+            const keys = uniq(pending.map(p => tools.foreignKeyValue(p, nav)));
+            const byKey = new Map();
+            for (const c of chunks(keys)) for (const t of await parentSet.where(`r => $$.includes(r.${pk})`, c).toList()) byKey.set(String(tools.dataValue(t, pk)), t);
+            for (const p of pending) {
+                const k = tools.foreignKeyValue(p, nav);
+                const t = (k === undefined || k === null) ? null : (byKey.get(String(k)) || null);
+                setSlot(p, t);
+                if (t) loadedOut.push(t);
+            }
+            return loadedOut;
+        }
+
+        const thisPk = tools.getPrimaryKeyObject(ownerDef) || 'id';
+        const parentKeys = uniq(pending.map(p => tools.dataValue(p, thisPk)));
+        if (def.type === 'hasManyThrough') {
+            const { joinSet, toThis, toTarget, targetSet } = this._joinSides(ownerDef, { ...def, foreignTable: def.foreignTable || nav });
+            const links = [];
+            for (const c of chunks(parentKeys)) links.push(...await joinSet.asNoTracking().where(`r => $$.includes(r.${toThis.foreignKey})`, c).toList());
+            const targetPk = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
+            const targetIds = uniq(links.map(l => l[toTarget.foreignKey]));
+            const byId = new Map();
+            for (const c of chunks(targetIds)) for (const t of await targetSet.where(`r => $$.includes(r.${targetPk})`, c).toList()) byId.set(String(tools.dataValue(t, targetPk)), t);
+            const grouped = new Map();
+            for (const l of links) {
+                const t = byId.get(String(l[toTarget.foreignKey]));
+                if (!t) continue;
+                const k = String(l[toThis.foreignKey]);
+                if (!grouped.has(k)) grouped.set(k, []);
+                grouped.get(k).push(t);
+            }
+            for (const p of pending) {
+                const arr = grouped.get(String(tools.dataValue(p, thisPk))) || [];
+                this._decorateCollection(p, nav, arr);
+                setSlot(p, arr);
+                loadedOut.push(...arr);
+            }
+            return loadedOut;
+        }
+
+        // hasOne / hasMany
+        const childSet = this._dbsetByName(def.foreignTable || nav);
+        if (!childSet) throw new Error(`masterrecord: entity '${def.foreignTable || nav}' (referenced by ${ownerDef.__name}.${nav}) is not registered on this context.`);
+        const childCol = tools.findForeignTable(ownerDef.__name, childSet.__entity);
+        const fkCol = childCol && childCol.foreignKey ? childCol.foreignKey : (def.foreignKey || `${ownerDef.__name.toLowerCase()}_id`);
+        const children = [];
+        for (const c of chunks(parentKeys)) children.push(...await childSet.where(`r => $$.includes(r.${fkCol})`, c).toList());
+        const grouped = new Map();
+        for (const ch of children) {
+            const fk = tools.dataValue(ch, fkCol);
+            const k = String(fk !== undefined ? fk : ch[fkCol]);
+            if (!grouped.has(k)) grouped.set(k, []);
+            grouped.get(k).push(ch);
+        }
+        for (const p of pending) {
+            const arr = grouped.get(String(tools.dataValue(p, thisPk))) || [];
+            if (def.type === 'hasMany') { this._decorateCollection(p, nav, arr); setSlot(p, arr); loadedOut.push(...arr); }
+            else { const one = arr[0] || null; setSlot(p, one); if (one) loadedOut.push(one); }
+        }
+        return loadedOut;
+    }
+
     /** Has this navigation been loaded (by include() or loadNavigation())? */
     isNavigationLoaded(entity, field) {
         const proto = Object.getPrototypeOf(entity);
         const v = proto ? proto['_' + field] : undefined;
-        return v !== undefined && v !== null && typeof v.then !== 'function';
+        // null counts as loaded (EF: the reference was loaded and there is no related row)
+        return v !== undefined && !(v && typeof v.then === 'function');
     }
 
     // ---- Health check (EF Database.CanConnect / ASP.NET DbContext health check) -

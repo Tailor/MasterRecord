@@ -65,6 +65,8 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | Method | EF Core equivalent | Description |
 |--------|-------------------|-------------|
 | `.find(pk)` | `Find` | Identity-map first (no query if tracked), then database |
+| `.include('p => p.tags').thenInclude('t => t.category')` | `Include().ThenInclude()` | Nested eager loading; split query (one batched query per level) |
+| `.asSplitQuery()` (before `include()`) | `AsSplitQuery` | Each include loads as a separate batched query |
 | `.any([lambda, ...args])` | `Any` | Does at least one row match? |
 | `.sum(field)` / `.avg(field)` / `.min(field)` / `.max(field)` | `Sum/Average/Min/Max` | Aggregates over the filtered query (`sum` of nothing → 0, others → null) |
 | `.thenBy(field)` / `.thenByDescending(field)` | `ThenBy` | Secondary sort keys after `orderBy` |

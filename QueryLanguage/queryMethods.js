@@ -35,6 +35,12 @@ class queryMethods{
         // Global query filters: applied once per execution unless ignored.
         this.__ignoredFilters = null;   // null = apply all; true = ignore all; Set = ignore these names
         this.__filtersApplied = false;
+        // EF split query: navigation paths loaded AFTER the main query, one
+        // batched (IN-list) query per level — used by thenInclude(),
+        // asSplitQuery() and include() of implicit many-to-many navigations.
+        this.__postIncludes = [];       // [['tags', 'category'], ['author']]
+        this.__splitQuery = false;
+        this.__lastSqlIncludeNav = null;
     }
 
     /**
@@ -308,6 +314,9 @@ class queryMethods{
         this.__queryObject.reset();
         this.__filtersApplied = false;
         this.__ignoredFilters = null;
+        this.__postIncludes = [];
+        this.__splitQuery = false;
+        this.__lastSqlIncludeNav = null;
     }
 
 
@@ -403,10 +412,80 @@ class queryMethods{
     // when you dont want to use lazy loading and want it called at that moment
     //Eagerly loading
     include(query,  ...args){
+        // Implicit many-to-many (manyToMany()) and split-query mode load the
+        // navigation AFTER the main query, batched per level (EF AsSplitQuery).
+        const nav = this.__navNameFrom(query);
+        const def = nav ? this.__entity[nav] : null;
+        if ((def && typeof def === 'object' && def.implicitJoin) || this.__splitQuery) {
+            if (args && args.length) throw new Error('masterrecord: include() parameters are not supported for split-query / many-to-many includes; filter with where() on the result or use a query filter.');
+            this.__postIncludes.push([nav]);
+            return this;
+        }
         let str = query.toString();
         str = this.__validateAndCollectParameters(str, args, 'include');
         this.__queryObject.include(str, this.__entity.__name);
+        this.__lastSqlIncludeNav = nav;
         return this;
+    }
+
+    /**
+     * EF Core `ThenInclude`: load the next navigation level of the preceding
+     * include() — `db.Post.include('p => p.tags').thenInclude('t => t.category')`.
+     * Implemented as EF's split query: after the main query, ONE batched query
+     * (IN on the parent keys) per level, on every engine, so there is no
+     * cartesian explosion and no N+1. Works for belongsTo, hasOne, hasMany,
+     * hasManyThrough and manyToMany at any depth; chain thenInclude() again
+     * for deeper levels.
+     */
+    thenInclude(query){
+        const nav = this.__navNameFrom(query);
+        if (!nav) throw new Error('masterrecord: thenInclude() expects a navigation, e.g. thenInclude("t => t.category") or thenInclude("category").');
+        if (this.__postIncludes.length) {
+            this.__postIncludes[this.__postIncludes.length - 1].push(nav);
+        } else if (this.__lastSqlIncludeNav) {
+            // The root was an eager (SQL) include: continue from its hydrated
+            // values; levels that were not hydrated are batch-loaded.
+            this.__postIncludes.push([this.__lastSqlIncludeNav, nav]);
+        } else {
+            throw new Error('masterrecord: thenInclude() must follow include().');
+        }
+        return this;
+    }
+
+    /**
+     * EF Core `AsSplitQuery`: load every include() of this query with a
+     * separate batched query per navigation instead of one joined SQL
+     * statement. Call it BEFORE include().
+     */
+    asSplitQuery(){
+        if (this.__lastSqlIncludeNav) throw new Error('masterrecord: asSplitQuery() must be called before include().');
+        this.__splitQuery = true;
+        return this;
+    }
+
+    /** Navigation name from 'p => p.tags', 'p => p.tags.select(...)', or 'tags'. */
+    __navNameFrom(query){
+        if (query === undefined || query === null) return null;
+        const s = typeof query === 'function' ? query.toString() : String(query);
+        const m = s.match(/=>\s*\(?\s*[A-Za-z_$][\w$]*\s*\)?\s*\.\s*([A-Za-z_$][\w$]*)/);
+        if (m) return m[1];
+        const bare = s.trim().match(/^([A-Za-z_$][\w$]*)/);
+        return bare ? bare[1] : null;
+    }
+
+    /** Run the split-query include paths on the materialized result (list or single). */
+    async __runPostIncludes(result){
+        const paths = this.__postIncludes;
+        if (!paths || !paths.length) return;
+        const roots = Array.isArray(result) ? result : (result ? [result] : []);
+        if (!roots.length) return;
+        for (const path of paths) {
+            let level = roots;
+            for (const nav of path) {
+                level = await this.__context.__batchLoadNavigation(level, nav);
+                if (!level.length) break;
+            }
+        }
     }
 
     // only takes a array of selected items
@@ -798,6 +877,8 @@ class queryMethods{
             throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
 
+        await this.__runPostIncludes(result);   // thenInclude / split-query / many-to-many includes
+
         // Store in cache — but never cache a "not found" (null) result. A
         // negative result is poisoned the instant any concurrent writer inserts
         // the matching row: a reader that filled the cache with the pre-commit
@@ -857,6 +938,8 @@ class queryMethods{
             this.__reset();
             throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
         }
+
+        await this.__runPostIncludes(result);   // thenInclude / split-query / many-to-many includes
 
         // Store in cache — but NOT an empty result set. An empty array is
         // truthy, so the old `&& result` guard cached `[]`, which is negative

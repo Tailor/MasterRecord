@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.17.0 — `thenInclude()` and `asSplitQuery()` (EF Core ThenInclude / AsSplitQuery)
+
+- **`include('p => p.tags').thenInclude('t => t.category')`** (chain `thenInclude()` again for deeper levels): implemented as EF's **split query** — after the main query, **one batched query per navigation level** (`IN` on the parent keys, chunked by 500), on every engine; no cartesian explosion, no N+1. Works for belongsTo, hasOne, hasMany, hasManyThrough and manyToMany at any depth; `single()`/`first()` run it too. Levels already hydrated by the eager (SQL) `include()` are reused; the rest are batch-loaded.
+- **`asSplitQuery()`** (call before `include()`): every `include()` of the query loads as a separate batched query instead of one joined statement (EF `AsSplitQuery`). Bare navigation names (`include('author')`) are accepted alongside lambdas.
+- **`include()` of an implicit many-to-many navigation** (`manyToMany()`) goes through the split loader automatically.
+- Loaded collections keep EF's `add()/remove()`; a loaded reference with no related row is `null` (EF) and is **not** lazy-loaded again — `null` in the navigation slot now means "loaded, nothing there", `undefined` means "not loaded".
+- Low-level: `ctx.__batchLoadNavigation(parents, nav)`.
+
+New tests: `test/then-include.test.js` (manyToMany → belongsTo with exactly 4 SELECTs for N posts; asSplitQuery hasMany → manyToMany → belongsTo with 5 SELECTs; batched belongsTo include; single()/first(); misuse errors).
+
 ## v1.16.0 — many-to-many skip navigations (EF Core 5+ `HasMany().WithMany()`) + collection Add/Remove
 
 - **`db.manyToMany('Tag')`**: the context **synthesizes the implicit join entity** (EF convention: the two entity names in alphabetical order, e.g. `PostTag`) with an auto primary key, `belongsTo()` to both sides (`post_id`, `tag_id`, FK constraints with ON DELETE CASCADE) and a **unique composite index** — registered through `dbset()` so table prefix, FK type resolution, migrations/snapshot, `ctx.PostTag` and the query builders all see it. Declaring the navigation on both sides maps to the same join entity. Options: `{ through, foreignKey, otherKey }` (self-referencing must pass both keys, as EF names them after the navigations).

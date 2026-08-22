@@ -612,7 +612,8 @@ class EntityTrackerModel {
                         // engines) must not end up with its own shadowing `_<nav>`.
                         const proto = Object.getPrototypeOf(modelClass);
                         const loaded = proto['_' + entityField];
-                        if (loaded !== undefined && loaded !== null && !(typeof loaded.then === 'function')) return loaded;
+                        // undefined = not loaded; null = loaded, no related row (EF); a thenable = in flight
+                        if (loaded !== undefined && !(loaded && typeof loaded.then === 'function')) return loaded;
                         const def = currentEntity[entityField];
                         if (!def || def.lazyLoading === false) return (loaded === undefined) ? null : loaded;
                         const ctx = modelClass.__context;
