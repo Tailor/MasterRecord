@@ -1,5 +1,15 @@
 # MasterRecord Changelog
 
+## v1.5.9 — saveChanges() no longer sweeps away a concurrently-mutated entity (shared/singleton context lost write)
+
+**Bug (silent lost write on a shared context):** queried rows are auto-tracked into the context's tracked-entity list, and `saveChanges()` snapshots that whole list, writes the dirty rows, and `__untrack()`s the entire snapshot. When one context instance is shared across concurrent units of work (e.g. a **singleton context** serving many requests), request A's save snapshots a row that request B loaded (clean), B mutates it while A's save is in flight, and A then untracks the snapshot — removing B's now-dirty row from tracking. B's own `saveChanges()` then finds it untracked and **silently issues no UPDATE**. The batch wasn't empty, so the "no tracked entities" warning never fired and the handler returned success (observed as an admin plan change round-tripping back to `free`, and other vanished updates).
+
+**Fix:** `__untrack()` now drops only **clean** (`'track'`) entities. An entity that is still dirty (insert/modified/delete) at untrack time was not written by this save — it became dirty after the snapshot — so it is preserved and its pending write still lands. Clean entities are still released, so the tracked list doesn't grow unbounded. In the normal per-request context the whole batch is clean at this point, so behavior is unchanged. New test: `test/shared-context-untrack-preserves-dirty.test.js`.
+
+**Strongly recommended:** scope a context **per request/unit of work**, not as a singleton. This fix removes the silent lost-write, but a context is a unit of work — sharing one instance across concurrent requests still risks cross-request transaction conflation (one request's save can commit/roll back another's pending rows). Use a scoped/transient context per request.
+
+Full suite green (0 fail, 298 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.8 — falsy defaults (0/false/'') apply on insert; MySQL syncTable quotes reserved words
 
 **Bug 1 — falsy defaults were dropped (regression surfaced by 1.5.7, latent long before).** `insertManager.validateEntity` applied a column's default with `if (currentEntity.default)` — a **truthiness** test — so `.default(0)`, `.default(false)`, and `.default('')` were silently skipped. This was masked until 1.5.7 because an unset field read as its definition *function* (truthy, non-null), so the required-field check passed anyway. Once 1.5.7 made unset fields correctly read as `undefined`, a `.notNullable().default(0)` column (e.g. a `blocked` flag) failed insert validation with *"… is a required Field"* — broadly breaking registration/insert across every model with a falsy-defaulted NOT NULL column. **Fix:** apply the default whenever it is not `undefined`/`null` (not on truthiness), writing it into both the clean model (inserted) and the raw model (read by the required-field check). Genuinely required fields with no default are still enforced. New test: `test/falsy-default-applied.test.js`.

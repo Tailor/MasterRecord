@@ -2235,13 +2235,40 @@ class context {
         }
     }
 
-    /** Remove a specific batch of entities from change tracking. */
+    /**
+     * Remove a batch of entities from change tracking after a save — but ONLY
+     * entities that are currently CLEAN (state 'track').
+     *
+     * saveChanges() snapshots the tracked list, writes the dirty rows (which are
+     * then reset to 'track'), and calls this to drop the batch. A batched entity
+     * that is STILL dirty at this point (insert/modified/delete) was NOT written
+     * by this save — it became dirty AFTER the snapshot. That happens when a
+     * context instance is shared across concurrent units of work (e.g. a
+     * singleton context serving many requests): request A's save snapshots a row
+     * that request B loaded, B mutates it while A's save is in flight, and if A
+     * then untracked it unconditionally, B's own saveChanges() would find it
+     * untracked and silently drop the UPDATE. Skipping dirty entities keeps
+     * B's pending change tracked so B's save still writes it. (In the normal
+     * per-request context the whole batch is clean here, so behavior is
+     * unchanged.)
+     *
+     * NOTE: a context is a unit of work and is safest scoped per request.
+     * Sharing one instance across requests still risks cross-request
+     * transaction conflation; this guard removes the silent-lost-write, not the
+     * need for request-scoped contexts.
+     */
     __untrack(batch) {
         if (!batch || !batch.length) return;
-        const drop = new Set(batch);
-        this.__trackedEntities = this.__trackedEntities.filter(e => !drop.has(e));
+        const drop = new Set();
         for (const e of batch) {
-            if (e && e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
+            if (!e) continue;
+            if (e.__state && e.__state !== 'track') continue; // keep still-dirty entities
+            drop.add(e);
+        }
+        if (drop.size === 0) return;
+        this.__trackedEntities = this.__trackedEntities.filter(e => !drop.has(e));
+        for (const e of drop) {
+            if (e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
         }
     }
 
