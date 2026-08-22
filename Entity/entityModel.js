@@ -138,6 +138,41 @@ class EntityModel {
         return this;
     }
 
+    /**
+     * Owned / complex type stored as JSON in one column — Entity Framework Core
+     * `OwnsOne(e => e.Address, b => b.ToJson())` / `ComplexProperty`.
+     *
+     *   address(db){ db.owned(Address); }     // class with fields; hydrated on read
+     *   meta(db){ db.owned(); }                // plain object / array
+     *
+     * The value is serialized with JSON on write and parsed on read (into an
+     * instance of the class when one is given). Nested mutations
+     * (`user.address.city = 'x'`) are detected at saveChanges() by comparing
+     * the serialized value to the loaded one (EF DetectChanges on complex
+     * properties). A custom transform() still wins if you set one.
+     */
+    owned(OwnedClass){
+        if (OwnedClass !== undefined && OwnedClass !== null && typeof OwnedClass !== 'function') {
+            throw new Error('masterrecord: owned(Class) expects a class (or no argument for a plain object).');
+        }
+        this.obj.type = "json";
+        this.obj.owned = true;
+        this.obj.ownedType = OwnedClass || null;
+        if (!this.obj.transform) {
+            const hydrate = (o) => (OwnedClass && o && typeof o === 'object' && !Array.isArray(o)) ? Object.assign(new OwnedClass(), o) : o;
+            this.obj.transform = {
+                toDatabase: (v) => (v === undefined || v === null) ? v : (typeof v === 'string' ? v : JSON.stringify(v)),
+                fromDatabase: (v) => {
+                    if (v === undefined || v === null) return v;
+                    if (typeof v !== 'string') return hydrate(v);
+                    if (v === '') return null;
+                    try { return hydrate(JSON.parse(v)); } catch (_) { return v; }
+                },
+            };
+        }
+        return this;
+    }
+
     // Universally-unique identifier column (TEXT on SQLite).
     uuid(){
         this.obj.type = "uuid";

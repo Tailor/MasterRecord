@@ -1,5 +1,12 @@
 # MasterRecord Changelog
 
+## v1.22.0 — owned / complex types as JSON (EF Core `OwnsOne(...).ToJson()` / `ComplexProperty`)
+
+- **`db.owned(Address)`** stores the value as JSON in one column and **hydrates it into the class on read**; **`db.owned()`** for plain objects/arrays. Serialization is automatic (a custom `transform()` still wins).
+- **Nested mutations are detected at `saveChanges()`** — `user.address.city = 'Paris'` or `prefs.tags.push('x')` never touch a column setter, so the context compares the serialized value with the loaded one (EF `DetectChanges` on complex properties) and writes only when it differs; replacing the whole value or setting `null` works as before.
+
+New tests: `test/owned-types.test.js`.
+
 ## v1.21.0 — `groupBy().aggregate()` (EF Core GroupBy + Select(g => new { g.Key, g.Count(), g.Sum(…) }))
 
 - **`groupBy('o => o.status'[, 'region'…]).aggregate({ n: 'count', total: ['sum', 'amount'], avg: ['avg', 'amount'] }, { having: { n: ['>', 1] }, orderBy: [['total', 'desc']] })`** → `[{ status, region?, n, total, avg }]`, translated to `SELECT <groups>, <aggregates> … GROUP BY … [HAVING …] [ORDER BY …] [LIMIT/OFFSET]` on SQLite, MySQL and Postgres. `where()/and()`, global query filters (and `ignoreQueryFilters()`), `take()/skip()` apply to the groups. Aggregates: `count`, `sum`, `avg`, `min`, `max`; `having` operators `==, !=, >, >=, <, <=` (parameterized); identifiers are validated, unknown columns/aggregates/aliases fail loudly. `groupBy()` used to throw "not supported".

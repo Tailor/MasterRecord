@@ -3265,6 +3265,10 @@ class context {
         // O(total tracked). A read-heavy context can track tens of thousands of
         // clean rows; none of them are scanned here. (Self-heals if a clean
         // entity ever lingers in the index.)
+        // EF DetectChanges for owned/complex (JSON) properties: nested mutations
+        // don't go through a column setter, so compare serialized values first.
+        this._detectOwnedChanges();
+
         const collectChangeSet = () => {
             const cs = [];
             for (const e of this.__dirtyEntities) {
@@ -3446,6 +3450,30 @@ class context {
     }
 
     /** Raw stored (DB-side) value of a column on a tracked entity. */
+    /**
+     * EF DetectChanges for owned / complex properties (`db.owned(Class)`, JSON
+     * columns): a nested mutation (`user.address.city = 'Paris'`) never touches
+     * the column accessor, so before each save the serialized current value is
+     * compared with the loaded one and the field is marked modified when it
+     * differs. Pending inserts write everything anyway and are skipped.
+     */
+    _detectOwnedChanges() {
+        const asJson = (v) => (v === undefined || v === null) ? null : (typeof v === 'string' ? v : JSON.stringify(v));
+        for (const e of this.__trackedEntitiesMap.values()) {
+            if (!e || !e.__entity || e.__noTracking || e.__state === 'insert' || e.__state === 'delete') continue;
+            const def = e.__entity;
+            for (const k of Object.keys(def)) {
+                const f = def[k];
+                if (k.startsWith('__') || !f || typeof f !== 'object' || !f.owned) continue;
+                if (Array.isArray(e.__dirtyFields) && e.__dirtyFields.includes(k)) continue;
+                const originals = e.__originalValues;
+                if (!originals || !(k in originals)) continue;
+                const cur = tools.dataValue(e, k);
+                if (asJson(cur) !== asJson(originals[k])) e[k] = cur;   // tracked setter → dirty + enqueued
+            }
+        }
+    }
+
     /**
      * Composite keys (EF HasKey(a, b)): the first key column is addressed as the
      * primary key; the remaining key columns are added to the UPDATE/DELETE
