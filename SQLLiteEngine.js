@@ -874,10 +874,10 @@ class SQLLiteEngine {
 						persistedValue = model["_" + fieldName];
 					break;
 					case "belongsTo":
-						persistedValue = model["_" + fieldName] !== undefined ? model["_" + fieldName] : model[fieldName];
+						persistedValue = tools.foreignKeyValue(model, fieldName);
 					break;
 					default:
-						persistedValue = model[fieldName];
+						persistedValue = (model.__entity[fieldName] && model.__entity[fieldName].relationshipType === "belongsTo") ? tools.foreignKeyValue(model, fieldName) : model[fieldName];
 				}
 				const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
 				if(persistedValue === undefined || persistedValue === null || isEmptyString){
@@ -894,7 +894,7 @@ class SQLLiteEngine {
             switch(type){
                 case "belongsTo" : {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
-                    let fkValue = model[dirtyFields[column]];
+                    let fkValue = tools.foreignKeyValue(model, dirtyFields[column]);
                     // 🔥 NEW: Validate foreign key type
                     try {
                         fkValue = $that._validateAndCoerceFieldType(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -993,7 +993,7 @@ class SQLLiteEngine {
                 // bypassing get() which may change the type (e.g. parseFloat)
                 let persistedValue = model["_" + fieldName];
                 if(persistedValue === undefined){
-                    persistedValue = model[fieldName];
+                    persistedValue = (model.__entity[fieldName] && model.__entity[fieldName].relationshipType === "belongsTo") ? tools.foreignKeyValue(model, fieldName) : model[fieldName];
                 }
                 const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
                 if(persistedValue === undefined || persistedValue === null || isEmptyString){
@@ -1011,7 +1011,7 @@ class SQLLiteEngine {
             switch(type){
                 case "belongsTo": {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
-                    let fkValue = model[dirtyFields[column]];
+                    let fkValue = tools.foreignKeyValue(model, dirtyFields[column]);
 
                     // 🔥 Apply toDatabase transformer before validation
                     try {
@@ -1025,9 +1025,8 @@ class SQLLiteEngine {
                     } catch(typeError) {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
-                    var fore = `_${dirtyFields[column]}`;
                     sqlParts.push(`[${foreignKey}] = ?`);
-                    params.push(model[fore]);
+                    params.push(fkValue);
                 break;
                 }
                 case "integer":
@@ -1258,7 +1257,9 @@ class SQLLiteEngine {
                 // call the get method if avlable
                 let fieldColumn = "";
                 // check if get function is avaliable if so use that
-                fieldColumn = fields[column];
+                fieldColumn = (modelEntity[column] && modelEntity[column].relationshipType === "belongsTo")
+                    ? tools.foreignKeyValue(fields, column)
+                    : fields[column];
 
                 if((fieldColumn !== undefined && fieldColumn !== null ) && typeof(fieldColumn) !== "object"){
                     // 🔥 NEW: Validate and coerce field type before processing
@@ -1325,15 +1326,11 @@ class SQLLiteEngine {
         for (const column in modelEntity) {
             // Skip internal properties
             if(column.indexOf("__") === -1 ){
-                let fieldColumn = fields[column];
-
-                // 🔥 FIX: For belongsTo relationships, also check the foreignKey field name
-                // Users can set either orgRole.User = obj OR orgRole.user_id = 2
-                if((fieldColumn === undefined || fieldColumn === null) &&
-                   modelEntity[column].relationshipType === "belongsTo" &&
-                   modelEntity[column].foreignKey) {
-                    fieldColumn = fields[modelEntity[column].foreignKey];
-                }
+                // belongsTo: persist the FK VALUE (assigned entity -> its PK, or
+                // the primitive / FK column), never the navigation getter.
+                let fieldColumn = (modelEntity[column] && modelEntity[column].relationshipType === "belongsTo")
+                    ? tools.foreignKeyValue(fields, column)
+                    : fields[column];
 
                 // Auto-increment primary keys are assigned by the database, so
                 // they must never be emitted in the INSERT unless the caller

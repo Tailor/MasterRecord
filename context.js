@@ -1588,6 +1588,91 @@ class context {
         eng.addCommandObserver(this.__commandObserver);
     }
 
+    // ---- Explicit / lazy loading of navigations (EF Entry(e).Reference(n).Load() /
+    //      Collection(n).Load()) — engine-agnostic and parameterized -------------
+
+    /** Resolve a dbset by model/table name, honoring tablePrefix. */
+    _dbsetByName(name) {
+        if (!name) return null;
+        if (this[name] && this[name].__entity) return this[name];
+        const prefixed = (this.tablePrefix || '') + name;
+        if (prefixed !== name && this[prefixed] && this[prefixed].__entity) return this[prefixed];
+        const cap = name.charAt(0).toUpperCase() + name.slice(1);
+        if (cap !== name && this[cap] && this[cap].__entity) return this[cap];
+        return null;
+    }
+
+    /**
+     * Load a navigation property of a tracked entity from the database and
+     * cache it on the entity (EF explicit loading). Works for belongsTo,
+     * hasOne, hasMany and hasManyThrough on every engine, using the normal
+     * parameterized query builder. Returns the loaded value (entity, array,
+     * or null).
+     *
+     * @example const author = await db.entry(post).load('author');
+     * @example await db.loadNavigation(author, 'posts');
+     */
+    async loadNavigation(entity, field) {
+        if (!entity || !entity.__entity) throw new TypeError('masterrecord: loadNavigation(entity, field) expects a tracked entity.');
+        const def = entity.__entity[field];
+        if (!def || typeof def !== 'object') throw new Error(`masterrecord: '${field}' is not a navigation of ${entity.__entity.__name}.`);
+        const isRel = def.relationshipType === 'belongsTo' || def.type === 'hasOne' || def.type === 'hasMany' || def.type === 'hasManyThrough';
+        if (!isRel) throw new Error(`masterrecord: '${field}' on ${entity.__entity.__name} is a column, not a navigation.`);
+        const proto = Object.getPrototypeOf(entity);
+        const backing = (col) => (proto && ('_' + col) in proto) ? proto['_' + col] : entity[col];
+        let value = null;
+
+        if (def.relationshipType === 'belongsTo') {
+            const parentSet = this._dbsetByName(def.foreignTable);
+            if (!parentSet) throw new Error(`masterrecord: entity '${def.foreignTable}' (referenced by ${entity.__entity.__name}.${field}) is not registered on this context.`);
+            const fkVal = backing(def.foreignKey);
+            if (fkVal === undefined || fkVal === null || typeof fkVal === 'function') value = null;
+            else {
+                const pk = tools.getPrimaryKeyObject(parentSet.__entity) || 'id';
+                value = await parentSet.where(`r => r.${pk} == $$`, fkVal).single();
+            }
+        } else {
+            const thisPk = tools.getPrimaryKeyObject(entity.__entity) || 'id';
+            const pkVal = backing(thisPk);
+            if (def.type === 'hasManyThrough') {
+                // through (join) table -> target table, two parameterized queries
+                const joinSet = this._dbsetByName(def.foreignTable || field);
+                if (!joinSet) throw new Error(`masterrecord: join entity '${def.foreignTable || field}' is not registered on this context.`);
+                const joinDef = joinSet.__entity;
+                const toThis = Object.values(joinDef).find(c => c && typeof c === 'object' && c.relationshipType === 'belongsTo' && c.foreignTable === entity.__entity.__name);
+                const toTarget = Object.values(joinDef).find(c => c && typeof c === 'object' && c.relationshipType === 'belongsTo' && c.foreignTable !== entity.__entity.__name);
+                if (!toThis || !toTarget) throw new Error(`masterrecord: join entity '${joinDef.__name}' must declare belongsTo() to both '${entity.__entity.__name}' and the target entity.`);
+                const links = (pkVal === undefined || pkVal === null) ? [] : await joinSet.asNoTracking().where(`r => r.${toThis.foreignKey} == $$`, pkVal).toList();
+                const ids = links.map(l => l[toTarget.foreignKey]).filter(v => v !== undefined && v !== null);
+                if (ids.length === 0) value = [];
+                else {
+                    const targetSet = this._dbsetByName(toTarget.foreignTable);
+                    const targetPk = tools.getPrimaryKeyObject(targetSet.__entity) || 'id';
+                    value = await targetSet.where(`r => $$.includes(r.${targetPk})`, ids).toList();
+                }
+            } else {
+                const childSet = this._dbsetByName(def.foreignTable || field);
+                if (!childSet) throw new Error(`masterrecord: entity '${def.foreignTable || field}' (referenced by ${entity.__entity.__name}.${field}) is not registered on this context.`);
+                const childCol = tools.findForeignTable(entity.__entity.__name, childSet.__entity);
+                const fkCol = childCol && childCol.foreignKey ? childCol.foreignKey : (def.foreignKey || `${entity.__entity.__name.toLowerCase()}_id`);
+                if (pkVal === undefined || pkVal === null) value = def.type === 'hasMany' ? [] : null;
+                else {
+                    const q = childSet.where(`r => r.${fkCol} == $$`, pkVal);
+                    value = def.type === 'hasMany' ? await q.toList() : await q.single();
+                }
+            }
+        }
+        if (proto) proto['_' + field] = value; else entity['_' + field] = value;
+        return value;
+    }
+
+    /** Has this navigation been loaded (by include() or loadNavigation())? */
+    isNavigationLoaded(entity, field) {
+        const proto = Object.getPrototypeOf(entity);
+        const v = proto ? proto['_' + field] : undefined;
+        return v !== undefined && v !== null && typeof v.then !== 'function';
+    }
+
     // ---- Context-level Add / Remove (EF DbContext.Add / Remove) ----------------
 
     /** Resolve the dbset (query builder) that owns an entity instance. */
@@ -1697,6 +1782,9 @@ class context {
                 return o;
             },
             detach() { ctx.__untrack([entity]); },
+            /** EF Reference(nav).Load() / Collection(nav).Load(): explicit loading. */
+            load(nav) { return ctx.loadNavigation(entity, nav); },
+            isLoaded(nav) { return ctx.isNavigationLoaded(entity, nav); },
         };
     }
 

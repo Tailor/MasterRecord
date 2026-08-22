@@ -433,7 +433,15 @@ class EntityTrackerModel {
                 }
                 this["__proto__"]["_" + modelField] = storedValue;
                 if (navNameForFk) {
-                    this["__proto__"]["_" + navNameForFk] = storedValue;
+                    // FK -> navigation fix-up (EF): changing the FK column invalidates
+                    // a previously loaded/assigned navigation so the next read
+                    // re-resolves it (lazy) instead of returning a stale parent.
+                    // The engines persist the FK via tools.foreignKeyValue(), which
+                    // falls back to this column when the navigation slot is unset.
+                    const proto = this["__proto__"];
+                    const nav = proto["_" + navNameForFk];
+                    if (nav !== undefined && nav !== storedValue) delete proto["_" + navNameForFk];
+                    delete proto["__loading_" + navNameForFk];
                 }
             },
             get: function() {
@@ -562,7 +570,7 @@ class EntityTrackerModel {
                 
                 Object.defineProperty(modelClass, entityField, {
                     set: function(value) {
-                        if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" ){
+                        if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" || value === null){
                             modelClass.__state = "modified";
                             modelClass.__version = (modelClass.__version || 0) + 1;
                             modelClass.__dirtyFields.push(entityField);
@@ -572,125 +580,52 @@ class EntityTrackerModel {
                                 modelClass.__context.__track(modelClass);
                             }
                         }
-                        this["__proto__"]["_" + entityField] = value;
+                        // Relationship fix-up (EF): assigning a parent ENTITY to a
+                        // belongsTo navigation also sets the foreign-key column, so
+                        // `post.author = someAuthor` persists author_id on save.
+                        const def = currentEntity[entityField];
+                        const proto = Object.getPrototypeOf(modelClass);   // accessor owner's slot, never `this`
+                        if (value && typeof value === 'object' && value.__entity && def && def.relationshipType === 'belongsTo' && def.foreignKey) {
+                            const parentPk = tools.getPrimaryKeyObject(value.__entity);
+                            const fkVal = parentPk ? value[parentPk] : undefined;
+                            if (fkVal !== undefined && fkVal !== null && typeof fkVal !== 'function' && tools.dataValue(modelClass, def.foreignKey) !== fkVal) {
+                                // Tracked entity: the FK column's accessor marks the entity dirty
+                                // (and invalidates the old navigation); plain object: data property.
+                                modelClass[def.foreignKey] = fkVal;
+                            }
+                        } else if ((value === null || typeof value !== 'object') && def && def.relationshipType === 'belongsTo' && def.foreignKey && ('_' + def.foreignKey) in proto) {
+                            proto['_' + def.foreignKey] = value;       // legacy idiom `post.author = authorId`
+                        }
+                        delete proto['__loading_' + entityField];
+                        proto["_" + entityField] = value;
                     },
                     get : function(){
-                        let ent = tools.findEntity(entityField, this.__context);
-                        if(!ent){
-                            const parentEntity = tools.findEntity(this.__name, this.__context);
-                            if(parentEntity){
-                                ent = tools.findEntity(parentEntity.__entity[entityField].foreignTable, this.__context);
-                                if(!ent){
-                                    return  `Error - Entity ${parentEntity.__entity[entityField].foreignTable} not found. Please check your context for proper name.`
-                                }
-                            }
-                            else{
-                                return  `Error - Entity ${parentEntity} not found. Please check your context for proper name.`
-                            }
-                        }
-    
-                        
-                        if(currentEntity[entityField].relationshipType === "belongsTo"){
-                            if(currentEntity[entityField].lazyLoading){
-                                 // TODO: UPDATE THIS CODE TO USE SOMETHING ELSE - THIS WILL NOT WORK WHEN USING DIFFERENT DATABASES BECAUSE THIS IS USING SQLITE CODE. 
-                            
-                                 const name = currentEntity[entityField].foreignKey;
-                                 var priKey = tools.getPrimaryKeyObject(ent.__entity);
-     
-                                 //var idValue = currentEntity[entityField].foreignKey;
-                                 const currentValue = this.__proto__[`_${name}`];
-                                 const val = this["__proto__"]["_"+entityField];
-                                 var modelValue = null;
-                                 if(!val){
-                                    modelValue = ent.where(`r => r.${priKey} == ${ currentValue }`).single();
-                                     
-                                 }
-                                 else{
-                                    modelValue = val;
-                                 }
-     
-                                 this[entityField] = modelValue;
-                            }
-                            else{
-                                return this["__proto__"]["_" + entityField];
-                            }
-                        }
-                        else{
-                            // user.tags = gets all tags related to user
-                            // tag.users = get all users related to tags
-                            if(currentEntity[entityField].lazyLoading){
-                                var priKey = tools.getPrimaryKeyObject(this.__entity);
-                                var entityName = currentEntity[entityField].foreignTable === undefined ? entityField : currentEntity[entityField].foreignTable;
-                                let tableName = "";
-                                if(entityName){
-                                    switch(currentEntity[entityField].type){
-                                        // TODO: move the SQL generation part to the SQL builder so that we can later on use many diffrent types of SQL databases. 
-                                        case "hasManyThrough" :
-                                            try{
-                                                const joiningEntity = this.__context[tools.capitalize(entityName)];
-                                                const entityFieldJoinName = currentEntity[entityField].foreignTable === undefined? entityField : currentEntity[entityField].foreignTable;
-                                                const _thirdEntity = this.__context[tools.capitalize(entityFieldJoinName)];
-                                                const firstJoiningID = joiningEntity.__entity[this.__entity.__name].foreignTable;
-                                                const secondJoiningID = Object.values(joiningEntity.__entity).find(e => e.foreignTable === ent.__name);
-                                                if(firstJoiningID && secondJoiningID )
-                                                {
-                                                    var modelValue = ent.include(`p => p.${entityFieldJoinName}.select(j => j.${joiningEntity.__entity[this.__entity.__name].foreignKey})`).include(`p =>p.${this.__entity.__name}`).where(`r =>r.${this.__entity.__name}.${priKey} = ${this[priKey]}`).toList();
-                                                    // var modelQuery = `select ${selectParameter} from ${this.__entity.__name} INNER JOIN ${entityName} ON ${this.__entity.__name}.${priKey} = ${entityName}.${firstJoiningID} INNER JOIN ${entityField} ON ${entityField}.${joinTablePriKey} = ${entityName}.${secondJoiningID} WHERE ${this.__entity.__name}.${priKey} = ${ this[priKey]}`;
-                                                    // var modelValue = ent.raw(modelQuery).toList();
-                                                    this[entityField] = modelValue;
-                                                }
-                                                else{
-                                                    return "Joining table must declaire joining table names"
-                                                }
-                                            }
-                                            catch(error){
-                                                return error;
-                                            }
-                                        /*
-                                        select * from User 
-                                        INNER JOIN Tagging ON User.id = Tagging.user_id
-                                        INNER JOIN Tag ON Tag.id = Tagging.tag_id
-                                        WHERE Tagging.user_id = 13
-                                        */
-                                        break;
-                                        case "hasOne" : 
-                                            var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
-                                            if(entityName){
-                                                tableName = entityName.foreignKey;
-                                            }
-                                            else{
-                                                return `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
-                                            }
-    
-                                            //var jj = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).single();
-                                            var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).single();
-                                            this[entityField] = modelValue;
-                                        break;
-                                        case "hasMany" : 
-                                            var entityName = tools.findForeignTable(this.__entity.__name, ent.__entity);
-                                            if(entityName){
-                                                tableName = entityName.foreignKey;
-                                            }
-                                            else{
-                                                return  `Error - Entity ${ent.__entity.__name} has no property named ${this.__entity.__name}`;
-                                            }
-                                            //var modelValue = ent.raw(`select * from ${entityName} where ${tableName} = ${ this[priKey] }`).toList();
-                                            var modelValue = ent.where(`r => r.${tableName} == ${this[priKey]}`).toList();
-                                            this[entityField] = modelValue;
-                                        break;
-                                    }
-                                }
-                                else{
-                                    return  "Entity name must be defined"
-                                }
-                            }
-                            else{
-                                return this["__proto__"]["_" + entityField];
-                            }
-                        }
-                        
-                        
-                        return this["__proto__"]["_" + entityField];
+                        // Navigation getter (EF semantics, adapted to async JS drivers):
+                        //  - already loaded (via include() or a previous load) -> the value, synchronously;
+                        //  - lazyLoadingOff() and not loaded -> null (EF: null when not loaded);
+                        //  - otherwise -> a Promise that loads it ONCE via the engine-agnostic,
+                        //    parameterized context.loadNavigation() and caches the result, so
+                        //    `await post.author` works on every engine. (The old getter issued
+                        //    SQLite-shaped SQL with the key VALUE interpolated into the lambda.)
+                        // Resolve the backing slot from the accessor OWNER, never from
+                        // `this`: a derived object (Object.create(entity), used by the
+                        // engines) must not end up with its own shadowing `_<nav>`.
+                        const proto = Object.getPrototypeOf(modelClass);
+                        const loaded = proto['_' + entityField];
+                        if (loaded !== undefined && loaded !== null && !(typeof loaded.then === 'function')) return loaded;
+                        const def = currentEntity[entityField];
+                        if (!def || def.lazyLoading === false) return (loaded === undefined) ? null : loaded;
+                        const ctx = modelClass.__context;
+                        if (!ctx || typeof ctx.loadNavigation !== 'function') return (loaded === undefined) ? null : loaded;
+                        const inflightKey = '__loading_' + entityField;
+                        if (proto[inflightKey] && typeof proto[inflightKey].then === 'function') return proto[inflightKey];
+                        const p = ctx.loadNavigation(modelClass, entityField).then(
+                            (v) => { proto['_' + entityField] = v; delete proto[inflightKey]; return v; },
+                            (err) => { delete proto[inflightKey]; throw err; }
+                        );
+                        proto[inflightKey] = p;
+                        p.catch(() => {});   // awaiters still see the rejection; avoids an unhandled-rejection crash when un-awaited
+                        return p;
                     }
                   });
 

@@ -767,7 +767,10 @@ class queryMethods{
 
         // Check cache first (if enabled for this query)
         if (this.__useCache) {
-            const cached = this.__context._queryCache.get(cacheKey);
+            // `await` so an async cache (RedisQueryCache) works: without it a
+            // Promise is always truthy and `.cache()` queries returned a
+            // Promise-of-entity instead of the entity.
+            const cached = await this.__context._queryCache.get(cacheKey);
             if (cached) {
                 this.__reset();
                 // Cached entities already have methods - return directly
@@ -824,7 +827,10 @@ class queryMethods{
 
         // Check cache first (if enabled for this query)
         if (this.__useCache) {
-            const cached = this.__context._queryCache.get(cacheKey);
+            // `await` so an async cache (RedisQueryCache) works: without it a
+            // Promise is always truthy and `.cache()` queries returned a
+            // Promise-of-entity instead of the entity.
+            const cached = await this.__context._queryCache.get(cacheKey);
             if (cached) {
                 this.__reset();
                 // Cached entities already have methods - return array directly
@@ -874,7 +880,7 @@ class queryMethods{
     // Returns an object with property setters that track changes
     new(){
         const newEntity = {
-            __ID : Math.floor((Math.random() * 100000) + 1),
+            __ID : null,   // assigned sequentially by context.__track (collision-free; a random id here could collide in the identity map)
             __dirtyFields : [],
             __state : "insert",
             __entity : this.__entity,
@@ -1034,6 +1040,12 @@ class queryMethods{
                                         // by DB hydration in
                                         // entityTrackerModel.build().
                                         const navVal = this.__proto__["_" + navName];
+                                        if (navVal && typeof navVal === 'object' && navVal.__entity) {
+                                            // An assigned parent ENTITY: the FK column reads its key.
+                                            const def = navVal.__entity;
+                                            const pk = Object.keys(def).find(k => def[k] && typeof def[k] === 'object' && def[k].primary === true);
+                                            return pk ? navVal[pk] : undefined;
+                                        }
                                         return navVal !== undefined
                                             ? navVal
                                             : this.__proto__["_" + fkName];

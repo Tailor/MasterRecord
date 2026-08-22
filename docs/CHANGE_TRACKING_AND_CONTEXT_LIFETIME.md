@@ -54,6 +54,9 @@ If you set a `no-track` default on a shared/long-lived context, remember every w
 | `context.hasChanges()` / `context.entries([model])` | `ChangeTracker.HasChanges()` / `Entries()` | Pending changes? / all tracked entries. |
 | `context.add(e)` / `context.remove(e)` | `Add` / `Remove` | Context-level add/remove (resolves the owning dbset). |
 | `ctx.Model.find(pk)` | `Find` | Identity map first — no query if the row is already tracked. |
+| `await ctx.entry(e).load('nav')` / `ctx.loadNavigation(e, 'nav')` | `Entry(e).Reference(n).Load()` / `Collection(n).Load()` | Explicit loading of a navigation on any engine (parameterized). `entry(e).isLoaded('nav')`. |
+| `await post.author` (lazy) | lazy-loading proxies | An unloaded navigation returns a Promise that loads it once and caches it; loaded navigations read synchronously. `lazyLoadingOff()` → `null` until loaded explicitly. |
+| `post.author = anAuthor` / `post.author_id = id` | relationship fix-up | Assigning a parent sets the FK and marks dirty; changing the FK invalidates a loaded parent. Engines persist the **key**, never the navigation object. |
 
 `clearChangeTracker()` drops pending changes, so on a shared context it can destroy another in-flight request's writes — it is not a safe per-request mitigation. Use request-scoped contexts or `asNoTracking()` instead.
 

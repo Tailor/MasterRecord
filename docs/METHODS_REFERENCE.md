@@ -77,6 +77,8 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `.cache()`, `.last()`, `.exists()`, `.findById()`, `.count()`, `.removeRange()`, `.track()` | — | (existing, previously undocumented here) |
 | `context.add(e)` / `remove(e)` / `addRange` / `removeRange` | `Add/Remove` | Context-level add/remove |
 | `context.entry(e)` / `entries([model])` / `hasChanges()` | `Entry/Entries/HasChanges` | Change-tracker introspection |
+| `await context.entry(e).load('nav')` / `context.loadNavigation(e, 'nav')` / `entry(e).isLoaded('nav')` | `Reference(n).Load()` / `Collection(n).Load()` | Explicit loading of belongsTo / hasOne / hasMany / hasManyThrough (any engine) |
+| `await entity.nav` (lazy, default) / `.lazyLoadingOff()` → `null` until loaded | lazy loading | Unloaded navigation returns a Promise that loads once and caches; loaded reads are synchronous |
 | `context.transaction(fn)` / `beginTransaction/commit/rollback` / savepoints | `Database.BeginTransaction` | Explicit transactions |
 | `context.queryFilter(model, name, lambda, ...args)` | `HasQueryFilter` | Global (named) query filters |
 | `context.on(event, fn)` | `SavingChanges`/interceptors | `savingChanges`, `savedChanges`, `saveChangesFailed`, `tracked`, `stateChanged`, `command`, `retry` |

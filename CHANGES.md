@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.13.0 — navigation loading done the EF way (explicit/lazy loading, fix-up) + async query cache
+
+Closes the three "outright bugs" from the EF gap analysis addendum.
+
+- **Explicit loading** (EF `Entry(e).Reference(n).Load()` / `Collection(n).Load()`): `await ctx.entry(e).load('nav')`, `ctx.loadNavigation(e, 'nav')`, `ctx.entry(e).isLoaded('nav')` / `ctx.isNavigationLoaded(e, 'nav')`. Works for `belongsTo`, `hasOne`, `hasMany` and `hasManyThrough` on **every engine**, through the normal parameterized query builder (the old getter issued SQLite-shaped SQL with the key *value* interpolated into the lambda — a string key with a quote broke it, and it was an injection surface).
+- **Lazy loading adapted to async drivers:** reading an unloaded navigation with lazy loading on (default) returns a Promise that loads it **once** and caches it (`await post.author`); after that (or after `include()`/explicit load) the read is synchronous. With `lazyLoadingOff()` an unloaded navigation reads `null` (EF). Errors are thrown, not returned as strings. An un-awaited lazy read can no longer crash the process with an unhandled rejection.
+- **Relationship fix-up (EF):** `post.author = someAuthor` sets `post.author_id` and marks the entity dirty; changing `post.author_id` invalidates a previously loaded `post.author` so the next read re-resolves instead of returning a stale parent; the legacy idiom `post.author = authorId` still works and keeps the FK column in sync.
+- **Engines never persist a navigation object.** All three engines read the FK value for a `belongsTo` field through one helper (`Tools.foreignKeyValue`) — an assigned entity → its key, an assigned primitive, or the FK column — and never through the navigation getter. Previously a loaded navigation (or the lazy Promise) could leak into the UPDATE (`Type mismatch … got object`), and invoking the getter on the engines' derived clean model wrote the lazily-loaded parent as an own property on the real entity, shadowing the slot (saves then wrote the *old* key).
+- **Inserts** accept a parent entity, an id on the navigation, or the FK column, on plain `new Model()`, `.new()` and `add()`-ed objects; an already-persisted parent assigned to a `.new()` entity is no longer re-INSERTed (`INSERT failed: No columns to insert`) — its key is used (EF fix-up). `.new()` no longer assigns a random `__ID` (same identity-map collision class fixed for queried entities in 1.5.12).
+- **`RedisQueryCache` actually works:** `.cache()` reads now `await` the cache `get()`, so an async cache returns the entity rather than a Promise-of-entity being treated as a hit.
+
+New tests: `test/navigation-loading.test.js` (lazy belongsTo via a string PK containing a quote, caching, fix-up on entity assignment and persisted FK; explicit `entry().load()` for hasMany/hasOne/hasManyThrough incl. empty; `lazyLoadingOff()` → null then explicit load; FK-column change invalidating a loaded parent; legacy id assignment; inserts via entity/id/FK column on plain and `.new()` objects). Full suite green (0 fail, 370 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.12.0 — query & change-tracker ergonomics (EF Find, Entry, aggregates, ThenBy, Distinct, Any, context.Add/Remove)
 
 Closes gap-analysis #8, #9 and most of #11.

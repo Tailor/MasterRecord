@@ -794,7 +794,7 @@ class postgresEngine {
                 // bypassing get() which may change the type (e.g. parseFloat)
                 let persistedValue = model["_" + fieldName];
                 if (persistedValue === undefined) {
-                    persistedValue = model[fieldName];
+                    persistedValue = (model.__entity[fieldName] && model.__entity[fieldName].relationshipType === "belongsTo") ? tools.foreignKeyValue(model, fieldName) : model[fieldName];
                 }
                 const isEmptyString = (typeof persistedValue === 'string') && (persistedValue.trim() === '');
                 if (persistedValue === undefined || persistedValue === null || isEmptyString) {
@@ -810,7 +810,7 @@ class postgresEngine {
             switch (type) {
                 case "belongsTo": {
                     const foreignKey = model.__entity[dirtyFields[column]].foreignKey;
-                    let fkValue = model[dirtyFields[column]];
+                    let fkValue = tools.foreignKeyValue(model, dirtyFields[column]);
                     // Apply toDatabase transformer
                     try {
                         fkValue = FieldTransformer.toDatabase(fkValue, model.__entity[dirtyFields[column]], model.__entity.__name, dirtyFields[column]);
@@ -823,9 +823,8 @@ class postgresEngine {
                         throw new Error(`UPDATE failed: ${typeError.message}`);
                     }
                     fkValue = $that._convertValueForDatabase(fkValue, model.__entity[dirtyFields[column]].type);
-                    const fore = `_${dirtyFields[column]}`;
                     sqlParts.push(`${$that._q(foreignKey)} = $${paramIndex++}`);
-                    params.push(model[fore]);
+                    params.push(fkValue);
                     break;
                 }
 
@@ -944,15 +943,11 @@ class postgresEngine {
 
         for (const column in modelEntity) {
             if (column.indexOf("__") === -1) {
-                let fieldColumn = fields[column];
-
-                // 🔥 FIX: For belongsTo relationships, also check the foreignKey field name
-                // Users can set either orgRole.User = obj OR orgRole.user_id = 2
-                if ((fieldColumn === undefined || fieldColumn === null) &&
-                    modelEntity[column].relationshipType === "belongsTo" &&
-                    modelEntity[column].foreignKey) {
-                    fieldColumn = fields[modelEntity[column].foreignKey];
-                }
+                // belongsTo: persist the FK VALUE (assigned entity -> its PK, or
+                // the primitive / FK column), never the navigation getter.
+                let fieldColumn = (modelEntity[column] && modelEntity[column].relationshipType === "belongsTo")
+                    ? tools.foreignKeyValue(fields, column)
+                    : fields[column];
 
                 // Auto-increment PKs are DB-assigned — never emit an unset one.
                 // "Unset" surfaces as undefined/null (a .new() getter) or as the

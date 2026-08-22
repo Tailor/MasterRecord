@@ -126,6 +126,55 @@ class Tools{
 
     }
 
+    /**
+     * Read a field's stored value WITHOUT invoking a navigation getter:
+     * a plain data property (new Model() before tracking accessors exist),
+     * else the tracked backing slot `_<key>` on the prototype.
+     */
+    static dataValue(obj, key) {
+        if (!obj || typeof obj !== 'object') return undefined;
+        const d = Object.getOwnPropertyDescriptor(obj, key);
+        if (d && 'value' in d) return d.value;
+        const proto = Object.getPrototypeOf(obj);
+        if (proto && ('_' + key) in proto) return proto['_' + key];
+        return undefined;
+    }
+
+    /**
+     * The foreign-key VALUE to persist for a belongsTo field — the single place
+     * the engines read it for INSERT/UPDATE, so a loaded navigation entity (or
+     * an in-flight lazy-load Promise) can never leak into SQL.
+     *
+     * Resolution order (EF fix-up semantics):
+     *  1. the navigation slot: an assigned entity -> its primary key; an
+     *     assigned primitive (`post.author = authorId`) -> itself; null -> null;
+     *  2. otherwise the FK column itself (`post.author_id`).
+     */
+    static foreignKeyValue(model, fieldName) {
+        if (!model || typeof model !== 'object') return undefined;
+        const def = model.__entity ? model.__entity[fieldName] : undefined;
+        const nav = Tools.dataValue(model, fieldName);
+        if (nav === null) return null;
+        if (nav !== undefined && typeof nav !== 'function' && !(typeof nav.then === 'function')) {
+            if (typeof nav === 'object') {
+                if (nav.__entity) {
+                    const pk = Tools.getPrimaryKeyObject(nav.__entity);
+                    const pkVal = pk ? Tools.dataValue(nav, pk) : undefined;
+                    if (pkVal !== undefined) return pkVal;
+                } else if (!(nav instanceof Date)) {
+                    return nav;              // plain object: let the type validator report it
+                }
+            } else {
+                return nav;
+            }
+        }
+        if (def && def.foreignKey) {
+            const fk = Tools.dataValue(model, def.foreignKey);
+            if (fk !== undefined && (fk === null || (typeof fk !== 'object' && typeof fk !== 'function'))) return fk;
+        }
+        return undefined;
+    }
+
     static removePrimarykeyandVirtual(currentModel, modelEntity){
         const newCurrentModel = Object.create(currentModel);
 

@@ -338,6 +338,16 @@ class InsertManager {
 
                 // check if model is an object. If so insert the child first then the parent.
                 if (typeof newPropertyModel === 'object' && newPropertyModel !== null) {
+                    // An already-persisted principal (tracked entity with a key, not
+                    // pending insert) is NOT re-inserted — EF fix-up: just take its key.
+                    if (newPropertyModel.__entity && newPropertyModel.__state !== 'insert') {
+                        const parentPk = tools.getPrimaryKeyObject(newPropertyModel.__entity);
+                        const parentPkVal = parentPk ? tools.dataValue(newPropertyModel, parentPk) : undefined;
+                        if (parentPkVal !== undefined && parentPkVal !== null && typeof parentPkVal !== 'function') {
+                            currentModel[foreignKey] = parentPkVal;
+                            continue;
+                        }
+                    }
                     newPropertyModel.__entity = tools.getEntity(entity, this._allEntities);
                     const propertyCleanCurrentModel = tools.clearAllProto(newPropertyModel);
                     this.validateEntity(propertyCleanCurrentModel, newPropertyModel, newPropertyModel.__entity);
