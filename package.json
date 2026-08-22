@@ -1,12 +1,13 @@
 {
   "name": "masterrecord",
-  "version": "1.5.15",
+  "version": "1.5.16",
   "description": "An Object-relational mapping for the Master framework. Master Record connects classes to relational database tables to establish a database with almost zero-configuration ",
   "type": "module",
   "main": "./MasterRecord.js",
   "exports": {
     ".": "./MasterRecord.js",
     "./context": "./context.js",
+    "./ContextPool": "./ContextPool.js",
     "./Tools": "./Tools.js",
     "./SQLLiteEngine": "./SQLLiteEngine.js",
     "./mySQLEngine": "./mySQLEngine.js",

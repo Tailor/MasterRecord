@@ -1,5 +1,16 @@
 # MasterRecord Changelog
 
+## v1.5.16 — context pooling (EF's AddDbContextPool) + reset(); change-tracking/lifetime docs
+
+Completes the EF-faithful context-lifetime story so request-scoped contexts are affordable even with many contexts registered.
+
+- **`ContextPool`** (EF Core's `AddDbContextPool`): a bounded pool of context instances kept **with their connections warm**. `acquire()` rents an exclusive, reset instance; `release(ctx)` resets it and returns it; `use(fn)` does acquire→run→release (releasing even on error); `drain()` closes idle instances at shutdown. Each request still gets its own instance (no cross-request sharing), but you pay connection/setup cost once instead of per request. Exported as `masterrecord.ContextPool` and `masterrecord/ContextPool`.
+- **`context.reset()`**: the "return to pool" primitive — detaches all tracked entities, clears the dirty index and the query cache, but **keeps the connection open** (distinct from `close()`, which also tears down the connection). This is what lets a pooled instance behave like a fresh per-request context.
+
+**Docs:** new **`docs/CHANGE_TRACKING_AND_CONTEXT_LIFETIME.md`** documents the whole model shipped across 1.5.9–1.5.16 — how tracking works, `asNoTracking()`/`asTracking()`, `setQueryTrackingBehavior()`, `clearChangeTracker()`/`detach()`, `reset()`/`close()`, `ContextPool`, why singleton contexts are unsafe, and a 1:1 mapping to Entity Framework Core. The readme's Best Practices now leads with context scoping.
+
+New tests: `test/context-pool-and-reset.test.js` — `reset()` clears the unit of work but keeps the connection usable; the pool lends a reset instance and returns it (writes persist across rentals; a new rental starts empty); `use()` releases even when the body throws. Full suite green (0 fail, 312 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.15 — close() releases the change tracker (EF Dispose parity for request-scoped contexts)
 
 EF Core's bounded-memory model is a short-lived, request-scoped `DbContext` that is **disposed** per unit of work — disposal releases the whole `ChangeTracker`. masterrecord's `close()` did everything *except* that: it dropped the live-context registration and the connection-pool ref, but left the tracked-entity map and dirty index populated, so a scoped context only freed its entities when the context object itself was GC'd.

@@ -3013,6 +3013,23 @@ class context {
     }
 
     /**
+     * Reset this context's unit of work for REUSE — detach all tracked entities,
+     * clear the dirty index and the query cache — WITHOUT closing the database
+     * connection. This is the "return to pool" primitive behind context pooling
+     * (EF Core resets a pooled DbContext's ChangeTracker on release): the
+     * connection stays warm so the instance can serve the next request cheaply.
+     *
+     * Use `close()` to actually tear down the connection; use `reset()` to make
+     * a kept-alive instance behave like a fresh per-request context.
+     */
+    reset() {
+        this.__clearTracked();      // detach all + clear the dirty index
+        this.clearQueryCache();     // drop cached query results
+        this.__clearErrorHandler(); // clear any pending error handler
+        return this;
+    }
+
+    /**
      * Detach a single entity from change tracking. Pending changes on it are
      * dropped and it is no longer part of any future saveChanges().
      */

@@ -81,6 +81,10 @@
 
 ## ⚠️ Best Practices (CRITICAL)
 
+### 0. Scope your context per request (not a singleton)
+
+A context is a **unit of work** and must be scoped **per request**, like an Entity Framework `DbContext` — never shared as a process-wide singleton across concurrent requests (which causes lost writes and unbounded memory). Create one per request and `close()` it, or use a `ContextPool` (EF's `AddDbContextPool`) to keep instances warm. For read-only queries, use `.asNoTracking()` so nothing is retained. See **[Change Tracking & Context Lifetime](docs/CHANGE_TRACKING_AND_CONTEXT_LIFETIME.md)** for the full model (`asNoTracking` / `asTracking` / `setQueryTrackingBehavior` / `clearChangeTracker` / `reset` / `close` / `ContextPool`).
+
 ### 1. Creating Entity Instances
 
 **ALWAYS** use `context.Entity.new()` to create new entity instances:
