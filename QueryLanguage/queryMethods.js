@@ -32,6 +32,41 @@ class queryMethods{
         // Tracking follows the context's default (EF's QueryTrackingBehavior);
         // override per query with .asNoTracking() / .asTracking().
         this.__noTracking = (context && context.__queryTrackingBehavior === 'no-track');
+        // Global query filters: applied once per execution unless ignored.
+        this.__ignoredFilters = null;   // null = apply all; true = ignore all; Set = ignore these names
+        this.__filtersApplied = false;
+    }
+
+    /**
+     * Skip this entity's global query filters for this query (EF Core
+     * IgnoreQueryFilters). With no argument ALL filters are ignored; pass an
+     * array of names to ignore only those (EF 10 named filters).
+     * @example db.Blog.ignoreQueryFilters().toList();              // include soft-deleted rows
+     * @example db.Blog.ignoreQueryFilters(['softDelete']).toList(); // keep the tenant filter
+     */
+    ignoreQueryFilters(names){
+        if (names === undefined || names === null || names === true) { this.__ignoredFilters = true; return this; }
+        const list = Array.isArray(names) ? names : [names];
+        this.__ignoredFilters = new Set(list.map(String));
+        return this;
+    }
+
+    /** Append the entity's active global query filters to the WHERE (once). */
+    __applyQueryFilters(){
+        if (this.__filtersApplied || this.__ignoredFilters === true) return;
+        this.__filtersApplied = true;
+        const ctx = this.__context;
+        if (!ctx || typeof ctx._queryFiltersFor !== 'function') return;
+        const filters = ctx._queryFiltersFor(this.__entity.__name);
+        for (const f of filters) {
+            if (this.__ignoredFilters instanceof Set && this.__ignoredFilters.has(f.name)) continue;
+            // Function args are resolved at query time with the context
+            // (e.g. the current tenant id held on the context instance).
+            const args = (f.args || []).map(a => (typeof a === 'function' ? a(ctx) : a));
+            const hasWhere = !!(this.__queryObject.script && this.__queryObject.script.where);
+            if (hasWhere) this.and(f.expr, ...args);
+            else this.where(f.expr, ...args);
+        }
     }
 
     /**
@@ -115,6 +150,10 @@ class queryMethods{
         const s = this.__queryObject.script;
         if (s.raw) throw new Error(`masterrecord: ${name}() cannot be combined with raw().`);
         if (s.include && s.include.length) throw new Error(`masterrecord: ${name}() does not support include() — filter on the table's own columns.`);
+        // Global query filters apply to set-based writes too (EF applies them to
+        // ExecuteUpdate/ExecuteDelete): a soft-delete filter keeps deleted rows
+        // out of a bulk update; a tenant filter scopes a bulk delete.
+        this.__applyQueryFilters();
         // Bootstrap the alias/entityMap when no clause was chained (same as count()).
         if (s.entityMap.length === 0) this.__queryObject.skipClause(this.__entity.__name);
     }
@@ -173,6 +212,8 @@ class queryMethods{
 
     __reset(){
         this.__queryObject.reset();
+        this.__filtersApplied = false;
+        this.__ignoredFilters = null;
     }
 
 
@@ -347,6 +388,9 @@ class queryMethods{
             str = this.__validateAndCollectParameters(str, args, 'count');
             this.__queryObject.count(str, this.__entity.__name);
         }
+
+        // Global query filters (soft delete / tenant) apply to counts too.
+        this.__applyQueryFilters();
 
         // Bootstrap the entityMap if no prior clause was chained. Without
         // this, a plain `.count()` produced empty FROM/alias on SQLite and
@@ -610,6 +654,7 @@ class queryMethods{
     }
 
     async single(){
+        this.__applyQueryFilters();   // global query filters (soft delete / tenant)
         // If no clauses were used before single(), seed defaults so SQL is valid
         if(this.__queryObject.script.entityMap.length === 0){
             this.__queryObject.skipClause(this.__entity.__name);
@@ -668,6 +713,7 @@ class queryMethods{
     }
 
     async toList(){
+        this.__applyQueryFilters();   // global query filters (soft delete / tenant)
         if(this.__queryObject.script.entityMap.length === 0){
             this.__queryObject.skipClause( this.__entity.__name);
         }

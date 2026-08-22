@@ -266,6 +266,14 @@ class context {
     // saveChanges() reads ONLY this set, so a flush is O(changes) — not O(total
     // tracked) — and an empty save is O(1), even with tens of thousands tracked.
     __dirtyEntities = new Set();
+    // Named global query filters (EF Core HasQueryFilter / named filters in
+    // EF 10): Map<tableName, Map<filterName, { expr, args }>>. Applied to every
+    // query on that entity unless the query calls ignoreQueryFilters().
+    __queryFilters = new Map();
+    // Context-level event listeners (EF SavingChanges/SavedChanges/
+    // SaveChangesFailed, ChangeTracker.Tracked/StateChanged, and a 'command'
+    // observer akin to IDbCommandInterceptor): Map<event, Set<fn>>.
+    __listeners = new Map();
     __relationshipModels = [];
     __contextSeedData = {};  // Store seed data by table name
     __contextSeedConfig = {  // Seed data configuration
@@ -395,6 +403,8 @@ class context {
             );
         }
         this._ready = true;
+        // 'command' listeners registered before the engine was up attach now.
+        if (this._hasListeners('command')) this._attachCommandObserver();
     }
 
     /**
@@ -1432,10 +1442,136 @@ class context {
         // column's type from its parent's primary-key type. Idempotent.
         this.#resolveBelongsToTypes();
 
-        // Return chainable object with seed() method
-        return {
-            seed: (data) => this.#addSeedData(tableName, data)
+        // Return chainable object with seed() / queryFilter() methods
+        const chain = {
+            seed: (data) => this.#addSeedData(tableName, data),
+            // EF: modelBuilder.Entity<T>().HasQueryFilter([name,] predicate)
+            queryFilter: (...a) => { this.queryFilter(tableName, ...a); return chain; },
         };
+        return chain;
+    }
+
+    // ---- Global query filters (EF Core HasQueryFilter / named filters) ------
+
+    /**
+     * Attach a global query filter to an entity. The predicate is a where-lambda
+     * (same syntax as .where()) appended to EVERY query on that entity — toList,
+     * single/first/last, count/exists, findById, executeUpdate/executeDelete —
+     * unless the query opts out with .ignoreQueryFilters(). Typical uses: soft
+     * delete and multi-tenancy.
+     *
+     * Filters are NAMED (EF 10): several can coexist on one entity and be
+     * disabled selectively. Omit the name for a single unnamed filter.
+     * Parameter args may be values OR functions; a function is called at query
+     * time with the context, so e.g. a tenant id can come from the context
+     * instance (EF filters referencing DbContext fields).
+     *
+     * @example
+     * this.dbset(Blog)
+     *     .queryFilter('softDelete', 'b => b.deletedAt == null')
+     *     .queryFilter('tenant', 'b => b.tenantId == $$', (ctx) => ctx.tenantId);
+     * // or: ctx.queryFilter('Blog', 'softDelete', 'b => b.deletedAt == null');
+     */
+    queryFilter(modelName, nameOrPredicate, predicateOrArg, ...rest) {
+        let name, expr, args;
+        if (typeof predicateOrArg === 'string' || typeof predicateOrArg === 'function' && typeof nameOrPredicate === 'string' && !/=>/.test(nameOrPredicate)) {
+            name = String(nameOrPredicate); expr = predicateOrArg; args = rest;
+        } else {
+            name = '__default'; expr = nameOrPredicate; args = [predicateOrArg, ...rest].filter(a => a !== undefined);
+        }
+        if (typeof expr === 'function') expr = expr.toString();
+        if (typeof expr !== 'string' || !/=>/.test(expr)) {
+            throw new TypeError(`masterrecord: queryFilter expects a where-lambda (e.g. 'b => b.deletedAt == null'), got ${JSON.stringify(expr)}`);
+        }
+        if (!this.__queryFilters.has(modelName)) this.__queryFilters.set(modelName, new Map());
+        this.__queryFilters.get(modelName).set(name, { expr, args });
+        return this;
+    }
+
+    /** Remove a named (or the unnamed) global query filter from an entity. */
+    removeQueryFilter(modelName, name = '__default') {
+        const m = this.__queryFilters.get(modelName);
+        if (m) m.delete(name);
+        return this;
+    }
+
+    /** @private [{ name, expr, args }] for an entity (empty if none). */
+    _queryFiltersFor(modelName) {
+        const m = this.__queryFilters.get(modelName);
+        if (!m || m.size === 0) return [];
+        return Array.from(m, ([name, f]) => ({ name, expr: f.expr, args: f.args }));
+    }
+
+    // ---- Events / interceptors (EF SavingChanges, SavedChanges, SaveChangesFailed,
+    //      ChangeTracker.Tracked / StateChanged, IDbCommandInterceptor) --------------
+
+    /**
+     * Subscribe to a context event. Events:
+     *   'savingChanges'     { context, entries }          — before the flush; handlers may
+     *                                                       mutate entities / mark more dirty
+     *                                                       (audit columns, soft-delete); async ok
+     *   'savedChanges'      { context, entries }          — after a successful commit
+     *   'saveChangesFailed' { context, entries, error }   — before the error is rethrown
+     *   'tracked'           { context, entity }           — an entity entered tracking
+     *   'stateChanged'      { context, entity, state }    — an entity became dirty
+     *   'command'           { sql, params, durationMs, engine, error? } — every SQL command
+     * Returns an unsubscribe function.
+     */
+    on(event, handler) {
+        if (typeof handler !== 'function') throw new TypeError('masterrecord: on(event, handler) expects a function.');
+        if (!this.__listeners.has(event)) this.__listeners.set(event, new Set());
+        this.__listeners.get(event).add(handler);
+        if (event === 'command') this._attachCommandObserver();
+        return () => this.off(event, handler);
+    }
+
+    /** Subscribe for a single invocation. */
+    once(event, handler) {
+        const off = this.on(event, (payload) => { off(); return handler(payload); });
+        return off;
+    }
+
+    /** Unsubscribe. */
+    off(event, handler) {
+        const set = this.__listeners.get(event);
+        if (set) set.delete(handler);
+        return this;
+    }
+
+    _hasListeners(event) {
+        const set = this.__listeners.get(event);
+        return !!(set && set.size);
+    }
+
+    /** Fire synchronously (tracked / stateChanged / command). Listener errors are isolated. */
+    _emit(event, payload) {
+        const set = this.__listeners.get(event);
+        if (!set || set.size === 0) return;
+        for (const fn of Array.from(set)) {
+            try { fn(payload); } catch (e) { console.error(`[Context] '${event}' listener threw:`, e); }
+        }
+    }
+
+    /** Fire and await every listener in order (savingChanges / savedChanges / saveChangesFailed). */
+    async _emitAsync(event, payload) {
+        const set = this.__listeners.get(event);
+        if (!set || set.size === 0) return;
+        for (const fn of Array.from(set)) { await fn(payload); }
+    }
+
+    /** Snapshot of a change set for event payloads: [{ entity, state }]. */
+    _entriesOf(entities) {
+        return entities.map(e => ({ entity: e, state: e.__state, entityName: e.__entity ? e.__entity.__name : undefined }));
+    }
+
+    /** Forward engine command notifications to 'command' listeners. */
+    _attachCommandObserver() {
+        const eng = this._SQLEngine;
+        if (!eng || typeof eng.addCommandObserver !== 'function') return;
+        if (!this.__commandObserver) {
+            this.__commandObserver = (info) => { if (this._hasListeners('command')) this._emit('command', info); };
+        }
+        eng.addCommandObserver(this.__commandObserver);
     }
 
     // Walk every registered entity. For each column with relationshipType ===
@@ -2419,15 +2555,29 @@ class context {
         // O(total tracked). A read-heavy context can track tens of thousands of
         // clean rows; none of them are scanned here. (Self-heals if a clean
         // entity ever lingers in the index.)
-        const changeSet = [];
-        for (const e of this.__dirtyEntities) {
-            if (e && e.__state && e.__state !== 'track') changeSet.push(e);
-            else this.__dirtyEntities.delete(e);
-        }
+        const collectChangeSet = () => {
+            const cs = [];
+            for (const e of this.__dirtyEntities) {
+                if (e && e.__state && e.__state !== 'track') cs.push(e);
+                else this.__dirtyEntities.delete(e);
+            }
+            return cs;
+        };
+        let changeSet = collectChangeSet();
 
         if (changeSet.length === 0) {
             // Nothing dirty — O(1) no-op; do NOT touch the tracked set.
             return true;
+        }
+
+        // EF SavingChanges: handlers run BEFORE the flush and may mutate entities
+        // (audit columns), mark more entities dirty, or convert a delete into a
+        // soft-delete update. Re-collect the change set afterwards so those
+        // changes are included in this save.
+        if (this._hasListeners('savingChanges')) {
+            await this._emitAsync('savingChanges', { context: this, entries: this._entriesOf(changeSet) });
+            changeSet = collectChangeSet();
+            if (changeSet.length === 0) return true;
         }
 
         // Snapshot the committed unit of work: for each entity in the change set,
@@ -2483,6 +2633,9 @@ class context {
             }
 
             this._reconcileFlushed(captured);
+            if (this._hasListeners('savedChanges')) {
+                await this._emitAsync('savedChanges', { context: this, entries: this._entriesOf(changeSet) });
+            }
             return true;
         } catch (error) {
             this.__clearErrorHandler();
@@ -2490,6 +2643,10 @@ class context {
             // change set tracked and dirty so a retry can persist it — never
             // silently drop a pending write (the caller sees the rejection).
             console.error('[Context] Failed to save changes:', error);
+            if (this._hasListeners('saveChangesFailed')) {
+                try { await this._emitAsync('saveChangesFailed', { context: this, entries: this._entriesOf(changeSet), error }); }
+                catch (e) { console.error("[Context] 'saveChangesFailed' listener threw:", e); }
+            }
             throw error;
         }
     }
@@ -3011,6 +3168,10 @@ class context {
                         _ensurePoolReaper();
                     }
                 }
+                // Stop forwarding this (shared) engine's commands to a closed context.
+                if (this.__commandObserver && typeof this._SQLEngine.removeCommandObserver === 'function') {
+                    this._SQLEngine.removeCommandObserver(this.__commandObserver);
+                }
                 this._SQLEngine = null;
                 this.db = null;
                 return;
@@ -3272,7 +3433,9 @@ class context {
         // Idempotent: keyed by the unique __ID, so re-tracking the same object is
         // a no-op and distinct objects never collide. Map is the sole registry;
         // the list view derives from it, so they cannot desynchronise.
+        const wasTracked = this.__trackedEntitiesMap.has(model.__ID);
         this.__trackedEntitiesMap.set(model.__ID, model);
+        if (!wasTracked) this._emit('tracked', { context: this, entity: model });
         // Robustness: if the entity being tracked is ALREADY dirty, enqueue it in
         // the dirty index too. This guarantees the index is complete no matter
         // how an entity gets tracked (setter, add/remove, or a direct __track
@@ -3296,8 +3459,12 @@ class context {
      */
     __markDirty(model) {
         if (!model || model.__noTracking) return model;
+        // Capture BEFORE __track(): __track itself enqueues an already-dirty
+        // entity into the dirty index, which would mask the transition here.
+        const wasDirty = this.__dirtyEntities.has(model);
         this.__track(model);
         this.__dirtyEntities.add(model);
+        if (!wasDirty) this._emit('stateChanged', { context: this, entity: model, state: model.__state });
         return model;
     }
 

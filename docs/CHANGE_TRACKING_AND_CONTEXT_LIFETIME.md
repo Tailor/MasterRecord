@@ -163,6 +163,51 @@ await db.rollbackToSavepoint('beforeBulk');   // or releaseSavepoint('beforeBulk
 
 Inside a user transaction each `saveChanges()` is protected by a savepoint and does **not** commit by itself — a failed save leaves the outer transaction usable, exactly as in EF. The transaction holds the context's engine lock, so another unit of work on the same pooled connection waits rather than interleaving. Nested `beginTransaction()` is rejected; use savepoints.
 
+## Set-based writes (EF's `ExecuteUpdate` / `ExecuteDelete`)
+
+One SQL statement over the rows a query selects — no loading, no change tracker, returns rows affected:
+
+```javascript
+import { sql } from 'masterrecord/sql';
+await db.Blog.where('b => b.rating < $$', 3).executeUpdate({ hidden: true, views: sql`views + 1` });
+await db.Session.where('s => s.expiresAt < $$', Date.now()).executeDelete();
+```
+
+Setter values are parameterized; `sql\`…\`` inlines a trusted fragment (it refuses interpolations). Like EF, these don't refresh tracked instances — avoid mixing them with pending tracked edits to the same rows. Inside `transaction()` they join the transaction.
+
+## Global query filters (EF's `HasQueryFilter`)
+
+A filter is a where-lambda appended to every query on an entity — soft delete and multi-tenancy without repeating the predicate:
+
+```javascript
+this.dbset(Blog)
+    .queryFilter('softDelete', 'b => b.deletedAt == null')
+    .queryFilter('tenant', 'b => b.tenantId == $$', ctx => ctx.tenantId);   // evaluated per query
+
+await db.Blog.toList();                                   // filtered
+await db.Blog.ignoreQueryFilters().toList();              // all rows
+await db.Blog.ignoreQueryFilters(['softDelete']).toList(); // EF 10: ignore by name
+```
+
+Filters apply to `toList`/`single`/`first`/`findById`/`count`/`exists` and to `executeUpdate`/`executeDelete`. They currently apply to the root entity of a query (not inside `include()`d navigations).
+
+## Events & interceptors (EF's `SavingChanges` / interceptors)
+
+```javascript
+db.on('savingChanges', ({ entries }) => {
+    for (const { entity, state } of entries) {
+        if (state === 'modified') entity.updatedAt = Date.now();            // audit column
+        if (state === 'delete') { entity.__state = 'modified'; entity.deletedAt = Date.now(); } // soft delete
+    }
+});
+db.on('savedChanges', ({ entries }) => { /* after commit */ });
+db.on('saveChangesFailed', ({ error }) => { /* before rethrow */ });
+db.on('command', ({ sql, params, durationMs, engine, error }) => { /* every SQL statement */ });
+db.on('tracked', …); db.on('stateChanged', …);
+```
+
+`on()` returns an unsubscribe function; `once()` fires a single time. `savingChanges` runs before the flush and the change set is re-collected afterwards, so edits made by handlers ship in the same save.
+
 ## Why not a singleton context?
 
 A singleton context shared across concurrent requests is the root cause of an entire class of bugs (and is unsupported in EF for the same reasons):

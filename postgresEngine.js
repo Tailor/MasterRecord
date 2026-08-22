@@ -97,6 +97,16 @@ class postgresEngine {
         return await this._runWithParams(sqlQuery, params);
     }
 
+    // ---- Command observation (EF IDbCommandInterceptor / CommandExecuted) ----
+    addCommandObserver(fn){ (this.__commandObservers ||= new Set()).add(fn); }
+    removeCommandObserver(fn){ if (this.__commandObservers) this.__commandObservers.delete(fn); }
+    _notifyCommand(info){
+        if (!this.__commandObservers || this.__commandObservers.size === 0) return;
+        for (const fn of Array.from(this.__commandObservers)) {
+            try { fn(info); } catch (e) { console.error('[PostgreSQL] command observer threw:', e); }
+        }
+    }
+
     /** Rows matched by the last UPDATE/DELETE (pg Result.rowCount). */
     affectedRows(result){
         if (!result) return 0;
@@ -1119,14 +1129,21 @@ class postgresEngine {
             // Inside a transaction, reuse the transaction's client so every
             // statement is part of the same BEGIN..COMMIT unit (and don't
             // release it — endTransaction/errorTransaction owns its lifecycle).
+            const start = process.hrtime.bigint();
+            const done = (error) => this._notifyCommand({ sql: query, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'postgres', ...(error ? { error } : {}) });
             if (this._txnClient) {
-                return await this._txnClient.query(query, params);
+                try { const r = await this._txnClient.query(query, params); done(); return r; }
+                catch (error) { done(error); throw error; }
             }
 
             const client = await this.pool.connect();
             try {
                 const result = await client.query(query, params);
+                done();
                 return result;
+            } catch (error) {
+                done(error);
+                throw error;
             } finally {
                 client.release();
             }

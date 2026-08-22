@@ -1,5 +1,25 @@
 # MasterRecord Changelog
 
+## v1.9.0 — named global query filters (EF HasQueryFilter) + context events/interceptors
+
+Closes gap-analysis #4 (query filters) and #10 (context-level interceptors) — together they deliver EF's soft-delete, multi-tenancy and audit recipes.
+
+**Global query filters (EF Core `HasQueryFilter`, named filters in EF 10, `IgnoreQueryFilters`)**
+- `this.dbset(Blog).queryFilter('softDelete', 'b => b.deletedAt == null').queryFilter('tenant', 'b => b.tenantId == $$', ctx => ctx.tenantId)` (or `ctx.queryFilter('Blog', name, lambda, ...args)`; omit the name for a single unnamed filter). The predicate is a normal where-lambda.
+- Applied to **every** query on the entity: `toList`/`single`/`first`/`last`/`exists`/`findById`/`count` **and** `executeUpdate`/`executeDelete` (EF applies filters to ExecuteUpdate/Delete too). Composes with the user's `where()`/`and()` regardless of lambda alias.
+- **Named**: several coexist; `query.ignoreQueryFilters()` drops all for that query, `ignoreQueryFilters(['softDelete'])` drops only those (EF 10). `ctx.removeQueryFilter(model, name)`.
+- Args may be **functions evaluated at query time with the context** — the EF pattern of a filter referencing a DbContext field (`tenantId`).
+- Known limitation (documented): filters apply to the root entity of a query, not yet inside `include()`d navigations.
+
+**Events / interceptors (EF `SavingChanges`/`SavedChanges`/`SaveChangesFailed`, `ChangeTracker.Tracked`/`StateChanged`, `IDbCommandInterceptor`)**
+- `ctx.on(event, handler)` / `once` / `off` (returns an unsubscribe fn). Events:
+  - `savingChanges { context, entries }` — runs **before** the flush and may mutate entities (audit columns) or convert a delete into a soft-delete (`entity.__state = 'modified'; entity.deletedAt = …`); the change set is **re-collected afterwards** so those edits ship in the same save. Async handlers are awaited.
+  - `savedChanges { context, entries }` after commit; `saveChangesFailed { context, entries, error }` before the error is rethrown.
+  - `tracked { context, entity }` when an entity enters tracking; `stateChanged { context, entity, state }` when it becomes dirty.
+  - `command { sql, params, durationMs, engine, error? }` for **every** SQL statement — engines now carry a command-observer set (`addCommandObserver`/`removeCommandObserver`); contexts attach on `on('command')` (also after init) and detach on `close()`. This is the hook Phase 5 logging/slow-query reporting builds on.
+
+New tests: `test/query-filters.test.js` (apply to list/count/single/findById, compose with user where incl. different alias, ignore all / ignore by name, query-time function args, executeUpdate/executeDelete respect filters, removeQueryFilter + ctx.queryFilter form) and `test/context-events.test.js` (audit-column stamping via savingChanges + savedChanges, delete→soft-delete conversion, saveChangesFailed with error, tracked/stateChanged, command observer with timing, once/unsubscribe). Full suite green (0 fail, 348 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.8.0 — executeUpdate / executeDelete (EF ExecuteUpdate/ExecuteDelete) + set-based bulk ops
 
 Closes gap-analysis #3. Set-based writes that run **one SQL statement** over the rows a query selects, **bypass the change tracker**, execute immediately, and return rows affected — exactly EF Core's `ExecuteUpdate`/`ExecuteDelete`.

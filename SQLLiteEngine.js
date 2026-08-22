@@ -182,7 +182,7 @@ class SQLLiteEngine {
                     console.debug("[SQL]", queryString.query);
                     console.debug("[Params]", params);
                 }
-                const queryReturn = this.db.prepare(queryString.query).get(...params);
+                const queryReturn = this._observed(queryString.query, params, () => this.db.prepare(queryString.query).get(...params));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -259,7 +259,7 @@ class SQLLiteEngine {
                     console.debug("[SQL]", queryCount);
                     console.debug("[Params]", params);
                 }
-                const queryReturn = this.db.prepare(queryCount).get(...params);
+                const queryReturn = this._observed(queryCount, params, () => this.db.prepare(queryCount).get(...params));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -290,7 +290,7 @@ class SQLLiteEngine {
                     console.debug("[SQL]", selectQuery.query);
                     console.debug("[Params]", params);
                 }
-                const queryReturn = this.db.prepare(selectQuery.query).all(...params);
+                const queryReturn = this._observed(selectQuery.query, params, () => this.db.prepare(selectQuery.query).all(...params));
                 return Promise.resolve(queryReturn);
             }
             return Promise.resolve(null);
@@ -1468,7 +1468,32 @@ class SQLLiteEngine {
             console.debug("[SQL]", query);
             console.debug("[Params]", params);
         }
-        return this.db.prepare(query).run(...params);
+        return this._observed(query, params, () => this.db.prepare(query).run(...params));
+    }
+
+    // ---- Command observation (EF IDbCommandInterceptor / CommandExecuted) ----
+    // Observers registered by contexts sharing this engine receive
+    // { sql, params, durationMs, engine: 'sqlite', error? } for every command.
+    addCommandObserver(fn){ (this.__commandObservers ||= new Set()).add(fn); }
+    removeCommandObserver(fn){ if (this.__commandObservers) this.__commandObservers.delete(fn); }
+    _notifyCommand(info){
+        if (!this.__commandObservers || this.__commandObservers.size === 0) return;
+        for (const fn of Array.from(this.__commandObservers)) {
+            try { fn(info); } catch (e) { console.error('[SQLite] command observer threw:', e); }
+        }
+    }
+    /** Run `exec` (sync) and notify observers with timing; rethrows errors. */
+    _observed(sql, params, exec){
+        if (!this.__commandObservers || this.__commandObservers.size === 0) return exec();
+        const start = process.hrtime.bigint();
+        try {
+            const out = exec();
+            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite' });
+            return out;
+        } catch (error) {
+            this._notifyCommand({ sql, params, durationMs: Number(process.hrtime.bigint() - start) / 1e6, engine: 'sqlite', error });
+            throw error;
+        }
     }
 
     // Engine-agnostic raw query backing the public ctx.query()/ctx.execute().
@@ -1482,7 +1507,7 @@ class SQLLiteEngine {
         }
         const stmt = this.db.prepare(query);
         const args = Array.isArray(params) ? params : (params === undefined ? [] : [params]);
-        return stmt.reader ? stmt.all(...args) : stmt.run(...args);
+        return this._observed(query, args, () => (stmt.reader ? stmt.all(...args) : stmt.run(...args)));
     }
 
     setDB(db, type){
