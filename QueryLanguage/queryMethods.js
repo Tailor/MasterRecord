@@ -3,6 +3,7 @@
 import entityTrackerModel from '../Entity/entityTrackerModel.js';
 import tools from '../Tools.js';
 import queryScript from './queryScript.js';
+import FieldTransformer from '../Entity/fieldTransformer.js';
 
 // Security: `.take()`/`.skip()` values are interpolated directly into
 // LIMIT/OFFSET (these clauses cannot be parameterized on SQLite/MySQL/Postgres).
@@ -56,6 +57,84 @@ class queryMethods{
     asTracking(){
         this.__noTracking = false;
         return this;
+    }
+
+    // ---- Set-based writes (EF Core ExecuteUpdate / ExecuteDelete) ----------
+    // One SQL statement over the rows the query selects. They bypass the
+    // change tracker entirely (tracked instances are NOT refreshed — don't mix
+    // them with pending tracked edits to the same rows), execute immediately,
+    // and return the number of rows affected. Inside ctx.transaction() they
+    // join the open transaction; otherwise each is its own autocommit statement.
+
+    /**
+     * UPDATE every row the query selects.
+     * @param {Object} setters - { column: value } — values are parameterized
+     *   (and run through the column's transformer); use `sql\`col + 1\`` (from
+     *   `masterrecord.sql` / 'masterrecord/sql') to reference existing values
+     *   (EF's SetProperty(b => b.X, b => b.X + 1)).
+     * @returns {Promise<number>} rows affected
+     * @example await db.Blog.where('b => b.rating < $$', 3).executeUpdate({ hidden: true, views: sql`views + 1` });
+     */
+    async executeUpdate(setters){
+        if (!setters || typeof setters !== 'object' || Array.isArray(setters) || Object.keys(setters).length === 0) {
+            throw new TypeError('masterrecord: executeUpdate(setters) expects a non-empty object of { column: value | sql`...` }.');
+        }
+        this.__guardExecuteQuery('executeUpdate');
+        const def = this.__entity;
+        const list = [];
+        for (const [col, val] of Object.entries(setters)) {
+            const f = def[col];
+            if (!f || typeof f !== 'object' || f.type === 'hasOne' || f.type === 'hasMany' || f.type === 'hasManyThrough') {
+                throw new Error(`masterrecord: executeUpdate — '${col}' is not a column of ${def.__name}.`);
+            }
+            if (f.primary) throw new Error(`masterrecord: executeUpdate — cannot update the primary key '${col}'.`);
+            const column = (f.relationshipType === 'belongsTo' && f.foreignKey) ? f.foreignKey : (f.name || col);
+            if (val && typeof val === 'object' && typeof val.__rawSql === 'string') {
+                list.push({ column, raw: val.__rawSql });
+            } else {
+                let v = val;
+                if (FieldTransformer.hasTransformer(f)) v = FieldTransformer.toDatabase(v, f, def.__name, col);
+                if (typeof v === 'boolean' && !this.__context.isPostgres) v = v ? 1 : 0;
+                list.push({ column, value: v });
+            }
+        }
+        return this.__runExecute(eng => eng.executeUpdate(this.__queryObject.script, this.__entity, list));
+    }
+
+    /**
+     * DELETE every row the query selects (one statement, no loading, no tracker).
+     * @returns {Promise<number>} rows affected
+     * @example await db.Session.where('s => s.expiresAt < $$', now).executeDelete();
+     */
+    async executeDelete(){
+        this.__guardExecuteQuery('executeDelete');
+        return this.__runExecute(eng => eng.executeDelete(this.__queryObject.script, this.__entity));
+    }
+
+    __guardExecuteQuery(name){
+        const s = this.__queryObject.script;
+        if (s.raw) throw new Error(`masterrecord: ${name}() cannot be combined with raw().`);
+        if (s.include && s.include.length) throw new Error(`masterrecord: ${name}() does not support include() — filter on the table's own columns.`);
+        // Bootstrap the alias/entityMap when no clause was chained (same as count()).
+        if (s.entityMap.length === 0) this.__queryObject.skipClause(this.__entity.__name);
+    }
+
+    async __runExecute(fn){
+        const ctx = this.__context;
+        await ctx._ensureReady();
+        const run = async () => {
+            const affected = await fn(ctx._SQLEngine);
+            ctx._queryCache.invalidateTable(this.__entity.__name);
+            return affected;
+        };
+        try {
+            // Inside a user transaction this context already holds the engine
+            // lock; otherwise serialize with other units of work on the shared
+            // connection.
+            return (ctx.__engineLockDepth > 0) ? await run() : await ctx._withEngineLock(run);
+        } finally {
+            this.__reset();
+        }
     }
 
     // build a single entity

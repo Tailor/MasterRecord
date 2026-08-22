@@ -104,6 +104,32 @@ class postgresEngine {
         return 0;
     }
 
+    // ---- Set-based writes from a compiled query (EF ExecuteUpdate / ExecuteDelete) ----
+    // The compiled WHERE already holds $1..$n; SET parameters continue from n+1
+    // (Postgres placeholders are numbered, not positional, so text order is free).
+
+    async executeUpdate(query, entity, setters){
+        const alias = this.getEntity(entity.__name, query.entityMap) || entity.__name;
+        const whereSql = `${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`.trim();
+        const whereParams = query.parameters ? query.parameters.getParams() : [];
+        const params = [...whereParams];
+        const setParts = [];
+        for (const s of setters) {
+            if (s.raw !== undefined) { setParts.push(`${this._q(s.column)} = ${s.raw}`); }
+            else { params.push(s.value); setParts.push(`${this._q(s.column)} = $${params.length}`); }
+        }
+        const sql = `UPDATE ${this._q(entity.__name)} AS ${alias} SET ${setParts.join(', ')} ${whereSql}`;
+        return this.affectedRows(await this._runWithParams(sql, params));
+    }
+
+    async executeDelete(query, entity){
+        const alias = this.getEntity(entity.__name, query.entityMap) || entity.__name;
+        const whereSql = `${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`.trim();
+        const whereParams = query.parameters ? query.parameters.getParams() : [];
+        const sql = `DELETE FROM ${this._q(entity.__name)} AS ${alias} ${whereSql}`;
+        return this.affectedRows(await this._runWithParams(sql, whereParams));
+    }
+
     /**
      * DELETE with parameterized query
      */

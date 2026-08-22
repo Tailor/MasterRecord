@@ -54,6 +54,31 @@ class SQLLiteEngine {
         return 0;
     }
 
+    // ---- Set-based writes from a compiled query (EF ExecuteUpdate / ExecuteDelete) ----
+    // Reuse the query's own compiled WHERE (same alias, same parameters) so the
+    // rows affected are exactly the rows the equivalent SELECT would return.
+
+    async executeUpdate(query, entity, setters){
+        const alias = this.getEntity(entity.__name, query.entityMap) || entity.__name;
+        const whereSql = `${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`.trim();
+        const whereParams = query.parameters ? query.parameters.getParams() : [];
+        const setParts = [], setParams = [];
+        for (const s of setters) {
+            if (s.raw !== undefined) { setParts.push(`[${s.column}] = ${s.raw}`); }
+            else { setParts.push(`[${s.column}] = ?`); setParams.push(s.value); }
+        }
+        const sql = `UPDATE [${entity.__name}] AS ${alias} SET ${setParts.join(', ')} ${whereSql}`;
+        return this.affectedRows(this._runWithParams(sql, [...setParams, ...whereParams]));
+    }
+
+    async executeDelete(query, entity){
+        const alias = this.getEntity(entity.__name, query.entityMap) || entity.__name;
+        const whereSql = `${this.buildWhere(query, entity)} ${this.buildAnd(query, entity)}`.trim();
+        const whereParams = query.parameters ? query.parameters.getParams() : [];
+        const sql = `DELETE FROM [${entity.__name}] AS ${alias} ${whereSql}`;
+        return this.affectedRows(this._runWithParams(sql, whereParams));
+    }
+
     async insert(queryObject){
         // Use NEW SECURE parameterized version
         const sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);

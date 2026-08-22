@@ -1,5 +1,18 @@
 # MasterRecord Changelog
 
+## v1.8.0 — executeUpdate / executeDelete (EF ExecuteUpdate/ExecuteDelete) + set-based bulk ops
+
+Closes gap-analysis #3. Set-based writes that run **one SQL statement** over the rows a query selects, **bypass the change tracker**, execute immediately, and return rows affected — exactly EF Core's `ExecuteUpdate`/`ExecuteDelete`.
+
+- **`query.executeDelete()`** — `DELETE … WHERE <the query's own compiled WHERE>`; returns rows affected.
+- **`query.executeUpdate({ col: value, … })`** — `UPDATE … SET … WHERE <compiled WHERE>`; values are parameterized and run through the column's transformer; returns rows affected. To reference existing values (EF's `SetProperty(b => b.Views, b => b.Views + 1)`) use the new **`sql`** tag: `executeUpdate({ views: sql\`views + 1\` })` (`masterrecord.sql` / `import { sql } from 'masterrecord/sql'`). The tag **refuses interpolations** so raw fragments can't smuggle values — dynamic values go in ordinary (parameterized) setters. Validates columns; refuses to update the primary key; `include()`/`raw()` are rejected.
+- Both reuse the engine's own WHERE compiler (same alias, same parameters), so the affected rows are exactly what the equivalent `toList()` would return. Inside `ctx.transaction()` they join the transaction; otherwise each is an autocommit statement (EF semantics). They invalidate the query cache for the table and serialize with other units of work on the shared connection.
+- Engines: `executeUpdate(query, entity, setters)` / `executeDelete(query, entity)` on all three (MySQL uses the multi-table `DELETE alias FROM t AS alias` form so it works on every version; Postgres renumbers SET params after the WHERE's `$n`).
+- **`ctx.bulkUpdate` / `ctx.bulkDelete` are now genuinely set-based**: `bulkDelete` is one `DELETE … WHERE pk IN (…)` (returns rows affected); `bulkUpdate` is one UPDATE per item in a single transaction with rows-affected checks — **no per-row SELECT**, no tracker round-trip (previously `findById` + `saveChanges()` per id: N SELECTs and N transactions, despite the docstring).
+- `masterrecord` now also exposes `ConcurrencyError` and `RawSql`.
+
+New tests: `test/execute-update-delete.test.js` (exact-row update with parameterized + `sql` setters and no tracker involvement; whole-table update; `sql` interpolation refused; column/PK validation; exact-row delete; join/rollback inside a transaction; cache invalidation; bulk ops issue no SELECTs and still fail on a missing id). Full suite green (0 fail, 339 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.7.0 — FOREIGN KEY constraints in DDL (EF referential integrity) + rename advisories in migrations
 
 Closes gap-analysis items "no FK constraints", "cascade config is a no-op", and "rename diffed as drop+add", the way EF Core does.

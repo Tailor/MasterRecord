@@ -2850,28 +2850,27 @@ class context {
             throw new Error(`Entity ${entityName} not found in context`);
         }
 
-        // Fetch all entities by ID
         const ids = updates.map(u => u.id).filter(id => id !== undefined);
         if (ids.length !== updates.length) {
             throw new Error('All update objects must have an id property');
         }
 
-        // Load entities and apply updates
-        for (const update of updates) {
-            const entity = await EntityClass.findById(update.id);
-            if (!entity) {
-                throw new Error(`${entityName} with id ${update.id} not found`);
-            }
-
-            // Apply updates to entity
-            for (const key in update) {
-                if (Object.prototype.hasOwnProperty.call(update, key) && key !== 'id') {
-                    entity[key] = update[key];
+        // Set-based: one UPDATE per item by primary key, all in one transaction,
+        // with NO per-row SELECT and no change-tracker round trip (this used to
+        // findById each row then saveChanges — N SELECTs + tracking). Each
+        // UPDATE's rows-affected is checked so a missing id still fails loudly.
+        const pk = tools.getPrimaryKeyObject(EntityClass.__entity) || 'id';
+        await this.transaction(async () => {
+            for (const update of updates) {
+                const changes = {};
+                for (const key in update) {
+                    if (Object.prototype.hasOwnProperty.call(update, key) && key !== 'id') changes[key] = update[key];
                 }
+                if (Object.keys(changes).length === 0) continue;
+                const affected = await this[entityName].where(`r => r.${pk} == $$`, update.id).executeUpdate(changes);
+                if (affected === 0) throw new Error(`${entityName} with id ${update.id} not found`);
             }
-        }
-
-        await this.saveChanges();
+        });
         return true;
     }
 
@@ -2898,15 +2897,19 @@ class context {
             throw new Error(`Entity ${entityName} not found in context`);
         }
 
-        // Load entities and mark for deletion
-        for (const id of ids) {
-            const entity = await EntityClass.findById(id);
-            if (entity) {
-                await entity.delete();
-            }
-        }
-
-        return true;
+        // Set-based: ONE `DELETE ... WHERE pk IN (...)` (this used to findById
+        // + entity.delete() per id — N SELECTs and N transactions, despite the
+        // docstring). Bypasses the change tracker like EF's ExecuteDelete.
+        await this._ensureReady();
+        const tableName = EntityClass.__entity.__name;
+        const pk = tools.getPrimaryKeyObject(EntityClass.__entity) || 'id';
+        const run = async () => {
+            const result = await this._SQLEngine.bulkDelete(tableName, ids, pk);
+            this._queryCache.invalidateTable(tableName);
+            return (typeof this._SQLEngine.affectedRows === 'function') ? this._SQLEngine.affectedRows(result) : ids.length;
+        };
+        const affected = (this.__engineLockDepth > 0) ? await run() : await this._withEngineLock(run);
+        return affected;
     }
 
     /**
