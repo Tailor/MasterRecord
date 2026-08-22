@@ -28,7 +28,9 @@ class queryMethods{
         this.__context = context;
         this.__queryObject = new queryScript();
         this.__useCache = false;  // Disable caching by default (opt-in with .cache())
-        this.__noTracking = false; // opt-in with .asNoTracking() for read-only reads
+        // Tracking follows the context's default (EF's QueryTrackingBehavior);
+        // override per query with .asNoTracking() / .asTracking().
+        this.__noTracking = (context && context.__queryTrackingBehavior === 'no-track');
     }
 
     /**
@@ -41,6 +43,18 @@ class queryMethods{
      */
     asNoTracking(){
         this.__noTracking = true;
+        return this;
+    }
+
+    /**
+     * Track this query's results even when the context defaults to no-tracking
+     * (EF Core's AsTracking). Use it on the queries whose entities you intend to
+     * modify and save, after setting the context to `setQueryTrackingBehavior('no-track')`.
+     *
+     * @example db.Users.asTracking().where(...).single();  // then edit + saveChanges()
+     */
+    asTracking(){
+        this.__noTracking = false;
         return this;
     }
 

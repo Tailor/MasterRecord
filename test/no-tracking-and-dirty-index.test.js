@@ -69,6 +69,38 @@ test('a normal query DOES track (so edits persist)', async () => {
     assert.equal((await ctx.Row.toList()).find(r => r.id === rows[0].id).val, 'edited');
 });
 
+test('setQueryTrackingBehavior("no-track") makes reads no-tracking by default; asTracking() opts back in', async () => {
+    const ctx = makeCtx();
+    await ctx._ensureReady();
+    await seed(ctx, 50);
+    const baseline = ctx.__trackedEntitiesMap.size;
+
+    // Context-level default: no query tracks unless it opts in (EF's
+    // QueryTrackingBehavior.NoTracking). No per-call-site .asNoTracking() needed.
+    ctx.setQueryTrackingBehavior('no-track');
+
+    const readonly = await ctx.Row.toList();          // NOT tracked, by default
+    assert.equal(readonly.length, 50);
+    assert.equal(ctx.__trackedEntitiesMap.size, baseline,
+        'with a no-track default, a plain query retains nothing');
+    readonly[0].val = 'ignored';
+    assert.equal(ctx.__dirtyEntities.size, 0, 'mutation on a no-track result is not enqueued');
+
+    // Opt back into tracking for a query whose result we intend to update.
+    const editable = await ctx.Row.asTracking().toList();
+    assert.equal(ctx.__trackedEntitiesMap.size, baseline + 50, 'asTracking() tracks despite the no-track default');
+    editable[0].val = 'saved-via-asTracking';
+    assert.equal(ctx.__dirtyEntities.size, 1);
+    await ctx.saveChanges();
+    assert.equal((await ctx.Row.asTracking().toList()).find(r => r.id === editable[0].id).val, 'saved-via-asTracking');
+});
+
+test('setQueryTrackingBehavior rejects an invalid value', async () => {
+    const ctx = makeCtx();
+    await ctx._ensureReady();
+    assert.throws(() => ctx.setQueryTrackingBehavior('sometimes'), /track.*no-track/);
+});
+
 test('dirty index: a save is O(changes), not O(total tracked)', async () => {
     const ctx = makeCtx();
     await ctx._ensureReady();

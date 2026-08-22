@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.5.14 — context-level query tracking behavior (EF's QueryTrackingBehavior) + asTracking()
+
+The remaining memory issue: on a long-lived/singleton context, tracked entities are held with **strong references** for the life of the context, so read-only queries that track their results grow the tracked set without bound. `asNoTracking()` (1.5.13) bounds it only per call site.
+
+This is exactly EF Core's situation, so this release adds EF's context-level control:
+- **`context.setQueryTrackingBehavior('no-track')`** — the default tracking behavior for the whole context (EF's `ChangeTracker.QueryTrackingBehavior = NoTracking`). All queries become no-tracking by default — a read-heavy context then retains nothing from reads — and you opt back in per query with...
+- **`query.asTracking()`** (EF's `AsTracking()`) — track this query's results despite a no-track default, for the queries whose entities you modify and save.
+
+Together with `asNoTracking()` and `clearChangeTracker()` (EF's `ChangeTracker.Clear()`), this is EF's full toolkit for bounding tracking.
+
+**Honest note on memory (this matters):** EF Core does **not** hold tracked entities weakly — it uses strong references, and its memory bound is **context lifetime**: the `DbContext` is meant to be short-lived (scoped per request) and disposed, releasing the whole change tracker. masterrecord follows the same model. So the definitive fix for unbounded growth is a **request-scoped context**. If a context must be long-lived, set `setQueryTrackingBehavior('no-track')` and use `asTracking()` on write paths. (A `WeakRef`-based identity map would bound a long-lived context transparently, but that is a deliberate departure from EF's design, not what EF does — so it is not adopted here.)
+
+New tests in `test/no-tracking-and-dirty-index.test.js`: a `no-track` default retains nothing while `asTracking()` still tracks and persists; the setter validates its argument. Full suite green (0 fail, 309 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.13 — EF-Core-style change tracking: O(changes) saves (dirty index) + asNoTracking()
 
 Fixing the write loss in 1.5.12 exposed two costs of correct retention in a long-lived context — unbounded memory and O(total-tracked) saves. Both are addressed the way EF Core does.

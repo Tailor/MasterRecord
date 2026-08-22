@@ -221,7 +221,13 @@ class context {
     // the two can never desynchronise — a dual array+map registry silently lost
     // writes whenever the two disagreed (a stale/colliding id in one but not the
     // other). All mutations go through __track / __untrack / __clearTracked.
-    __trackedEntitiesMap = new Map();  // O(1) identity lookup; the authority
+    __trackedEntitiesMap = new Map();  // __ID -> entity; the authority
+    // Default query tracking behavior, EF-style (QueryTrackingBehavior).
+    // 'track'  — queries track their results (edits persist); the default.
+    // 'no-track' — queries do NOT track (read-only; nothing retained). Set once
+    //   on a long-lived/singleton context so read endpoints don't grow the
+    //   tracked set; opt back in per query with .asTracking() where you update.
+    __queryTrackingBehavior = 'track';
     // Dirty index (like EF Core's StateManager): the subset of tracked entities
     // that are insert/modified/delete. Entities enter it the moment a setter /
     // add() / remove() makes them dirty, and leave it when flushed or detached.
@@ -2974,6 +2980,28 @@ class context {
      */
     clearChangeTracker() {
         this.__clearTracked();
+        return this;
+    }
+
+    /**
+     * Set the DEFAULT query tracking behavior for this context (EF Core's
+     * `ChangeTracker.QueryTrackingBehavior`).
+     *
+     *   'no-track' — queries do NOT track their results by default, so a
+     *     read-heavy / long-lived (singleton) context retains nothing from
+     *     reads. Opt back into tracking per query with `.asTracking()` on the
+     *     ones whose results you intend to modify and save.
+     *   'track'    — the default: queries track their results so edits persist.
+     *
+     * This is the "not per-call-site" bound: set it once instead of adding
+     * `.asNoTracking()` to every read. The definitive fix for unbounded growth
+     * is still a request-scoped context; this is how to run a longer-lived one.
+     */
+    setQueryTrackingBehavior(behavior) {
+        if (behavior !== 'track' && behavior !== 'no-track') {
+            throw new Error(`masterrecord: setQueryTrackingBehavior expects 'track' or 'no-track', got ${JSON.stringify(behavior)}`);
+        }
+        this.__queryTrackingBehavior = behavior;
         return this;
     }
 
