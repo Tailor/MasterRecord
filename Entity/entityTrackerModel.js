@@ -368,6 +368,13 @@ class EntityTrackerModel {
                 }
 
                 this.__state = "modified";
+                // Bump a monotonic mutation version on every write. saveChanges()
+                // captures this before its async DB write and, afterwards, only
+                // resets the entity to clean if the version is unchanged — so a
+                // mutation that lands DURING the write (a shared/singleton context
+                // serving concurrent requests) keeps the entity dirty and its own
+                // save still issues the UPDATE, instead of being silently reset.
+                this.__version = (this.__version || 0) + 1;
 
                 // belongsTo FK columns appear in the DB row but not as a
                 // top-level key in `__entity`; translate the dirty field to the
@@ -516,6 +523,7 @@ class EntityTrackerModel {
                     set: function(value) {
                         if(typeof value === "string" || typeof value === "number" || typeof value === "boolean"  || typeof value === "bigint" ){
                             modelClass.__state = "modified";
+                            modelClass.__version = (modelClass.__version || 0) + 1;
                             modelClass.__dirtyFields.push(entityField);
                              modelClass.__context.__track(modelClass);
                         }

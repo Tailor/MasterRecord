@@ -1,5 +1,22 @@
 # MasterRecord Changelog
 
+## v1.5.10 — saveChanges() is a proper unit of work: commits only its change set (real shared-context lost-write fix)
+
+**Bug (silent lost write, 60–75% under load):** `saveChanges()` snapshotted the **entire tracked-entity list**, and after writing untracked **all of it**. On a shared/singleton context (one instance serving many requests) this is corrupting, because queried rows are auto-tracked and read-only `.toList()` handlers leave thousands of clean entities tracked forever. So one caller's `saveChanges()` — **even an empty one with nothing dirty** — snapshotted and untracked another in-flight caller's freshly loaded/mutated row, and that caller's own `saveChanges()` then found nothing tracked and **issued no UPDATE while resolving `true`**. Frequency scaled with the size of the shared list (~43k tracked entities → 60–75% loss; ~4 entities → never). The 1.5.9 `__untrack` guard didn't catch it: the interfering save evaluated the victim's state before the pending mutation, and an empty save still snapshotted/untracked everything. Emitted no SQL of its own, so nothing appeared in the log between the SELECT and the missing UPDATE.
+
+**Fix (unit-of-work model, like EF Core / Hibernate):**
+- `saveChanges()` now builds a **change set of only the dirty entities** (insert/modified/delete) and commits **just that**. It never snapshots, processes, or untracks the rest of the tracked list. **An empty save is a true no-op** that touches no other unit of work's entities.
+- It **releases only the rows it actually wrote**, and only those; unrelated tracked (clean) entities are left alone.
+- Every setter bumps a per-entity **mutation version**; the version is captured before the async write and the post-write reset **skips any entity re-mutated in flight**, so a mutation that lands during the write stays dirty and its UPDATE still fires (no clobber).
+- On failure the change set is **left tracked and dirty** (the caller gets the rejection) — never silently dropped.
+- This upholds the invariant: *an entity tracked and dirty when `saveChanges()` is called is always written or the call rejects; it never resolves `true` leaving the entity unwritten.*
+
+**New — lifetime control for long-lived contexts:** `context.clearChangeTracker()` (detach all, à la `session.clear()` / `ChangeTracker.Clear()`) and `context.detach(entity)`. Because saves no longer sweep the whole list, a reused/singleton context's read-only query results stay tracked — call `clearChangeTracker()` after read-only work to keep the tracked set bounded.
+
+**Strongly recommended:** scope a context **per request/unit of work**, not as a process singleton. This fix removes the silent lost write and the cross-caller corruption, but a context is a unit of work; a scoped/transient context per request is the robust pattern and avoids the tracked-set growth entirely.
+
+New/expanded tests in `test/shared-context-untrack-preserves-dirty.test.js`: an empty save drops nothing; a save commits only its change set and leaves unrelated tracked rows alone; a mutation during the async write still persists. Full suite green (0 fail, 299 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.5.9 — saveChanges() no longer sweeps away a concurrently-mutated entity (shared/singleton context lost write)
 
 **Bug (silent lost write on a shared context):** queried rows are auto-tracked into the context's tracked-entity list, and `saveChanges()` snapshots that whole list, writes the dirty rows, and `__untrack()`s the entire snapshot. When one context instance is shared across concurrent units of work (e.g. a **singleton context** serving many requests), request A's save snapshots a row that request B loaded (clean), B mutates it while A's save is in flight, and A then untracks the snapshot — removing B's now-dirty row from tracking. B's own `saveChanges()` then finds it untracked and **silently issues no UPDATE**. The batch wasn't empty, so the "no tracked entities" warning never fired and the handler returned success (observed as an admin plan change round-tripping back to `free`, and other vanished updates).

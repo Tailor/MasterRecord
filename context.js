@@ -1868,6 +1868,11 @@ class context {
             }
         }
 
+        // Capture mutation versions before the async write so the state reset
+        // below skips any entity a concurrent request re-mutated in flight.
+        const __preWriteVersion = new Map();
+        for (const entity of entities) { __preWriteVersion.set(entity, entity.__version || 0); }
+
         if (entities.length === 1) {
             // Single insert - use existing insertManager (already sets ID)
             const insert = new insertManager(this._SQLEngine, this._isModelValid, this.__entities);
@@ -1959,8 +1964,14 @@ class context {
         // from the database.
         const tracker = new EntityTrackerModel();
         for (const entity of entities) {
-            entity.__state = 'track';
-            entity.__dirtyFields = [];
+            // Only mark the just-inserted entity clean if it was not re-mutated
+            // during the async insert. If a concurrent request changed a field in
+            // flight, leave it dirty so that change is persisted as an UPDATE on
+            // the next save instead of being silently reset away.
+            if ((entity.__version || 0) === __preWriteVersion.get(entity)) {
+                entity.__state = 'track';
+                entity.__dirtyFields = [];
+            }
             try {
                 tracker.attachTrackingTo(entity);
             } catch (attachErr) {
@@ -1982,6 +1993,13 @@ class context {
                 await entity.beforeSave.call(entity);
             }
         }
+
+        // Capture each entity's mutation version AFTER beforeSave and BEFORE the
+        // async write. The reset at the end uses it to skip any entity a
+        // concurrent request re-mutated during the write — resetting such an
+        // entity would clear the new dirty state and silently drop that update.
+        const __preWriteVersion = new Map();
+        for (const entity of entities) { __preWriteVersion.set(entity, entity.__version || 0); }
 
         if (entities.length === 1) {
             // Single update - use existing logic.
@@ -2046,13 +2064,14 @@ class context {
         }
 
         // Reset tracker state on the entity itself so a subsequent
-        // saveChanges() doesn't re-emit the same UPDATE for the same fields.
-        // Previously only _processBatchInserts did this, not updates —
-        // leaving __state="modified" and __dirtyFields populated. On the
-        // next modification of a different field, the stale fields would
-        // be re-written, silently overwriting any concurrent external
-        // changes to those columns.
+        // saveChanges() doesn't re-emit the same UPDATE for the same fields —
+        // but ONLY for entities that were not re-mutated during the async write.
+        // If a concurrent request mutated an entity after we captured its
+        // version, resetting it here would clear the new dirty state and its
+        // UPDATE would never be issued (a silent lost write on a shared context).
+        // Leaving it dirty lets its own saveChanges() persist the newer value.
         for (const entity of entities) {
+            if ((entity.__version || 0) !== __preWriteVersion.get(entity)) continue;
             entity.__state = 'track';
             entity.__dirtyFields = [];
         }
@@ -2177,38 +2196,50 @@ class context {
 
     async _saveChangesExclusive() {
         await this._ensureReady();
-        // Snapshot the batch: entities add()ed while this save is in flight
-        // belong to the NEXT queued save, and must not be cleared by this one.
-        const tracked = this.__trackedEntities.slice();
+
+        // Loud guard against silent data loss across DIFFERENT context instances.
+        this._warnForeignDirty('saveChanges()');
+
+        // A save commits ONLY its own CHANGE SET — the entities that are dirty
+        // (insert/modified/delete) right now — and must NEVER snapshot, process,
+        // or untrack the rest of the tracked list. This is the unit-of-work
+        // model real ORMs use, and it is essential on a shared/singleton context
+        // serving concurrent requests:
+        //   1. Read-only queries auto-track their results, so a handler that just
+        //      `.toList()`s a table leaves thousands of clean entities tracked.
+        //      Sweeping the whole list would do O(N) work over unrelated rows on
+        //      every save.
+        //   2. If a save untracked the whole list, one caller's save — even an
+        //      EMPTY one with nothing dirty — would drop another in-flight
+        //      caller's freshly loaded/mutated entity from tracking, and that
+        //      caller's own saveChanges() would then find nothing to write and
+        //      silently lose the UPDATE (returning true). Committing only the
+        //      change set makes an empty save a true no-op that never touches
+        //      another unit of work's entities.
+        const changeSet = this.__trackedEntities.filter(
+            e => e && e.__state && e.__state !== 'track'
+        );
+
+        if (changeSet.length === 0) {
+            // Nothing dirty — do NOT touch the shared tracked list.
+            return true;
+        }
+
+        // Capture each entity's mutation version so that, after the async write,
+        // we can tell whether it was re-mutated in flight and keep it tracked.
+        const versions = new Map();
+        for (const e of changeSet) { versions.set(e, e.__version || 0); }
+
+        const affectedTables = new Set();
+        for (const e of changeSet) { if (e.__name) affectedTables.add(e.__name); }
+
         try {
-            // Loud guard against silent data loss: if entities with unsaved
-            // changes are tracked by a DIFFERENT context instance, THIS
-            // saveChanges() will not write them. Warn loudly (this is the #1
-            // cause of "saveChanges succeeded but nothing was written").
-            this._warnForeignDirty('saveChanges()');
-
-            if (tracked.length === 0) {
-                console.log('[Context] No tracked entities to save');
-                return true;
-            }
-
-            // Performance: Collect affected tables for cache invalidation (single pass)
-            const affectedTables = new Set();
-            for (const entity of tracked) {
-                if (entity.__name) {
-                    affectedTables.add(entity.__name);
-                }
-            }
-
-            // Atomicity: wrap every write in a single transaction so a partial
-            // failure rolls the whole batch back. All three engines now expose
-            // startTransaction/endTransaction/errorTransaction (MySQL/Postgres
-            // gained them in 1.4.0; previously their writes were autocommitted
-            // per statement, leaving partial data on a mid-batch error).
+            // Atomicity: wrap the change set in a single transaction so a partial
+            // failure rolls it back.
             if (this.isSQLite || this.isMySQL || this.isPostgres) {
                 await this._SQLEngine.startTransaction();
                 try {
-                    await this._processTrackedEntities(tracked);
+                    await this._processTrackedEntities(changeSet);
                     this.__clearErrorHandler();
                     await this._SQLEngine.endTransaction();
                 } catch (error) {
@@ -2217,19 +2248,25 @@ class context {
                 }
             }
 
-            // Invalidate query cache for affected tables
             for (const tableName of affectedTables) {
                 this._queryCache.invalidateTable(tableName);
             }
 
-            // Clear only THIS batch — entities tracked mid-save stay queued.
-            this.__untrack(tracked);
+            // Release ONLY the entities we actually wrote and that were not
+            // re-mutated during the write (state back to 'track' AND version
+            // unchanged). An entity re-mutated in flight has a bumped __version
+            // (and the batch processors leave it dirty) — keep it tracked so its
+            // own saveChanges() still persists the newer change.
+            const done = changeSet.filter(
+                e => e.__state === 'track' && (e.__version || 0) === versions.get(e)
+            );
+            this.__untrack(done);
             return true;
         } catch (error) {
-            // Clean up on error (this batch only)
             this.__clearErrorHandler();
-            this.__untrack(tracked);
-
+            // The transaction rolled back, so nothing was committed. Leave the
+            // change set tracked and dirty so a retry can persist it — never
+            // silently drop a pending write (the caller sees the rejection).
             console.error('[Context] Failed to save changes:', error);
             throw error;
         }
@@ -2259,16 +2296,14 @@ class context {
      */
     __untrack(batch) {
         if (!batch || !batch.length) return;
-        const drop = new Set();
-        for (const e of batch) {
-            if (!e) continue;
-            if (e.__state && e.__state !== 'track') continue; // keep still-dirty entities
-            drop.add(e);
-        }
-        if (drop.size === 0) return;
+        // Remove exactly the entities passed in. The caller (saveChanges) curates
+        // this to the rows it actually wrote and that were not re-mutated in
+        // flight, so no state test is needed here — and none should be applied,
+        // or an entity with a falsy __state could be dropped or kept wrongly.
+        const drop = new Set(batch);
         this.__trackedEntities = this.__trackedEntities.filter(e => !drop.has(e));
-        for (const e of drop) {
-            if (e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
+        for (const e of batch) {
+            if (e && e.__ID !== undefined) this.__trackedEntitiesMap.delete(e.__ID);
         }
     }
 
@@ -2885,6 +2920,31 @@ class context {
     __clearTracked() {
         this.__trackedEntities = [];
         this.__trackedEntitiesMap.clear();  // Clear Map for proper garbage collection
+    }
+
+    /**
+     * Detach ALL entities from change tracking (like Hibernate's
+     * `session.clear()` / EF Core's `ChangeTracker.Clear()`).
+     *
+     * A context is a unit of work and is safest scoped per request. If you must
+     * reuse a long-lived (e.g. singleton) context, read-only queries still
+     * auto-track their results, and those clean entities accumulate — call this
+     * after a read-only operation to release them and keep the tracked set
+     * bounded. It drops PENDING changes too, so only call it when there is
+     * nothing dirty you still intend to save.
+     */
+    clearChangeTracker() {
+        this.__clearTracked();
+        return this;
+    }
+
+    /**
+     * Detach a single entity from change tracking. Pending changes on it are
+     * dropped and it is no longer part of any future saveChanges().
+     */
+    detach(entity) {
+        if (entity) this.__untrack([entity]);
+        return this;
     }
 
     // ------------------------------------------------------------------
