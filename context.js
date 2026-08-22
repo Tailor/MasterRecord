@@ -1588,6 +1588,137 @@ class context {
         eng.addCommandObserver(this.__commandObserver);
     }
 
+    // ---- Context-level Add / Remove (EF DbContext.Add / Remove) ----------------
+
+    /** Resolve the dbset (query builder) that owns an entity instance. */
+    _dbsetFor(entity) {
+        if (!entity || typeof entity !== 'object') throw new TypeError('masterrecord: expected an entity instance.');
+        let name = entity.__entity && entity.__entity.__name;
+        if (!name && entity.constructor && entity.constructor.name) {
+            const byCtor = this.__entities.find(e => e && (e.__name === entity.constructor.name || e.__name === this.tablePrefix + entity.constructor.name));
+            if (byCtor) name = byCtor.__name;
+        }
+        if (!name || !this.__entities.some(e => e && e.__name === name)) {
+            throw new Error(`masterrecord: cannot determine which registered entity this instance belongs to (${entity.constructor && entity.constructor.name}). Register it with dbset() first.`);
+        }
+        return this[name];
+    }
+
+    /** EF `context.Add(entity)`: schedule an INSERT (same as ctx.<Model>.add(entity)). */
+    add(entity) { this._dbsetFor(entity).add(entity); return entity; }
+
+    /** EF `context.Remove(entity)`: schedule a DELETE (same as ctx.<Model>.remove(entity)). */
+    remove(entity) { this._dbsetFor(entity).remove(entity); return entity; }
+
+    /** EF `context.AddRange(...)` / `RemoveRange(...)`. */
+    addRange(entities) { for (const e of entities || []) this.add(e); return entities; }
+    removeRange(entities) { for (const e of entities || []) this.remove(e); return entities; }
+
+    // ---- Entity entries / change-tracker introspection (EF DbContext.Entry,
+    //      ChangeTracker.Entries, ChangeTracker.HasChanges) --------------------
+
+    /** Scalar (non-navigation) column names of an entity, as stored in the DB. */
+    _scalarColumns(entity) {
+        const def = entity && entity.__entity;
+        const out = [];
+        if (!def) return out;
+        for (const key of Object.keys(def)) {
+            const f = def[key];
+            if (!f || typeof f !== 'object') continue;
+            if (f.type === 'hasOne' || f.type === 'hasMany' || f.type === 'hasManyThrough') continue;
+            out.push((f.relationshipType === 'belongsTo' && f.foreignKey) ? f.foreignKey : (f.name || key));
+        }
+        return out;
+    }
+
+    /**
+     * EF Core's `context.Entry(entity)`: inspect and control one entity's
+     * tracking state.
+     *   entry.state                 'track' (unchanged) | 'modified' | 'insert' | 'delete' | 'detached'; settable
+     *   entry.originalValues        values as loaded / last saved (used by concurrency checks)
+     *   entry.currentValues         current stored values
+     *   entry.isModified(field?)    whether a field (or the entity) has pending changes
+     *   entry.reload()              overwrite with database values (resets originals)
+     *   entry.getDatabaseValues()   fetch the row's current DB values without touching the entity (null if gone)
+     *   entry.detach()              stop tracking
+     */
+    entry(entity) {
+        if (!entity || !entity.__entity) throw new TypeError('masterrecord: entry(entity) expects an entity created by this ORM.');
+        const ctx = this;
+        const allowed = ['track', 'modified', 'insert', 'delete', 'detached'];
+        return {
+            entity,
+            get entityName() { return entity.__entity.__name; },
+            get state() {
+                return ctx.__trackedEntitiesMap.has(entity.__ID) ? (entity.__state || 'track') : 'detached';
+            },
+            set state(s) {
+                if (!allowed.includes(s)) throw new Error(`masterrecord: entry.state must be one of ${allowed.join(', ')}`);
+                if (s === 'detached') { ctx.__untrack([entity]); return; }
+                entity.__context = ctx;
+                entity.__state = s;
+                if (s === 'track') {
+                    entity.__dirtyFields = [];
+                    ctx.__dirtyEntities.delete(entity);
+                    ctx.__track(entity);
+                } else {
+                    if (s === 'modified' && (!entity.__dirtyFields || entity.__dirtyFields.length === 0)) {
+                        // Like EF's Update(): mark every column modified.
+                        entity.__dirtyFields = ctx._scalarColumns(entity).filter(c => {
+                            const pk = tools.getPrimaryKeyObject(entity.__entity);
+                            return c !== pk;
+                        });
+                    }
+                    ctx.__markDirty(entity);
+                }
+            },
+            get originalValues() { return { ...(entity.__originalValues || {}) }; },
+            get currentValues() {
+                const o = {};
+                for (const c of ctx._scalarColumns(entity)) o[c] = ctx._backingValue(entity, c);
+                return o;
+            },
+            isModified(field) {
+                if (field === undefined) return !!(entity.__state && entity.__state !== 'track');
+                return !!(entity.__dirtyFields && entity.__dirtyFields.includes(field));
+            },
+            reload() {
+                if (typeof entity.reload !== 'function') return Promise.reject(new Error('masterrecord: this entity cannot be reloaded (no primary key / not query-built).'));
+                return entity.reload();
+            },
+            async getDatabaseValues() {
+                const pk = tools.getPrimaryKeyObject(entity.__entity);
+                const id = entity[pk];
+                if (id === undefined || id === null) return null;
+                const fresh = await ctx[entity.__entity.__name].asNoTracking().ignoreQueryFilters().where(`r => r.${pk} == $$`, id).single();
+                if (!fresh) return null;
+                const o = {};
+                for (const c of ctx._scalarColumns(entity)) o[c] = ctx._backingValue(fresh, c);
+                return o;
+            },
+            detach() { ctx.__untrack([entity]); },
+        };
+    }
+
+    /** EF `ChangeTracker.HasChanges()`: are there pending inserts/updates/deletes? */
+    hasChanges() {
+        for (const e of this.__dirtyEntities) {
+            if (e && e.__state && e.__state !== 'track') return true;
+        }
+        return false;
+    }
+
+    /** EF `ChangeTracker.Entries([T])`: entries for all tracked entities (optionally one entity type). */
+    entries(modelName) {
+        const out = [];
+        for (const e of this.__trackedEntitiesMap.values()) {
+            if (!e || !e.__entity) continue;
+            if (modelName && e.__entity.__name !== modelName) continue;
+            out.push(this.entry(e));
+        }
+        return out;
+    }
+
     // ---- Connection resiliency (EF EnableRetryOnFailure / execution strategy) ----
 
     /** Process-wide default retry policy (see setRetryOnFailure). `false` disables. */

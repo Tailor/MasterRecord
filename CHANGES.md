@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.12.0 — query & change-tracker ergonomics (EF Find, Entry, aggregates, ThenBy, Distinct, Any, context.Add/Remove)
+
+Closes gap-analysis #8, #9 and most of #11.
+
+- **`ctx.Model.find(pk)`** (EF `Find`): checks the identity map first and returns the tracked instance **without a query**; otherwise loads (and tracks). `findById` remains the always-query form.
+- **`ctx.entry(entity)`** (EF `DbContext.Entry`): `state` (get/set: `track`/`modified`/`insert`/`delete`/`detached`; setting `modified` with no dirty fields marks every column like EF `Update()`), `originalValues`, `currentValues`, `isModified(field?)`, `reload()`, `getDatabaseValues()` (live row, ignores query filters, doesn't touch the entity), `detach()`. **`ctx.hasChanges()`** (EF `ChangeTracker.HasChanges`) and **`ctx.entries([model])`** (EF `ChangeTracker.Entries`).
+- **Aggregates `sum/avg/min/max(field)`** on any query (EF `Sum/Average/Min/Max`), honoring `where`/`and` and global query filters; `sum` of no rows is `0`, the others `null`. Engines gain `getAggregate`.
+- **`thenBy(field|lambda)` / `thenByDescending`** (EF `ThenBy`): secondary sort keys with independent directions on all three engines; **`distinct()`** (EF `Distinct` → `SELECT DISTINCT`); **`any([predicate, ...args])`** (EF `Any`) — the readme documented `.any()` for years but it never existed; **`toObjectList(options)`** (plain-object DTO list, not tracked).
+- **`pluck(field)` is now a SQL projection** (`SELECT <field>` with no tracking) instead of loading full entities and mapping in JS.
+- **`ctx.add(entity)` / `ctx.remove(entity)` / `addRange` / `removeRange`** (EF `DbContext.Add/Remove`) — the readme documented `context.remove(entity)` which did not exist; they resolve the owning dbset by entity metadata or constructor name.
+- **`join()`, `groupBy()`, `leftJoin()` now throw a clear `not supported yet` error** with the alternative to use — they were empty bodies returning `undefined`, so chaining off them threw a bare `TypeError`.
+- Not in this release (documented limitation): `thenInclude`, `groupBy`/`join` translation.
+
+New tests: `test/query-ergonomics.test.js` (identity-map `find` with no SQL; entry state/original/current/isModified/getDatabaseValues/detach, hasChanges, entries; aggregates incl. empty-set semantics and invalid column; orderBy+thenBy/thenByDescending ordering, distinct, any, toObjectList, pluck selects only its column; context add/remove; loud stubs). Full suite green (0 fail, 366 pass, 20 gated skipped); 0 lint errors.
+
 ## v1.11.0 — migrations tooling: atomic apply, `script`, `migrations-status`, `--connection`, latest-migration id (EF parity)
 
 Closes gap-analysis #7.

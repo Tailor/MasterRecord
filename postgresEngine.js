@@ -142,6 +142,17 @@ class postgresEngine {
         return this.affectedRows(await this._runWithParams(sql, whereParams));
     }
 
+    /** Scalar aggregate over the query's rows (EF Sum/Average/Min/Max): fn in SUM|AVG|MIN|MAX. */
+    async getAggregate(queryObject, entity, fn, column){
+        const q = queryObject.script;
+        const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;
+        const sql = `SELECT ${fn}(${alias}.${this._q(column)}) AS value ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)}`;
+        const params = q.parameters ? q.parameters.getParams() : [];
+        const result = await this._runWithParams(sql, params);
+        const row = result && result.rows ? result.rows[0] : null;
+        return row ? row.value : null;
+    }
+
     /**
      * DELETE with parameterized query
      */
@@ -452,7 +463,7 @@ class postgresEngine {
             }
         }
 
-        const sql = `SELECT ${selectClause} ${this.buildFrom(query, entity)} ${whereClause} ${this.buildAnd(query, entity)} ${orderByClause} ${this.buildLimit(query)} ${this.buildSkip(query)}`;
+        const sql = `SELECT ${query.distinct ? 'DISTINCT ' : ''}${selectClause} ${this.buildFrom(query, entity)} ${whereClause} ${this.buildAnd(query, entity)} ${orderByClause} ${this.buildLimit(query)} ${this.buildSkip(query)}`;
 
         return {
             query: sql,
@@ -740,8 +751,17 @@ class postgresEngine {
         for (const item in orderByEntity.selectFields) {
             fieldList.push(`${entityStr}.${this._q(orderByEntity.selectFields[item])}`);
         }
-        if (fieldList.length === 0) return "";
-        return `ORDER BY ${fieldList.join(', ')} ${orderByType}`;
+        let out = fieldList.length ? `ORDER BY ${fieldList.join(', ')} ${orderByType}` : "";
+        // thenBy / thenByDescending (EF ThenBy)
+        const thenBy = Array.isArray(query.thenBy) ? query.thenBy : [];
+        if (thenBy.length) {
+            const extra = thenBy.map(t => {
+                if (entity && !entity[t.field]) throw new Error(`Invalid ORDER BY field: ${t.field} not found in ${entity.__name || 'entity'}`);
+                return `${entityStr}.${this._q(t.field)} ${t.dir === 'DESC' ? 'DESC' : 'ASC'}`;
+            });
+            out = out ? `${out}, ${extra.join(', ')}` : `ORDER BY ${extra.join(', ')}`;
+        }
+        return out;
     }
 
     getEntity(name, list) {

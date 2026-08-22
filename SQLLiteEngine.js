@@ -80,6 +80,16 @@ class SQLLiteEngine {
         return this.affectedRows(this._runWithParams(sql, whereParams));
     }
 
+    /** Scalar aggregate over the query's rows (EF Sum/Average/Min/Max): fn in SUM|AVG|MIN|MAX. */
+    async getAggregate(queryObject, entity, fn, column){
+        const q = queryObject.script;
+        const alias = this.getEntity(entity.__name, q.entityMap) || entity.__name;
+        const sql = `SELECT ${fn}(${alias}.[${column}]) AS value ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)}`;
+        const params = q.parameters ? q.parameters.getParams() : [];
+        const row = this._observed(sql, params, () => this.db.prepare(sql).get(...params));
+        return row ? row.value : null;
+    }
+
     async insert(queryObject){
         // Use NEW SECURE parameterized version
         const sqlObject = this._buildSQLInsertObjectParameterized(queryObject, queryObject.__entity);
@@ -412,6 +422,17 @@ class SQLLiteEngine {
             strQuery = "ORDER BY";
             strQuery += ` ${fieldList.join(', ')} ${orderByType}`;
         }
+        // thenBy / thenByDescending (EF ThenBy): secondary sort keys, each with
+        // its own direction, appended after the primary ORDER BY.
+        const thenBy = Array.isArray(query.thenBy) ? query.thenBy : [];
+        if (thenBy.length) {
+            const entityAlias = this.getEntity(query.parentName, query.entityMap);
+            const extra = thenBy.map(t => {
+                if (entity && !entity[t.field]) throw new Error(`Invalid ORDER BY field: ${t.field} not found in ${entity.__name || 'entity'}`);
+                return `${entityAlias}.${t.field} ${t.dir === 'DESC' ? 'DESC' : 'ASC'}`;
+            });
+            strQuery = strQuery ? `${strQuery}, ${extra.join(', ')}` : `ORDER BY ${extra.join(', ')}`;
+        }
         return strQuery;
     }
 
@@ -656,7 +677,7 @@ class SQLLiteEngine {
 
     buildSelect(query, entity){
         // this means that there is a select statement
-        const select = "SELECT";
+        const select = query.distinct ? "SELECT DISTINCT" : "SELECT";
         const arr = [];
         const $that = this;
         if(query.select){

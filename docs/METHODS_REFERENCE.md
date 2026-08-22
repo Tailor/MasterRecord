@@ -60,6 +60,33 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `.include(lambda)` | Eager load relationships | `.include(u => u.Posts)` |
 | `.raw(sql)` | Execute raw SQL | `.raw("SELECT * FROM User")` |
 
+### Query & context methods added in 1.6–1.12 (Entity Framework parity)
+
+| Method | EF Core equivalent | Description |
+|--------|-------------------|-------------|
+| `.find(pk)` | `Find` | Identity-map first (no query if tracked), then database |
+| `.any([lambda, ...args])` | `Any` | Does at least one row match? |
+| `.sum(field)` / `.avg(field)` / `.min(field)` / `.max(field)` | `Sum/Average/Min/Max` | Aggregates over the filtered query (`sum` of nothing → 0, others → null) |
+| `.thenBy(field)` / `.thenByDescending(field)` | `ThenBy` | Secondary sort keys after `orderBy` |
+| `.distinct()` | `Distinct` | `SELECT DISTINCT` |
+| `.toObjectList([options])` | projection | Plain-object results (not tracked) |
+| `.pluck(field)` | — | One column, as a SQL projection |
+| `.asNoTracking()` / `.asTracking()` | `AsNoTracking/AsTracking` | Per-query tracking control |
+| `.ignoreQueryFilters([names])` | `IgnoreQueryFilters` | Skip global query filters |
+| `.executeUpdate({...})` / `.executeDelete()` | `ExecuteUpdate/ExecuteDelete` | Set-based writes, no tracker |
+| `.cache()`, `.last()`, `.exists()`, `.findById()`, `.count()`, `.removeRange()`, `.track()` | — | (existing, previously undocumented here) |
+| `context.add(e)` / `remove(e)` / `addRange` / `removeRange` | `Add/Remove` | Context-level add/remove |
+| `context.entry(e)` / `entries([model])` / `hasChanges()` | `Entry/Entries/HasChanges` | Change-tracker introspection |
+| `context.transaction(fn)` / `beginTransaction/commit/rollback` / savepoints | `Database.BeginTransaction` | Explicit transactions |
+| `context.queryFilter(model, name, lambda, ...args)` | `HasQueryFilter` | Global (named) query filters |
+| `context.on(event, fn)` | `SavingChanges`/interceptors | `savingChanges`, `savedChanges`, `saveChangesFailed`, `tracked`, `stateChanged`, `command`, `retry` |
+| `context.setRetryOnFailure(opts)` | `EnableRetryOnFailure` | Transient-error retry |
+| `context.setQueryTrackingBehavior('no-track')` / `clearChangeTracker()` / `reset()` / `close()` | `QueryTrackingBehavior` / `ChangeTracker.Clear` / `Dispose` | Tracker lifetime |
+| `db.rowVersion()` / `db.concurrencyToken()` (model builder) | `IsRowVersion` / `IsConcurrencyToken` | Optimistic concurrency (throws `ConcurrencyError`) |
+| `db.belongsTo(...).onDelete('cascade'\|'restrict'\|'setNull'\|'noAction')` / `.excludeForeignKeyFromMigrations()` | `OnDelete` / EF 11 | FK constraint behavior |
+
+Not yet supported (throw a clear error): `join()`, `leftJoin()`, `groupBy()`, `thenInclude` (nested include).
+
 ### Lambda Expression Functions
 
 | Function | Used Inside | Description | Example |

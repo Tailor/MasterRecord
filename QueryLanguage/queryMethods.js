@@ -94,6 +94,100 @@ class queryMethods{
         return this;
     }
 
+    // ---- EF Core query ergonomics: Find, Any, aggregates, ThenBy, Distinct ----
+
+    /**
+     * Find by primary key, checking the context's identity map FIRST (EF Core
+     * Find/FindAsync): a tracked instance is returned without a query; otherwise
+     * the row is loaded (and tracked). Returns null if not found.
+     */
+    async find(id){
+        const pk = tools.getPrimaryKeyObject(this.__entity);
+        if (!pk) throw new Error(`masterrecord: find() — no primary key defined on entity '${this.__entity.__name}'`);
+        const ctx = this.__context;
+        const table = this.__entity.__name;
+        for (const e of ctx.__trackedEntitiesMap.values()) {
+            if (e && e.__entity && e.__entity.__name === table && e.__state !== 'delete' && String(e[pk]) === String(id)) {
+                this.__reset();
+                return e;
+            }
+        }
+        return this.findById(id);
+    }
+
+    /**
+     * EF Any(): true if at least one row matches (optionally with a predicate).
+     * `any('u => u.email == $$', email)` ≡ `where(...).exists()`.
+     */
+    async any(predicate, ...args){
+        if (predicate !== undefined && predicate !== null) this.where(predicate, ...args);
+        return this.exists();
+    }
+
+    /** EF Sum(): 0 for no rows. */
+    async sum(field){ return this.__aggregate('SUM', field, 0); }
+    /** EF Average(): null for no rows. */
+    async avg(field){ return this.__aggregate('AVG', field, null); }
+    /** EF Min(): null for no rows. */
+    async min(field){ return this.__aggregate('MIN', field, null); }
+    /** EF Max(): null for no rows. */
+    async max(field){ return this.__aggregate('MAX', field, null); }
+
+    async __aggregate(fn, field, emptyValue){
+        if (!field || typeof field !== 'string') throw new TypeError(`masterrecord: ${fn.toLowerCase()}(field) requires a column name.`);
+        const def = this.__entity[field];
+        if (!def || typeof def !== 'object' || def.type === 'hasOne' || def.type === 'hasMany' || def.type === 'hasManyThrough') {
+            throw new Error(`masterrecord: ${fn.toLowerCase()}('${field}') — '${field}' is not a column of ${this.__entity.__name}.`);
+        }
+        const column = (def.relationshipType === 'belongsTo' && def.foreignKey) ? def.foreignKey : (def.name || field);
+        this.__applyQueryFilters();
+        if (this.__queryObject.script.entityMap.length === 0) this.__queryObject.skipClause(this.__entity.__name);
+        const ctx = this.__context;
+        await ctx._ensureReady();
+        try {
+            const v = await ctx._execWithRetry(() => ctx._SQLEngine.getAggregate(this.__queryObject, this.__entity, fn, column));
+            if (v === null || v === undefined) return emptyValue;
+            const n = Number(v);
+            return Number.isNaN(n) ? v : n;
+        } finally {
+            this.__reset();
+        }
+    }
+
+    /** EF Distinct(): SELECT DISTINCT over the projected columns. */
+    distinct(){
+        this.__queryObject.script.distinct = true;
+        return this;
+    }
+
+    /**
+     * EF ThenBy / ThenByDescending: secondary sort keys after orderBy().
+     * Accepts a lambda (`'u => u.name'`) or a bare column name.
+     */
+    thenBy(fieldOrLambda){ return this.__thenBy(fieldOrLambda, 'ASC'); }
+    thenByDescending(fieldOrLambda){ return this.__thenBy(fieldOrLambda, 'DESC'); }
+    __thenBy(fieldOrLambda, dir){
+        const text = String(typeof fieldOrLambda === 'function' ? fieldOrLambda.toString() : fieldOrLambda).trim();
+        const m = text.match(/=>\s*\w+\.(\w+)\s*;?\s*$/) || (/^\w+$/.test(text) ? [null, text] : null);
+        if (!m) throw new TypeError(`masterrecord: thenBy expects a column lambda like 'u => u.name' or a column name, got ${JSON.stringify(fieldOrLambda)}`);
+        const field = m[1];
+        if (!this.__entity[field] || typeof this.__entity[field] !== 'object') {
+            throw new Error(`masterrecord: thenBy — '${field}' is not a column of ${this.__entity.__name}.`);
+        }
+        const s = this.__queryObject.script;
+        (s.thenBy ||= []).push({ field, dir });
+        return this;
+    }
+
+    /**
+     * Materialize rows as plain objects (DTO-style projection). Results are
+     * not tracked. `options` are passed to entity.toObject().
+     */
+    async toObjectList(options){
+        const rows = await this.asNoTracking().toList();
+        return rows.map(r => (typeof r.toObject === 'function' ? r.toObject(options) : r));
+    }
+
     // ---- Set-based writes (EF Core ExecuteUpdate / ExecuteDelete) ----------
     // One SQL statement over the rows the query selects. They bypass the
     // change tracker entirely (tracked instances are NOT refreshed — don't mix
@@ -218,17 +312,19 @@ class queryMethods{
 
 
     // do join on two tables = inner join
+    // These operators are not implemented yet. They used to be empty bodies
+    // returning undefined, so chaining off them threw a bare TypeError far
+    // from the call site. Fail loudly and explain the alternative instead.
     join(){
-
+        throw new Error('masterrecord: join() is not supported yet. Use include() for eager-loaded relationships, or ctx.query()/ctx.execute() for a hand-written JOIN.');
     }
 
     groupBy(){
-        
+        throw new Error('masterrecord: groupBy() is not supported yet. Use count()/sum()/avg()/min()/max() with a where() for single-group aggregates, or ctx.query() for GROUP BY SQL.');
     }
 
-    // do join on two tables = inner join
-    _____leftJoin(){
-
+    leftJoin(){
+        throw new Error('masterrecord: leftJoin() is not supported yet. Use include() (compiles to a LEFT JOIN) or ctx.query() for a hand-written JOIN.');
     }
 
     ______orderByCount(query,  ...args){
@@ -495,8 +591,10 @@ class queryMethods{
             throw new Error(`Field '${fieldName}' does not exist on ${this.__entity.__name}`);
         }
 
-        const entities = await this.toList();
-        return entities.map(entity => entity[fieldName]);
+        // SQL projection (SELECT <field> only) with no tracking — pluck is a
+        // read of one column, not a full-entity load.
+        const rows = await this.asNoTracking().select(`r => r.${fieldName}`).toList();
+        return rows.map(entity => entity[fieldName]);
     }
 
     /**

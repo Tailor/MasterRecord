@@ -50,6 +50,10 @@ If you set a `no-track` default on a shared/long-lived context, remember every w
 | `context.clearChangeTracker()` | `ChangeTracker.Clear()` | Detach all entities and drop all pending changes. |
 | `context.reset()` | (pool release reset) | Detach all + clear the query cache, but **keep the connection open** — the "reuse this instance" primitive. |
 | `await context.close()` | `Dispose()` | Release the change tracker **and** the connection (decrements the connection-pool ref). |
+| `context.entry(entity)` | `Entry(entity)` | `state` (get/set), `originalValues`, `currentValues`, `isModified(field)`, `reload()`, `getDatabaseValues()`, `detach()`. |
+| `context.hasChanges()` / `context.entries([model])` | `ChangeTracker.HasChanges()` / `Entries()` | Pending changes? / all tracked entries. |
+| `context.add(e)` / `context.remove(e)` | `Add` / `Remove` | Context-level add/remove (resolves the owning dbset). |
+| `ctx.Model.find(pk)` | `Find` | Identity map first — no query if the row is already tracked. |
 
 `clearChangeTracker()` drops pending changes, so on a shared context it can destroy another in-flight request's writes — it is not a safe per-request mitigation. Use request-scoped contexts or `asNoTracking()` instead.
 
