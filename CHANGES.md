@@ -1,5 +1,13 @@
 # MasterRecord Changelog
 
+## v1.23.0 — entity property reads ~16x faster (shared prototype per entity type)
+
+- **Perf:** every entity of a type now shares **one prototype** and keeps its backing slots (`_<col>`, `_<nav>`, `__loading_<nav>`) as **non-enumerable own properties**. Before, each row got a fresh `{}` prototype holding its slots, so every entity had its own V8 hidden class and `entity.col` was a megamorphic accessor read: **~326 ns/read** (both tracked and `asNoTracking()`), i.e. an O(n²) loop over two 2 000-row tables took seconds and over larger tables minutes. Now **~20 ns/read**; the 2 000×2 000 nested loop went from 2.07 s to 0.19 s. EF Core entities are POCOs — a property read should cost about what a plain object read costs.
+- Public shape is unchanged: `Object.keys(entity)` / `JSON.stringify` / `{ ...entity }` still expose only columns; navigation getters, `asNoTracking()`, change tracking, `Object.create(entity)` clean models (engine idiom: reads walk the chain, writes reach the owner through the entity's `__self`) all behave as before. Internal slot access is centralized in `tools.slotOwner/getSlot/setSlot/hasSlot/deleteSlot` (code that poked `Object.getPrototypeOf(entity)['_col']` must use these).
+- Guidance still holds for hot loops: prefer `asNoTracking()` for read-only queries (no tracking bookkeeping per row) and build one-pass `Map`s instead of nested loops.
+
+New test: `test/entity-layout-read-performance.test.js`.
+
 ## v1.22.1 — boolean columns materialize as booleans on read (fix)
 
 - **Fix:** `db.boolean()` columns are now materialized as real `true`/`false` when rows are read (`toList()/find()/single()/first()`, tracked or `asNoTracking()`), matching EF Core value conversion. SQLite stores booleans as INTEGER `0/1` and MySQL as `TINYINT(1)`/`BIT(1)`, so an entity read back exposed `1`/`0` (an API echoed `{ published: true }` after the insert but `{ published: 1 }` after a later read/update). `null` is preserved; other types are untouched; a custom `transform()` still wins. Implemented as `FieldTransformer.materialize(value, fieldDef)`, applied on the single row→entity path.

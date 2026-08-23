@@ -12,7 +12,10 @@ class EntityTrackerModel {
     build(dataModel, currentEntity, context){
         const $that = this;
         const modelClass = this.buildObject(); // build entity with models
-        modelClass.__proto__ = {};
+        // The entity's prototype stays the ordinary shared Object.prototype and its
+        // backing slots are non-enumerable OWN properties (see tools.slotOwner):
+        // every row of a type shares one hidden class, so reads stay monomorphic.
+        Object.defineProperty(modelClass, '__self', { value: modelClass, enumerable: false, writable: false, configurable: true });
         const modelFields = Object.entries(dataModel); /// return array of objects
 
         modelClass.__entity = currentEntity;
@@ -212,7 +215,7 @@ class EntityTrackerModel {
 
                 // Only reload scalar fields
                 if (!isRelationship) {
-                    this.__proto__["_" + fieldName] = fresh.__proto__["_" + fieldName];
+                    tools.setSlot(this, "_" + fieldName, tools.getSlot(fresh, "_" + fieldName));
                 }
             }
 
@@ -328,7 +331,10 @@ class EntityTrackerModel {
             }
         }
 
-        target["__proto__"]["_" + modelField] = transformedValue;
+        const slot = "_" + modelField;                       // backing slot (non-enumerable own property)
+        const fieldDef = currentEntity[modelField] || null;  // static column definition
+        const customGet = (fieldDef && typeof fieldDef.get === "function") ? fieldDef.get : null;
+        tools.setSlot(target, slot, transformedValue);
 
         Object.defineProperty(target, modelField, {
             enumerable: true,
@@ -431,33 +437,26 @@ class EntityTrackerModel {
                 } else {
                     storedValue = value;
                 }
-                this["__proto__"]["_" + modelField] = storedValue;
+                tools.setSlot(this, slot, storedValue);
                 if (navNameForFk) {
                     // FK -> navigation fix-up (EF): changing the FK column invalidates
                     // a previously loaded/assigned navigation so the next read
                     // re-resolves it (lazy) instead of returning a stale parent.
                     // The engines persist the FK via tools.foreignKeyValue(), which
                     // falls back to this column when the navigation slot is unset.
-                    const proto = this["__proto__"];
-                    const nav = proto["_" + navNameForFk];
-                    if (nav !== undefined && nav !== storedValue) delete proto["_" + navNameForFk];
-                    delete proto["__loading_" + navNameForFk];
+                    const nav = tools.getSlot(this, "_" + navNameForFk);
+                    if (nav !== undefined && nav !== storedValue) tools.deleteSlot(this, "_" + navNameForFk);
+                    tools.deleteSlot(this, "__loading_" + navNameForFk);
                 }
             },
+            // Hot path: a property read on an entity must cost about what a plain
+            // object read costs (EF Core entities are POCOs). The slot key, field
+            // definition and custom getter are resolved ONCE per accessor (closure),
+            // not per read — previously every read re-concatenated "_" + field and
+            // re-walked the definition (~300 ns/read, ~200x a plain property).
             get: function() {
-                if (currentEntity[modelField]) {
-                    if (!currentEntity[modelField].skipGetFunction) {
-                        if (typeof currentEntity[modelField].get === "function") {
-                            return currentEntity[modelField].get(this["__proto__"]["_" + modelField]);
-                        } else {
-                            return this["__proto__"]["_" + modelField];
-                        }
-                    } else {
-                        return this["__proto__"]["_" + modelField];
-                    }
-                } else {
-                    return this["__proto__"]["_" + modelField];
-                }
+                const value = this[slot];   // own slot on the entity; a derived clean model reads it through the chain
+                return (customGet !== null && !fieldDef.skipGetFunction) ? customGet(value) : value;
             }
         });
     }
@@ -471,10 +470,9 @@ class EntityTrackerModel {
      * After this, the inserted entity behaves like a queried one: edits mark it
      * modified and produce an UPDATE.
      *
-     * A per-entity backing layer is spliced into the prototype chain
-     * (`Object.create(originalProto)`) so `_<field>` backings stay per-instance
-     * while the class prototype — and any lifecycle-hook methods on it — remain
-     * reachable.
+     * Backing slots (`_<field>`) are non-enumerable own properties of the object
+     * itself (see tools.slotOwner), so the class prototype — and any lifecycle-hook
+     * methods on it — is never touched.
      */
     attachTrackingTo(target) {
         const currentEntity = target && target.__entity;
@@ -508,12 +506,14 @@ class EntityTrackerModel {
             scalarFields.push(modelField);
         }
 
-        // Splice a fresh backing layer in front of the original prototype so the
-        // class prototype (and its lifecycle hooks) stays reachable.
-        Object.setPrototypeOf(target, Object.create(Object.getPrototypeOf(target)));
+        // Backing slots become non-enumerable OWN properties of the user's object;
+        // its class prototype (and any lifecycle-hook methods on it) is untouched.
         Object.defineProperty(target, '__trackingAttached', {
             value: true, enumerable: false, writable: true, configurable: true,
         });
+        if (!Object.prototype.hasOwnProperty.call(target, '__self')) {
+            Object.defineProperty(target, '__self', { value: target, enumerable: false, writable: false, configurable: true });
+        }
 
         for (const modelField of scalarFields) {
             // applyFromDb=false: the captured value is already the domain value
@@ -584,7 +584,7 @@ class EntityTrackerModel {
                         // belongsTo navigation also sets the foreign-key column, so
                         // `post.author = someAuthor` persists author_id on save.
                         const def = currentEntity[entityField];
-                        const proto = Object.getPrototypeOf(modelClass);   // accessor owner's slot, never `this`
+                        const proto = modelClass;   // slots live on the accessor OWNER (own non-enumerable props), never on `this`
                         if (value && typeof value === 'object' && value.__entity && def && def.relationshipType === 'belongsTo' && def.foreignKey) {
                             const parentPk = tools.getPrimaryKeyObject(value.__entity);
                             const fkVal = parentPk ? value[parentPk] : undefined;
@@ -594,10 +594,10 @@ class EntityTrackerModel {
                                 modelClass[def.foreignKey] = fkVal;
                             }
                         } else if ((value === null || typeof value !== 'object') && def && def.relationshipType === 'belongsTo' && def.foreignKey && ('_' + def.foreignKey) in proto) {
-                            proto['_' + def.foreignKey] = value;       // legacy idiom `post.author = authorId`
+                            tools.setSlot(proto, '_' + def.foreignKey, value);       // legacy idiom `post.author = authorId`
                         }
-                        delete proto['__loading_' + entityField];
-                        proto["_" + entityField] = value;
+                        tools.deleteSlot(proto, '__loading_' + entityField);
+                        tools.setSlot(proto, "_" + entityField, value);
                     },
                     get : function(){
                         // Navigation getter (EF semantics, adapted to async JS drivers):
@@ -610,7 +610,7 @@ class EntityTrackerModel {
                         // Resolve the backing slot from the accessor OWNER, never from
                         // `this`: a derived object (Object.create(entity), used by the
                         // engines) must not end up with its own shadowing `_<nav>`.
-                        const proto = Object.getPrototypeOf(modelClass);
+                        const proto = modelClass;
                         const loaded = proto['_' + entityField];
                         // undefined = not loaded; null = loaded, no related row (EF); a thenable = in flight
                         if (loaded !== undefined && !(loaded && typeof loaded.then === 'function')) return loaded;
@@ -621,10 +621,10 @@ class EntityTrackerModel {
                         const inflightKey = '__loading_' + entityField;
                         if (proto[inflightKey] && typeof proto[inflightKey].then === 'function') return proto[inflightKey];
                         const p = ctx.loadNavigation(modelClass, entityField).then(
-                            (v) => { proto['_' + entityField] = v; delete proto[inflightKey]; return v; },
-                            (err) => { delete proto[inflightKey]; throw err; }
+                            (v) => { tools.setSlot(proto, '_' + entityField, v); tools.deleteSlot(proto, inflightKey); return v; },
+                            (err) => { tools.deleteSlot(proto, inflightKey); throw err; }
                         );
-                        proto[inflightKey] = p;
+                        tools.setSlot(proto, inflightKey, p);
                         p.catch(() => {});   // awaiters still see the rejection; avoids an unhandled-rejection crash when un-awaited
                         return p;
                     }

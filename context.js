@@ -1866,8 +1866,7 @@ class context {
         if (!def || typeof def !== 'object') throw new Error(`masterrecord: '${field}' is not a navigation of ${entity.__entity.__name}.`);
         const isRel = def.relationshipType === 'belongsTo' || def.type === 'hasOne' || def.type === 'hasMany' || def.type === 'hasManyThrough';
         if (!isRel) throw new Error(`masterrecord: '${field}' on ${entity.__entity.__name} is a column, not a navigation.`);
-        const proto = Object.getPrototypeOf(entity);
-        const backing = (col) => (proto && ('_' + col) in proto) ? proto['_' + col] : entity[col];
+        const backing = (col) => tools.hasSlot(entity, '_' + col) ? tools.getSlot(entity, '_' + col) : entity[col];
         let value = null;
 
         if (def.relationshipType === 'belongsTo') {
@@ -1906,7 +1905,7 @@ class context {
                 if (def.type === 'hasMany') this._decorateCollection(entity, field, value);
             }
         }
-        if (proto) proto['_' + field] = value; else entity['_' + field] = value;
+        tools.setSlot(entity, '_' + field, value);
         return value;
     }
 
@@ -1934,8 +1933,8 @@ class context {
         if (!isBt && def.type !== 'hasOne' && def.type !== 'hasMany' && def.type !== 'hasManyThrough') {
             throw new Error(`masterrecord: '${nav}' on ${ownerDef.__name} is a column, not a navigation.`);
         }
-        const slotOf = (e) => Object.getPrototypeOf(e);
-        const setSlot = (e, v) => { const p = slotOf(e); if (p) p['_' + nav] = v; else e['_' + nav] = v; };
+        const slotOf = (e) => tools.slotOwner(e);
+        const setSlot = (e, v) => tools.setSlot(e, '_' + nav, v);
         const CHUNK = 500;
         const chunks = (arr) => { const out = []; for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK)); return out; };
         const uniq = (arr) => [...new Set(arr.filter(v => v !== undefined && v !== null && typeof v !== 'function'))];
@@ -2016,8 +2015,7 @@ class context {
 
     /** Has this navigation been loaded (by include() or loadNavigation())? */
     isNavigationLoaded(entity, field) {
-        const proto = Object.getPrototypeOf(entity);
-        const v = proto ? proto['_' + field] : undefined;
+        const v = tools.getSlot(entity, '_' + field);
         // null counts as loaded (EF: the reference was loaded and there is no related row)
         return v !== undefined && !(v && typeof v.then === 'function');
     }
@@ -2915,9 +2913,8 @@ class context {
             // entity so its value matches the row and the next save's WHERE
             // uses the new version.
             if (rowVersionColumn) {
-                const proto = Object.getPrototypeOf(currentModel);
                 const cur = Number(this._backingValue(currentModel, rowVersionColumn) || 0);
-                if (proto && ('_' + rowVersionColumn) in proto) proto['_' + rowVersionColumn] = cur + 1;
+                if (tools.hasSlot(currentModel, '_' + rowVersionColumn)) tools.setSlot(currentModel, '_' + rowVersionColumn, cur + 1);
                 else currentModel[rowVersionColumn] = cur + 1;
             }
         }
@@ -3491,8 +3488,7 @@ class context {
     }
 
     _backingValue(entity, column) {
-        const proto = Object.getPrototypeOf(entity);
-        if (proto && ('_' + column) in proto) return proto['_' + column];
+        if (tools.hasSlot(entity, '_' + column)) return tools.getSlot(entity, '_' + column);
         const v = entity[column];
         return typeof v === 'function' ? undefined : v;
     }

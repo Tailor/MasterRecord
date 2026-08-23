@@ -76,7 +76,8 @@ const watchFallback = () => {
 // is exactly when the raw value used to reach the engine on the batch path.
 const seedRaw = (ctx, label) => {
     const e = ctx.User.new();
-    Object.getPrototypeOf(e)._role = label;
+    // Poke the backing slot directly (1.23.0: slots are non-enumerable OWN props, see tools.slotOwner)
+    Object.defineProperty(e, '_role', { value: label, writable: true, enumerable: false, configurable: true });
     ctx.User.add(e);
     return e;
 };

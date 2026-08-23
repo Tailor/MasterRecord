@@ -1087,8 +1087,10 @@ class queryMethods{
             __entity : this.__entity,
             __context : this.__context,
             __name : this.__entity.__name,
-            __proto__ : {}
         };
+        // Backing slots are non-enumerable own properties (see tools.slotOwner); the
+        // prototype stays the shared Object.prototype so reads stay monomorphic.
+        Object.defineProperty(newEntity, '__self', { value: newEntity, enumerable: false, writable: false, configurable: true });
 
         // Set up property setters for all entity fields
         for (const fieldName in this.__entity) {
@@ -1165,11 +1167,7 @@ class queryMethods{
                                 // tracker-entity setter (entityTrackerModel.build) already does
                                 // this on UPDATE; we need the same behavior on INSERT so values
                                 // normalize consistently regardless of which path created them.
-                                if (fieldDef && typeof fieldDef.set === 'function') {
-                                    this.__proto__["_" + fname] = fieldDef.set(value);
-                                } else {
-                                    this.__proto__["_" + fname] = value;
-                                }
+                                tools.setSlot(this, "_" + fname, (fieldDef && typeof fieldDef.set === 'function') ? fieldDef.set(value) : value);
                                 if(!this.__dirtyFields.includes(fname)){
                                     this.__dirtyFields.push(fname);
                                 }
@@ -1187,9 +1185,9 @@ class queryMethods{
                             get: function(){
                                 // Apply get function if defined
                                 if(fieldDef && typeof fieldDef.get === "function"){
-                                    return fieldDef.get(this.__proto__["_" + fname]);
+                                    return fieldDef.get(this["_" + fname]);
                                 }
-                                return this.__proto__["_" + fname];
+                                return this["_" + fname];
                             }
                         });
 
@@ -1221,7 +1219,7 @@ class queryMethods{
                                     enumerable: true,
                                     configurable: true,
                                     set: function(value) {
-                                        this.__proto__["_" + navName] = value;
+                                        tools.setSlot(this, "_" + navName, value);
                                         if (!this.__dirtyFields.includes(navName)) {
                                             this.__dirtyFields.push(navName);
                                         }
@@ -1240,7 +1238,7 @@ class queryMethods{
                                         // to the FK-column backing populated
                                         // by DB hydration in
                                         // entityTrackerModel.build().
-                                        const navVal = this.__proto__["_" + navName];
+                                        const navVal = this["_" + navName];
                                         if (navVal && typeof navVal === 'object' && navVal.__entity) {
                                             // An assigned parent ENTITY: the FK column reads its key.
                                             const def = navVal.__entity;
@@ -1249,7 +1247,7 @@ class queryMethods{
                                         }
                                         return navVal !== undefined
                                             ? navVal
-                                            : this.__proto__["_" + fkName];
+                                            : this["_" + fkName];
                                     }
                                 });
                             }
@@ -1412,7 +1410,7 @@ class queryMethods{
 
                 // Only reload scalar fields
                 if (!isRelationship) {
-                    this.__proto__["_" + fieldName] = fresh.__proto__["_" + fieldName];
+                    tools.setSlot(this, "_" + fieldName, tools.getSlot(fresh, "_" + fieldName));
                 }
             }
 

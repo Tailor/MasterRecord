@@ -151,16 +151,49 @@ class Tools{
     }
 
     /**
+     * Backing-slot storage (1.23.0). A tracked entity keeps its column values,
+     * navigation values and in-flight markers in NON-ENUMERABLE OWN properties
+     * (`_<col>`, `_<nav>`, `__loading_<nav>`) and its prototype is the ordinary
+     * shared one — so every entity of a type has the same V8 hidden class and a
+     * property read costs what a plain object read costs (it used to be a fresh
+     * per-row prototype object holding the slots: ~300 ns/read, megamorphic).
+     * A derived clean model (`Object.create(entity)`, used by the engines) finds
+     * its owner through the entity's `__self`; reads walk the chain naturally.
+     */
+    static slotOwner(obj) {
+        if (!obj || typeof obj !== 'object') return obj;
+        const self = obj.__self;
+        return (self && typeof self === 'object') ? self : obj;
+    }
+    static hasSlot(obj, key) {
+        const o = Tools.slotOwner(obj);
+        return !!o && typeof o === 'object' && (key in o);
+    }
+    static getSlot(obj, key) {
+        const o = Tools.slotOwner(obj);
+        return (o && typeof o === 'object') ? o[key] : undefined;
+    }
+    static setSlot(obj, key, value) {
+        const o = Tools.slotOwner(obj);
+        if (!o || typeof o !== 'object') return;
+        if (Object.prototype.hasOwnProperty.call(o, key)) o[key] = value;
+        else Object.defineProperty(o, key, { value, writable: true, enumerable: false, configurable: true });
+    }
+    static deleteSlot(obj, key) {
+        const o = Tools.slotOwner(obj);
+        if (o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, key)) delete o[key];
+    }
+
+    /**
      * Read a field's stored value WITHOUT invoking a navigation getter:
      * a plain data property (new Model() before tracking accessors exist),
-     * else the tracked backing slot `_<key>` on the prototype.
+     * else the tracked backing slot `_<key>`.
      */
     static dataValue(obj, key) {
         if (!obj || typeof obj !== 'object') return undefined;
         const d = Object.getOwnPropertyDescriptor(obj, key);
         if (d && 'value' in d) return d.value;
-        const proto = Object.getPrototypeOf(obj);
-        if (proto && ('_' + key) in proto) return proto['_' + key];
+        if (Tools.hasSlot(obj, '_' + key)) return Tools.getSlot(obj, '_' + key);
         return undefined;
     }
 

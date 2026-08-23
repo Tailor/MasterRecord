@@ -564,8 +564,8 @@ class InsertManager {
                             }
 
                             // Fallback: check backing field on tracked model if both reads were undefined/null
-                            if (!hasValue && currentRealModel && currentRealModel.__proto__) {
-                                const backing = currentRealModel.__proto__['_' + entity];
+                            if (!hasValue && currentRealModel) {
+                                const backing = tools.getSlot(currentRealModel, '_' + entity);
                                 hasValue = (backing !== undefined && backing !== null);
                                 if (hasValue) {
                                     // normalize into both models so downstream sees it

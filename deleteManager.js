@@ -1,4 +1,5 @@
 // version 1.0.0 - FAANG-Level Refactored
+import tools from './Tools.js';
 
 // Constants for relationship types
 const RELATIONSHIP_TYPES = {
@@ -81,9 +82,7 @@ class DeleteManager {
             if (this._isRelationshipType(propertyConfig.type)) {
                 // Read the backing field directly to avoid triggering lazy-loading
                 // getters, which can return Promises or error strings
-                const relatedModel = entity.__proto__
-                    ? entity.__proto__["_" + property]
-                    : entity["_" + property];
+                const relatedModel = tools.getSlot(entity, "_" + property);
 
                 if (relatedModel === null || relatedModel === undefined) {
                     // Unloaded relationships are safe to skip — the database
@@ -159,9 +158,7 @@ class DeleteManager {
 
                 if (this._isRelationshipType(propertyConfig.type)) {
                     // Read backing field directly to avoid triggering lazy-loading getters
-                    const relatedModel = entity.__proto__
-                        ? entity.__proto__["_" + property]
-                        : entity["_" + property];
+                    const relatedModel = tools.getSlot(entity, "_" + property);
 
                     if (relatedModel === null || relatedModel === undefined) {
                         continue;
