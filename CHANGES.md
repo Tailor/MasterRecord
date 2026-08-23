@@ -1,5 +1,10 @@
 # MasterRecord Changelog
 
+## v1.22.1 — boolean columns materialize as booleans on read (fix)
+
+- **Fix:** `db.boolean()` columns are now materialized as real `true`/`false` when rows are read (`toList()/find()/single()/first()`, tracked or `asNoTracking()`), matching EF Core value conversion. SQLite stores booleans as INTEGER `0/1` and MySQL as `TINYINT(1)`/`BIT(1)`, so an entity read back exposed `1`/`0` (an API echoed `{ published: true }` after the insert but `{ published: 1 }` after a later read/update). `null` is preserved; other types are untouched; a custom `transform()` still wins. Implemented as `FieldTransformer.materialize(value, fieldDef)`, applied on the single row→entity path.
+- Found validating the `master new` scaffold end to end. New test: `test/boolean-materialization.test.js`.
+
 ## v1.22.0 — owned / complex types as JSON (EF Core `OwnsOne(...).ToJson()` / `ComplexProperty`)
 
 - **`db.owned(Address)`** stores the value as JSON in one column and **hydrates it into the class on read**; **`db.owned()`** for plain objects/arrays. Serialization is automatic (a custom `transform()` still wins).

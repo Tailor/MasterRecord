@@ -135,6 +135,30 @@ class FieldTransformer {
     }
 
     /**
+     * Built-in materialization of a raw column value into its declared JS type
+     * (EF Core value conversion on read). SQLite stores booleans as INTEGER 0/1
+     * and MySQL as TINYINT(1), so `db.boolean()` columns come back as numbers
+     * unless converted here; Postgres already returns true/false. Other types
+     * pass through unchanged; null/undefined are preserved.
+     *
+     * @param {*} value - Raw value from the database row
+     * @param {Object} fieldDef - Field definition ({ type, ... })
+     * @returns {*} Value in its application type
+     */
+    static materialize(value, fieldDef) {
+        if (value === null || value === undefined || !fieldDef) return value;
+        const type = fieldDef.type;
+        if (type === 'boolean' || type === 'bool') {
+            if (typeof value === 'boolean') return value;
+            if (value === 1 || value === '1' || value === 'true' || value === 'TRUE') return true;
+            if (value === 0 || value === '0' || value === 'false' || value === 'FALSE') return false;
+            if (typeof value === 'bigint') return value !== 0n;
+            if (Buffer.isBuffer(value) && value.length === 1) return value[0] !== 0;   // MySQL BIT(1)
+        }
+        return value;
+    }
+
+    /**
      * Transform a value from database storage to application format
      * Executes the fromDatabase transformer if defined
      *
@@ -146,9 +170,9 @@ class FieldTransformer {
      * @throws {Error} If transformation fails
      */
     static fromDatabase(value, fieldDef, entityName, fieldName) {
-        // No transformer - return original value
+        // No transformer - apply the built-in type materialization only
         if (!this.hasTransformer(fieldDef)) {
-            return value;
+            return this.materialize(value, fieldDef);
         }
 
         const transformer = fieldDef.transform;
