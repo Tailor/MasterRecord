@@ -72,17 +72,23 @@ test('migrations-status shows pending before and applied after update-database; 
     assert.match(r.stdout, /Pending \(2\)/);
     assert.match(r.stdout, /1700000001000_CreateAuthor_migration\.js/);
 
+    const snapPath = path.join(migrationsDir, 'toolctx_contextSnapShot.json');
+    const snapBefore = fs.readFileSync(snapPath, 'utf8');
+
     r = run(['update-database', 'toolctx'], projectDir);
     assert.equal(r.status, 0, `update failed: ${r.stderr}\n${r.stdout}`);
     assert.match(r.stdout, /applied \(transactional\)/, 'SQLite migrations apply transactionally');
 
+    // EF semantics (1.30.0): the snapshot belongs to AUTHORING. `dotnet ef database
+    // update` never rewrites ModelSnapshot, and neither does update-database — applying
+    // only writes the history table. (Before, both commands rewrote it, and the two
+    // rewrote it differently, so they fought over the same files.)
+    assert.equal(fs.readFileSync(snapPath, 'utf8'), snapBefore, 'applying must not rewrite the snapshot');
+
     r = run(['migrations-status', 'toolctx'], projectDir);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /Applied \(2\)/);
+    assert.match(r.stdout, /Applied \(2\)/, 'the history table is what records what was applied');
     assert.match(r.stdout, /Pending \(0\)/);
-    const snap = JSON.parse(fs.readFileSync(path.join(migrationsDir, 'toolctx_contextSnapShot.json'), 'utf8'));
-    assert.equal(snap.latestMigration, '1700000002000_CreateBook_migration.js', 'snapshot records the latest migration id (EF 11)');
-    assert.match(r.stdout, /Snapshot latest migration: 1700000002000_CreateBook_migration\.js/);
 });
 
 test('script prints the SQL for pending migrations and does NOT apply it', () => {

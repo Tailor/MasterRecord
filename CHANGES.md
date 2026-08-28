@@ -1,5 +1,46 @@
 # MasterRecord Changelog
 
+## v1.30.0 — the snapshot belongs to authoring, as in EF Core (migrations now replay from empty)
+
+**Behaviour change. Read this before upgrading a project with existing migrations.**
+
+EF Core writes the model snapshot when a migration is *authored*: `dotnet ef migrations add`
+regenerates `ModelSnapshot`, and `dotnet ef database update` never touches it. That is what
+makes every migration a delta between authored states, and it is why a fresh database can
+replay them in order.
+
+masterrecord did the opposite. The snapshot was written by `update-database`,
+`update-database-all`, `-down`, `-restart`, `-target`, so it recorded **applied database
+state**. Any schema created outside migrations — a bootstrap script, a hand-made table, a
+half-applied run — got baked into the snapshot, and the next `add-migration` then generated
+a migration that *assumed* schema no migration creates. Those migrations worked in the
+environment they were authored in and failed on a fresh database. Two `add-migration` calls
+in a row also emitted the same change twice, because nothing advanced the snapshot between
+them.
+
+- **`add-migration` now advances the snapshot** (and records `latestMigration`).
+- **No apply-time command writes the snapshot any more.** Applying only writes the history
+  table. The snapshot's writers are now exactly EF's: `add-migration`,
+  `enable-migrations`, `enable-migrations-all`, `remove-migration`.
+- **`alterColumn` migrations are self-contained.** They emitted `alterColumn(table.X)`,
+  resolved against a diff computed at apply time, so they only worked while the snapshot
+  lagged. The column definition is now inlined, as `addColumn`/`dropColumn` already did —
+  and `down` restores the **old** definition instead of re-applying the new one, which was
+  a silent no-op revert.
+- This also removes the snapshot churn at its root: `update-database` and
+  `update-database-all` can no longer rewrite each other's snapshots, because neither writes.
+
+**Upgrading:** your existing snapshots currently describe applied state, which is the same
+starting point `add-migration` already diffs against — so the next migration you generate is
+unchanged. From then on the snapshot advances at authoring time. If a project has schema that
+no migration creates (a bootstrap script), author catch-up migrations for it and
+`masterrecord baseline <context> --all` against the databases that already have it, then
+delete the bootstrap — otherwise a fresh database still cannot reach the same schema.
+
+New tests: `test/snapshot-authoring-semantics.test.js` — the snapshot advances on authoring
+and not on applying, a second `add-migration` with no model change emits nothing, migrations
+replay onto an empty database, and `alterColumn` inlines its definitions.
+
 ## v1.29.0 — count() returns a number on Postgres; one snapshot shape across every command
 
 Both found by running against a live PostgreSQL 16.15 server. Neither was a regression —

@@ -37,13 +37,19 @@ export default ${this.name};
 `;
     }
 
-    alterColumn(type, name, _parent){
-        if(type === "up"){
-            this.#up += os.EOL + `     await this.alterColumn(table.${name});`
-        }
-        else{
-            this.#down += os.EOL + `     await this.alterColumn(table.${name});`
-        }
+    /**
+     * Emit alterColumn with the column definition INLINE, the way addColumn and
+     * dropColumn already do. It used to emit `alterColumn(table.X)`, which resolved
+     * against the diff computed at apply time — so the migration only worked while the
+     * snapshot still lagged behind the entities. EF migrations are self-contained; this
+     * makes ours self-contained too, and lets `down` revert to the OLD definition
+     * instead of re-applying the new one.
+     */
+    alterColumn(type, spec){
+        if(!spec) { return; }
+        const stmt = `     await this.alterColumn(${JSON.stringify(spec)});`;
+        if(type === "up"){ this.#up += os.EOL + stmt; }
+        else{ this.#down += os.EOL + stmt; }
     }
     createTable(type, name){
         if(type === "up"){

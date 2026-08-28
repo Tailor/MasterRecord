@@ -395,14 +395,25 @@ program.hook('preAction', () => {
         }
         const migrationDate = Date.now();
         const outputFile = `${migBase}/${migrationDate}_${name}_migration.js`
-        fs.writeFile(outputFile, newEntity, 'utf8', function (err) {
-          if (err) {
-            console.log("--- Error running cammand, re-run command add-migration ---- ", err);
-            process.exit(1);
-          }
-          console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
-          process.exit(0);
+        fs.writeFileSync(outputFile, newEntity, 'utf8');
+        console.log(`✓ Migration '${name}' created successfully at ${outputFile}`);
+
+        // EF semantics: the snapshot advances when a migration is AUTHORED, not when it
+        // is applied (`dotnet ef migrations add` regenerates ModelSnapshot; `database
+        // update` never touches it). That is what makes each migration a delta between
+        // authored states, so a fresh database can replay them in order. It also means
+        // two add-migrations in a row no longer emit the same change twice.
+        migration.createSnapShot({
+          file: contextAbs,
+          executedLocation,
+          context: contextInstance,
+          contextEntities: cleanEntities,
+          contextSeedData: seedData,
+          contextSeedConfig: seedConfig,
+          contextFileName,
+          latestMigration: path.basename(outputFile),
         });
+        process.exit(0);
        }catch (e){
          console.log("Error - Cannot read or find file ", e);
          process.exit(1);
@@ -604,9 +615,7 @@ program.hook('preAction', () => {
          }
 
          console.log(`\n💾 Updating snapshot...`);
-         const snap = await __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName });
-
-         migration.createSnapShot(snap);
+         // EF: applying migrations does NOT touch the snapshot — only the history table.
          console.log(`\n✅ Database updated successfully!`);
 
          // Final verification for SQLite
@@ -740,8 +749,8 @@ program.hook('preAction', () => {
        }
 
        // Update snapshot
-       const snap = await __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName });
-       migration.createSnapShot(snap);
+       // EF: reverting a migration does NOT touch the snapshot either; `migrations remove`
+       // is what rolls the authored model back.
        console.log("✓ Database rolled back successfully");
        await __cleanupAndExit(contextInstance, 0);
 
@@ -830,15 +839,7 @@ program.hook('preAction', () => {
             await newMigrationProjectInstance.up(tableObj);
             if (typeof newMigrationProjectInstance.finalize === 'function') await newMigrationProjectInstance.finalize();
          }
-         const snap = {
-               file : contextAbs,
-               executedLocation : executedLocation,
-               context : contextInstance,
-               contextEntities : cleanEntities,
-               contextFileName: contextFileName
-             }
-
-         migration.createSnapShot(snap);
+         // EF: applying migrations never rewrites the snapshot (see add-migration).
          console.log("✓ Database restarted and updated successfully");
          await __cleanupAndExit(contextInstance, 0);
 
@@ -1138,17 +1139,7 @@ program.hook('preAction', () => {
         }
       }
 
-      // Update snapshot
-      const snap = {
-        file : contextAbs,
-        executedLocation : executedLocation,
-        context : contextInstance,
-        contextEntities : cleanEntities,
-        contextSeedData: contextInstance.__contextSeedData || {},
-        contextSeedConfig: contextInstance.__contextSeedConfig || {},
-        contextFileName: path.basename(snapshotFile).replace('_contextSnapShot.json','')
-      }
-      migration.createSnapShot(snap);
+      // EF: applying/reverting never rewrites the snapshot (see add-migration).
       console.log("✓ Database rolled back to target migration successfully");
       await __cleanupAndExit(contextInstance, 0);
 
@@ -1382,8 +1373,7 @@ program.hook('preAction', () => {
               console.log(`✓ ${entry.ctxName}: applied ${appliedCount} migration(s)`);
             }
             // Snapshot only a context that fully applied without error.
-            const snap = await __buildSnapshot({ contextInstance, contextAbs: entry.contextAbs, executedLocation, cleanEntities, contextFileName: entry.ctxName });
-            migration.createSnapShot(snap);
+            // EF: applying migrations does NOT touch the snapshot — only the history table.
             summary.push({ ctxName: entry.ctxName, status: appliedCount === 0 ? 'up to date' : `applied ${appliedCount}`, applied: appliedCount });
           }
         }catch(errCtx){
@@ -1465,6 +1455,7 @@ program.hook('preAction', () => {
           if(seen.has(key)){ continue; }
           seen.add(key);
           // Create snapshot relative to the context file directory
+;
           const snap = {
             file : abs,
             executedLocation : executedLocation,

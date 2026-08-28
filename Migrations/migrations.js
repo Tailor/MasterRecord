@@ -712,8 +712,13 @@ class Migrations{
             item.updatedColumns.forEach(function (column, _index) {
                 const isEmpty = Object.keys(column).length === 0;
                 if(!isEmpty){
-                    MT.alterColumn("up", column.table.name, item.name);
-                    MT.alterColumn("down", column.table.name, item.name);
+                    const name = column.table && column.table.name;
+                    if(!name){ return; }
+                    // up applies the NEW definition, down restores the OLD one (EF's Down
+                    // reverts the change rather than re-applying it).
+                    MT.alterColumn("up", self.#columnLiteral(item.new, name, item.name));
+                    const revert = item.old && item.old[name] ? self.#columnLiteral(item.old, name, item.name) : null;
+                    MT.alterColumn("down", revert);
                 }
             });
 
