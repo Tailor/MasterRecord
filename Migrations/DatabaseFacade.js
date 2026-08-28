@@ -5,6 +5,7 @@
 import { createRequire } from 'node:module';
 import { createDatabaseCreator } from './RelationalDatabaseCreator.js';
 import { createHistoryRepository } from './HistoryRepository.js';
+import Migrator from './Migrator.js';
 import HistoryRow from './HistoryRow.js';
 
 const require = createRequire(import.meta.url);
@@ -79,6 +80,30 @@ class DatabaseFacade {
     async generateCreateScript() {
         await this._ready();
         return this.databaseCreator.generateCreateScript();
+    }
+
+    /**
+     * EF's Migrator — the planner behind getMigrations/getPendingMigrations.
+     * `migrationsPath` defaults to the working directory; pass one when the app
+     * runs from somewhere other than the project root.
+     */
+    migrator(options = {}) {
+        return new Migrator({ historyRepository: this.historyRepository, ...options });
+    }
+
+    /** Every migration on disk, oldest first (EF: GetMigrations). */
+    getMigrations(options = {}) {
+        return this.migrator(options).getMigrations();
+    }
+
+    /**
+     * Migrations on disk that the database has NOT recorded as applied
+     * (EF: GetPendingMigrations). A useful startup/health check: a non-empty
+     * result means the schema is behind the code.
+     */
+    async getPendingMigrations(options = {}) {
+        await this._ready();
+        return this.migrator(options).getPendingMigrations();
     }
 
     /** Migration ids recorded as applied, oldest first (EF: GetAppliedMigrations). */

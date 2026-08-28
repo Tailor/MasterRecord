@@ -1,5 +1,31 @@
 # MasterRecord Changelog
 
+## v1.25.0 — EF's Migrator planning: getMigrations / getPendingMigrations
+
+Completes the read half of EF's `DbContext.Database` surface. Ported from Entity
+Framework Core (see `THIRD-PARTY-NOTICES.md`).
+
+- **`Migrator`** (`Migrations/Migrator.js`) — EF's `PopulateMigrations` planning, faithfully:
+  no target applies every unapplied migration; the `'0'` target (EF's
+  `Migration.InitialDatabase`) reverts every applied one, newest first; a target id applies
+  unapplied migrations up to and including it and reverts applied ones after it. Applied-id
+  matching is case-insensitive, as in EF. `plan(target)` reads the live history table.
+- **`MigrationsAssembly`** (`Migrations/MigrationsAssembly.js`) — EF's `IMigrationsAssembly`
+  over `<timestamp>_<Name>_migration.js` files, with `getMigrationId()` resolving a full id,
+  a file name or the bare migration name (and reporting ambiguity).
+- **`context.database.getMigrations()` / `.getPendingMigrations()`** (EF: `GetMigrations` /
+  `GetPendingMigrations`). A non-empty pending list means the schema is behind the code —
+  a useful startup or health check.
+- **Fix (ordering):** `getAppliedMigrations()` returned rows in the history table's
+  lexicographic `ORDER BY`, so `1000_Beta` sorted before `900_Alpha`. Migration ids are
+  epoch milliseconds and only the same width by coincidence, so ids are now ordered
+  chronologically by a comparator (`Migrations/migrationId.js`) shared with
+  `MigrationsAssembly` — the files on disk and the rows in the table can no longer disagree
+  about what the next migration is.
+
+Applying migrations remains the `masterrecord update-database` CLI's job; this release is
+the planner it and your app can both ask. New tests: `test/ef-migrator-planning.test.js`.
+
 ## v1.24.2 — reserved-word entity names work end to end on SQLite
 
 - **Fix (SQLite):** `buildFrom` emitted `FROM Order AS ran` unquoted, so every query

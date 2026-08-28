@@ -4,6 +4,7 @@
 // See THIRD-PARTY-NOTICES.md.
 
 import HistoryRow from './HistoryRow.js';
+import { compareMigrationIds } from './migrationId.js';
 
 /** Quote a string as a SQL literal (EF: ITypeMappingSource.GenerateSqlLiteral for string). */
 function generateSqlLiteral(value) {
@@ -102,6 +103,10 @@ class HistoryRepository {
             if (id === undefined || id === null) continue;
             rows.push(new HistoryRow(id, r[this.productVersionColumnName] ?? null, r[this.appliedAtColumnName] ?? null));
         }
+        // The SQL ORDER BY is lexicographic; migration ids are epoch milliseconds,
+        // so '900_A' must still come before '1000_B'. Order them the same way
+        // MigrationsAssembly orders the files on disk.
+        rows.sort((x, y) => compareMigrationIds(x.migrationId, y.migrationId));
         return rows;
     }
 
