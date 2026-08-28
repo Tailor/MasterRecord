@@ -1,5 +1,34 @@
 # MasterRecord Changelog
 
+## v1.27.0 — `Migrator.GenerateScript` and `HasPendingModelChanges`: EF's `IMigrator` is now complete
+
+1.26.0 moved applying into `Migrator`; this finishes the interface. EF's `IMigrator` is
+`Migrate` / `GenerateScript` / `HasPendingModelChanges`, and every masterrecord CLI command
+is now a shell over it — there is no second implementation of anything left.
+
+- **`Migrator.generateScript(from, to, { idempotent, appliedMigrations })`** (EF:
+  `GenerateScript`). `from` omitted or `'0'` scripts from an empty database and emits the
+  history-table bootstrap first, exactly as EF does; `appliedMigrations` scripts against
+  what a live database has actually applied, which is what `masterrecord script` passes.
+  `--idempotent` wraps each migration in a "only if not already applied" guard (Postgres
+  `DO $MR$ … IF NOT EXISTS …`); SQLite and MySQL refuse it, as EF's SQLite provider does.
+- **`Migrator.hasPendingModelChanges()`** and `context.database.hasPendingModelChanges()`
+  (EF: `HasPendingModelChanges`) — true when entities have changed since the last migration.
+- **`context.database.generateMigrationScript()`** for the same thing from an app.
+- **`masterrecord script` delegates to it** and gained `--idempotent`.
+- **Fix:** the generated script recorded each migration with a *parameterized* insert
+  (`VALUES (?, ?)` plus a `-- params:` comment), which is not runnable SQL — the point of
+  the command is to hand a DBA something they can execute. It now emits literal values via
+  `HistoryRepository.getInsertScript`.
+- **`migrations-status` and `remove-migration`** read history through `HistoryRepository`
+  instead of their own SQL. The last of the duplicated migration helpers
+  (`__getAppliedMigrations`, `__recordMigrationApplied`, `__getAppliedMigrationRows`,
+  and the `_masterrecord_migrations` string constant) are deleted — **139 lines of
+  duplication removed across 1.26.0 and 1.27.0**.
+
+New tests: `generateScript` (runnable output, applies nothing, pending-only, SQLite refusing
+idempotent) and `hasPendingModelChanges` in `test/ef-migrator-apply.test.js`.
+
 ## v1.26.0 — one migration code path: `Migrator.Migrate` (EF), and the CLI is a thin shell over it
 
 EF's `IMigrator` is `Migrate` / `GenerateScript` / `HasPendingModelChanges` — applying

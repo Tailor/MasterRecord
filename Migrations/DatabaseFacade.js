@@ -117,6 +117,35 @@ class DatabaseFacade {
      * same Migrator the `masterrecord update-database` CLI runs.
      */
     async migrate(targetMigration = null, options = {}) {
+        const migrator = await this._buildMigrator(options);
+        return migrator.migrate(targetMigration);
+    }
+
+    /**
+     * The SQL for pending migrations, without applying it
+     * (EF: Migrator.GenerateScript). `idempotent` guards each migration so the
+     * script is safe to run against any database.
+     */
+    async generateMigrationScript(options = {}) {
+        const migrator = await this._buildMigrator(options);
+        const applied = await this.getAppliedMigrations();
+        return migrator.generateScript(options.from ?? null, options.to ?? null, {
+            idempotent: !!options.idempotent,
+            appliedMigrations: options.from === undefined ? applied : null,
+        });
+    }
+
+    /**
+     * Does the model have changes no migration captures yet?
+     * (EF: Database.HasPendingModelChanges)
+     */
+    async hasPendingModelChanges(options = {}) {
+        const migrator = await this._buildMigrator(options);
+        return migrator.hasPendingModelChanges();
+    }
+
+    /** Build a Migrator, discovering the snapshot and migration files when not given. */
+    async _buildMigrator(options = {}) {
         await this._ready();
         const { default: MigrationsAssembly } = await import('./MigrationsAssembly.js');
         const resolved = { ...options };
@@ -144,7 +173,7 @@ class DatabaseFacade {
             }
         }
 
-        const migrator = new Migrator({
+        return new Migrator({
             context: this.context,
             contextCtor: this.context.constructor,
             snapshot: resolved.snapshot,
@@ -153,7 +182,6 @@ class DatabaseFacade {
             databaseCreator: this.databaseCreator,
             logger: resolved.logger,
         });
-        return migrator.migrate(targetMigration);
     }
 
     /** Migration ids recorded as applied, oldest first (EF: GetAppliedMigrations). */

@@ -3,6 +3,7 @@
 
 import MigrationsAssembly from './MigrationsAssembly.js';
 import { createHistoryRepository } from './HistoryRepository.js';
+import HistoryRow from './HistoryRow.js';
 
 /**
  * Decides which migrations to apply and which to revert (EF `Migrator`).
@@ -187,6 +188,121 @@ class Migrator {
 
         this._log(direction === 'down' ? 'migrationReverted' : 'migrationApplied', id, mode);
         return mode;
+    }
+
+    /**
+     * The SQL a migration would run, captured instead of executed.
+     *
+     * schema.js issues all DDL/DML through `context._execute`, so swapping that out
+     * records the statements while engine-level introspection (tableExists /
+     * getTableInfo) still reads the real database — the script therefore reflects
+     * what update-database would actually do. This is masterrecord's stand-in for
+     * EF's MigrationsSqlGenerator, which can generate SQL without a connection.
+     */
+    async _captureSql(id, direction) {
+        const file = this.migrationsAssembly.getMigrationFile(id);
+        if (!file) throw new Error(`masterrecord: migration '${id}' has no file on disk.`);
+        const MigrationCtor = await this._loadMigration(file);
+        const instance = new MigrationCtor(this.dependencies.contextCtor);
+        const mctx = (instance && instance.context) ? instance.context : this.context;
+        const tableObj = await this._tableObject();
+
+        const captured = [];
+        const fmt = (q, p) => {
+            const text = String(q).replace(/\s+/g, ' ').trim().replace(/;$/, '');
+            return (p && p.length) ? `${text}; -- params: ${JSON.stringify(p)}` : `${text};`;
+        };
+        const patch = (c) => {
+            const orig = c._execute;
+            c._execute = (q, p) => { captured.push(fmt(q, p)); return Promise.resolve({ changes: 0, rowCount: 0, affectedRows: 0 }); };
+            return () => { c._execute = orig; };
+        };
+        const restores = [patch(mctx)];
+        if (mctx !== this.context) restores.push(patch(this.context));
+        try {
+            if (direction === 'down') await instance.down(tableObj);
+            else await instance.up(tableObj);
+            if (typeof instance.finalize === 'function') await instance.finalize();
+        } finally {
+            for (const r of restores) r();
+        }
+        if (mctx !== this.context && typeof mctx.close === 'function') {
+            try { await mctx.close(); } catch (_) { /* best-effort teardown */ }
+        }
+        return captured;
+    }
+
+    /**
+     * Generate the SQL for a migration range without applying it
+     * (EF: Migrator.GenerateScript).
+     *
+     * `fromMigration` is the state the script assumes the database is already in:
+     * omitted or '0' means an empty database, so everything is scripted. Pass
+     * `options.appliedMigrations` to script against what a live database has
+     * actually applied (what `masterrecord script` does — "the pending ones").
+     * `options.idempotent` wraps each migration in a "only if not already applied"
+     * guard; providers that cannot express that (SQLite, MySQL) refuse, as EF's
+     * SQLite provider does.
+     */
+    async generateScript(fromMigration = null, toMigration = null, options = {}) {
+        const { idempotent = false, appliedMigrations = null } = options;
+        const all = this.getMigrations();
+
+        let applied;
+        if (appliedMigrations) {
+            applied = [...appliedMigrations];
+        } else if (!fromMigration || String(fromMigration) === Migrator.InitialDatabase) {
+            applied = [];
+        } else {
+            const fromId = this.migrationsAssembly.getMigrationId(fromMigration);
+            applied = all.filter(id => MigrationsAssembly.compareIds(id, fromId) <= 0);
+        }
+
+        const plan = this.populateMigrations(applied, toMigration);
+        const lines = [];
+
+        // EF emits the history-table bootstrap when scripting from an empty database.
+        if (!appliedMigrations && (!fromMigration || String(fromMigration) === Migrator.InitialDatabase)) {
+            lines.push(this.historyRepository.getCreateIfNotExistsScript().replace(/;?$/, ';'));
+            lines.push('');
+        }
+
+        const endIf = idempotent ? this.historyRepository.getEndIfScript() : null;
+
+        for (const id of plan.migrationsToRevert) {
+            lines.push(`-- Migration: ${id} (down)`);
+            if (idempotent) lines.push(this.historyRepository.getBeginIfExistsScript(id));
+            lines.push(...await this._captureSql(id, 'down'));
+            lines.push(this.historyRepository.getDeleteScript(id).replace(/;?$/, ';'));
+            if (idempotent) lines.push(endIf);
+            lines.push('');
+        }
+        for (const id of plan.migrationsToApply) {
+            lines.push(`-- Migration: ${id}`);
+            if (idempotent) lines.push(this.historyRepository.getBeginIfNotExistsScript(id));
+            lines.push(...await this._captureSql(id, 'up'));
+            // A literal INSERT, not a parameterized one: a script has to be runnable
+            // as-is by a DBA, and '?' placeholders are not.
+            lines.push(this.historyRepository.getInsertScript(
+                new HistoryRow(id, this.historyRepository.productVersion, new Date().toISOString())).replace(/;?$/, ';'));
+            if (idempotent) lines.push(endIf);
+            lines.push('');
+        }
+
+        return { sql: lines.join('\n'), migrationsToApply: plan.migrationsToApply, migrationsToRevert: plan.migrationsToRevert };
+    }
+
+    /**
+     * Does the model have changes that no migration captures yet?
+     * (EF: Migrator.HasPendingModelChanges)
+     */
+    async hasPendingModelChanges() {
+        const snapshot = this.dependencies.snapshot;
+        if (!snapshot) throw new Error('masterrecord: hasPendingModelChanges() needs the context snapshot.');
+        const { default: Migration } = await import('./migrations.js');
+        const helper = new Migration();
+        const cleanEntities = helper.cleanEntities(this.context.__entities);
+        return helper.hasChanges(snapshot.schema, cleanEntities, this.context.__contextSeedData || {});
     }
 
     /**

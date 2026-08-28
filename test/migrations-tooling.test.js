@@ -92,7 +92,10 @@ test('script prints the SQL for pending migrations and does NOT apply it', () =>
     assert.match(r.stdout, /-- Migration: 1700000001000_CreateAuthor_migration\.js/);
     assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS "?Author"?/i, 'DDL is in the script');
     assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS "?Book"?/i);
-    assert.match(r.stdout, /INSERT INTO \[_masterrecord_migrations\]/, 'tracking-table insert is part of the script');
+    // the history insert is part of the script, and uses LITERAL values so the
+    // script a DBA is handed is runnable as-is ('?' placeholders were not)
+    assert.match(r.stdout, /INSERT INTO ["[]?_masterrecord_migrations["\]]?/, 'tracking-table insert is part of the script');
+    assert.ok(!/INSERT INTO ["[]?_masterrecord_migrations[\s\S]*VALUES \(\?/.test(r.stdout), 'no bind placeholders in the emitted script');
     // Nothing was applied: no Author/Book tables, no tracking rows.
     const f = dbFile(dbDir);
     const t = fs.existsSync(f) ? tables(f) : [];

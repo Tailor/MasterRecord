@@ -182,3 +182,57 @@ test('context.database.migrate() applies pending migrations the way EF Database.
     assert.deepEqual(await context.database.getPendingMigrations({ files: p.files }), [], 'nothing pending afterwards');
     await context.close();
 });
+
+test('generateScript emits runnable SQL for pending migrations without applying anything', async () => {
+    const p = makeProject();
+    const { context, migrator } = await migratorFor(p);
+
+    const res = await migrator.generateScript(null, null, {});
+    assert.deepEqual(res.migrationsToApply, ['1700000001000_CreateAuthor_migration.js', '1700000002000_CreateBook_migration.js']);
+    assert.match(res.sql, /CREATE TABLE IF NOT EXISTS "_masterrecord_migrations"/, 'history bootstrap first (EF)');
+    assert.match(res.sql, /CREATE TABLE IF NOT EXISTS "Author"/);
+    assert.match(res.sql, /CREATE TABLE IF NOT EXISTS "Book"/);
+    assert.match(res.sql, /INSERT INTO "_masterrecord_migrations"/, 'each migration records itself');
+    assert.ok(!/VALUES \(\?/.test(res.sql), 'literal values, not bind placeholders — a script must be runnable');
+
+    // nothing was executed
+    assert.deepEqual(tables(dbFile(p.dbDir)).filter(n => !n.startsWith('sqlite_')), [], 'no tables created');
+    assert.deepEqual(await context.database.getAppliedMigrations(), [], 'nothing recorded');
+    await context.close();
+});
+
+test('generateScript scripts only what is still pending when given the applied set', async () => {
+    const p = makeProject();
+    const { context, migrator } = await migratorFor(p);
+    await migrator.migrate('CreateAuthor');   // apply the first only
+
+    const applied = await context.database.getAppliedMigrations();
+    const res = await migrator.generateScript(null, null, { appliedMigrations: applied });
+    assert.deepEqual(res.migrationsToApply, ['1700000002000_CreateBook_migration.js'], 'only the pending one');
+    assert.ok(!res.sql.includes('"Author"'), 'the already-applied migration is not re-scripted');
+    assert.match(res.sql, /CREATE TABLE IF NOT EXISTS "Book"/);
+    await context.close();
+});
+
+test('SQLite refuses an idempotent script, exactly as EF does', async () => {
+    const p = makeProject();
+    const { context, migrator } = await migratorFor(p);
+    await assert.rejects(() => migrator.generateScript(null, null, { idempotent: true }),
+        /does not support idempotent migration scripts/);
+    await context.close();
+});
+
+test('hasPendingModelChanges reports whether the model is ahead of the snapshot (EF)', async () => {
+    const p = makeProject();
+    const { context, migrator } = await migratorFor(p);
+    // the fixture's snapshot matches its entities exactly
+    assert.equal(await migrator.hasPendingModelChanges(), false, 'model and snapshot agree');
+
+    // pretend the snapshot has never seen Book
+    migrator.dependencies.snapshot = {
+        ...migrator.dependencies.snapshot,
+        schema: migrator.dependencies.snapshot.schema.filter(t => t.__name !== 'Book'),
+    };
+    assert.equal(await migrator.hasPendingModelChanges(), true, 'an unmigrated entity is a pending model change');
+    await context.close();
+});

@@ -69,7 +69,6 @@ function __normalizeSnapshotPaths(snapshot){
   }
   return snapshot;
 }
-
 // Extract numeric timestamp from migration filename (e.g., 1737999999999_name_migration.js)
 function __getMigrationTimestamp(file){
   try{
@@ -83,60 +82,6 @@ function __getMigrationTimestamp(file){
   }
 }
 
-// ============================================================================
-// Migration tracking — one row per applied migration filename.
-// Without this, update-database cannot tell which files are pending, so it
-// used to run only the last one and silently skip the rest.
-// ============================================================================
-
-const __MIGRATIONS_TABLE__ = '_masterrecord_migrations';
-async function __getAppliedMigrations(ctx){
-  const applied = new Set();
-  const engine = ctx._SQLEngine;
-  let rows;
-  try {
-    if (ctx.isSQLite) {
-      rows = engine.db.prepare(`SELECT migration_name FROM [${__MIGRATIONS_TABLE__}]`).all();
-    } else if (ctx.isMySQL) {
-      rows = await engine._runWithParams(`SELECT migration_name FROM \`${__MIGRATIONS_TABLE__}\``, []);
-    } else if (ctx.isPostgres) {
-      const r = await engine._runWithParams(`SELECT migration_name FROM "${__MIGRATIONS_TABLE__}"`, []);
-      rows = r && r.rows ? r.rows : [];
-    }
-  } catch (_) {
-    rows = [];
-  }
-  for (const r of (rows || [])) {
-    if (r && r.migration_name) applied.add(r.migration_name);
-  }
-  return applied;
-}
-
-async function __recordMigrationApplied(ctx, migrationName){
-  const appliedAt = new Date().toISOString();
-  if (ctx.isSQLite) {
-    await ctx._execute(`INSERT INTO [${__MIGRATIONS_TABLE__}] (migration_name, applied_at) VALUES (?, ?)`, [migrationName, appliedAt]);
-  } else if (ctx.isMySQL) {
-    await ctx._execute(`INSERT INTO \`${__MIGRATIONS_TABLE__}\` (migration_name, applied_at) VALUES (?, ?)`, [migrationName, appliedAt]);
-  } else if (ctx.isPostgres) {
-    await ctx._execute(`INSERT INTO "${__MIGRATIONS_TABLE__}" (migration_name, applied_at) VALUES ($1, $2)`, [migrationName, appliedAt]);
-  }
-}
-/** Applied migrations with timestamps: [{ migration_name, applied_at }] (EF `migrations list`). */
-async function __getAppliedMigrationRows(ctx){
-  const engine = ctx._SQLEngine;
-  try {
-    if (ctx.isSQLite) {
-      return engine.db.prepare(`SELECT migration_name, applied_at FROM [${__MIGRATIONS_TABLE__}] ORDER BY applied_at`).all();
-    } else if (ctx.isMySQL) {
-      return await engine._runWithParams(`SELECT migration_name, applied_at FROM \`${__MIGRATIONS_TABLE__}\` ORDER BY applied_at`, []);
-    } else if (ctx.isPostgres) {
-      const r = await engine._runWithParams(`SELECT migration_name, applied_at FROM "${__MIGRATIONS_TABLE__}" ORDER BY applied_at`, []);
-      return r && r.rows ? r.rows : [];
-    }
-  } catch (_) { /* table may not exist yet */ }
-  return [];
-}
 /** Resolve everything a migration command needs for a context (snapshot, files, constructor). */
 async function __resolveMigrationPlan(contextFileName){
   const executedLocation = process.cwd();
@@ -903,8 +848,8 @@ program.hook('preAction', () => {
    try {
      const plan = await __resolveMigrationPlan(contextFileName);
      contextInstance = await instantiateReadyContext(plan.ContextCtor);
-     const rows = await __getAppliedMigrationRows(contextInstance);
-     const appliedMap = new Map(rows.map(r => [r.migration_name, r.applied_at]));
+     const rows = await contextInstance.database.getAppliedMigrationRows();
+     const appliedMap = new Map(rows.map(r => [r.migrationId, r.appliedAt]));
      const names = plan.mFiles.map(f => path.basename(f));
      const pending = names.filter(n => !appliedMap.has(n));
      const orphans = [...appliedMap.keys()].filter(n => !names.includes(n));
@@ -944,8 +889,8 @@ program.hook('preAction', () => {
       const latest = plan.mFiles[plan.mFiles.length - 1];
       const name = path.basename(latest);
       contextInstance = await instantiateReadyContext(plan.ContextCtor);
-      const rows = await __getAppliedMigrationRows(contextInstance);
-      const appliedNames = new Set(rows.map(r => r.migration_name));
+      const rows = await contextInstance.database.getAppliedMigrationRows();
+      const appliedNames = new Set(rows.map(r => r.migrationId));
       if (appliedNames.has(name)) {
         if (!(cmdOpts && cmdOpts.force)) {
           console.error(`❌ Migration '${name}' has been applied to the database. Revert it first with 'masterrecord update-database-down ${plan.contextFileName}', or pass --force to revert and remove it.`);
@@ -992,60 +937,43 @@ program.hook('preAction', () => {
  program
  .command('script <contextFileName>')
  .option('-o, --output <file>', 'write the SQL to a file instead of stdout')
+ .option('--idempotent', 'guard each migration so the script can be run against any database (EF --idempotent)')
  .description('Generate the SQL for pending migrations without applying them (for DBA review)')
  .action(async function(contextFileName, cmdOpts){
    let contextInstance = null;
    try {
      const plan = await __resolveMigrationPlan(contextFileName);
      contextInstance = await instantiateReadyContext(plan.ContextCtor);
-     const applied = await __getAppliedMigrations(contextInstance);
-     const pending = plan.mFiles.filter(f => !applied.has(path.basename(f)));
-     const migration = new Migration();
-     const cleanEntities = migration.cleanEntities(contextInstance.__entities);
-     const tableObj = migration.buildUpObject(plan.contextSnapshot.schema, cleanEntities);
-     const lines = [
+     const applied = await contextInstance.database.getAppliedMigrations();
+
+     // EF: `dotnet ef migrations script` is a shell over IMigrator.GenerateScript().
+     const scriptMigrator = new Migrator({
+       context: contextInstance,
+       contextCtor: plan.ContextCtor,
+       snapshot: plan.contextSnapshot,
+       migrationsAssembly: new MigrationsAssembly({ files: plan.mFiles }),
+       historyRepository: contextInstance.database.historyRepository,
+       databaseCreator: contextInstance.database.databaseCreator,
+       loadMigration: __loadUserModule,
+     });
+
+     const result = await scriptMigrator.generateScript(null, null, {
+       appliedMigrations: applied,
+       idempotent: !!(cmdOpts && cmdOpts.idempotent),
+     });
+     const pendingCount = result.migrationsToApply.length;
+     const out = [
        `-- masterrecord migration script for '${plan.contextFileName}'`,
-       `-- generated ${new Date().toISOString()} — ${pending.length} pending migration(s). This script was NOT applied.`,
+       `-- generated ${new Date().toISOString()} — ${pendingCount} pending migration(s). This script was NOT applied.`,
        `-- Introspection (table/column checks) ran against the live database; statements below are what update-database would execute.`,
        '',
-     ];
-     const fmt = (q, p) => {
-       const s = String(q).replace(/\s+/g, ' ').trim().replace(/;$/, '');
-       return (p && p.length) ? `${s}; -- params: ${JSON.stringify(p)}` : `${s};`;
-     };
-     for (const mFile of pending) {
-       const name = path.basename(mFile);
-       const MigrationCtor = await __loadUserModule(mFile);
-       const instance = new MigrationCtor(plan.ContextCtor);
-       const mctx = instance.context || contextInstance;
-       const captured = [];
-       // Capture instead of execute: schema.js issues all DDL/DML through
-       // context._execute; engine-level introspection (tableExists/getTableInfo)
-       // is untouched so the plan reflects the real database state.
-       const patch = (c) => {
-         const orig = c._execute;
-         c._execute = (q, p) => { captured.push(fmt(q, p)); return Promise.resolve({ changes: 0, rowCount: 0, affectedRows: 0 }); };
-         return () => { c._execute = orig; };
-       };
-       const restores = [patch(mctx)];
-       if (mctx !== contextInstance) restores.push(patch(contextInstance));
-       try {
-         await instance.up(tableObj);
-         if (typeof instance.finalize === 'function') await instance.finalize();
-         await __recordMigrationApplied(mctx, name);   // captured, not executed
-       } finally {
-         for (const r of restores) r();
-       }
-       lines.push(`-- Migration: ${name}`);
-       lines.push(...captured);
-       lines.push('');
-       try { if (mctx !== contextInstance && typeof mctx.close === 'function') await mctx.close(); } catch (_) { /* best-effort */ }
-     }
-     const out = lines.join('\n');
+       result.sql,
+     ].join('\n');
+
      if (cmdOpts && cmdOpts.output) {
        const target = path.resolve(cmdOpts.output);
        fs.writeFileSync(target, out, 'utf8');
-       console.log(`✓ SQL script for ${pending.length} pending migration(s) written to ${target}`);
+       console.log(`✓ SQL script for ${pendingCount} pending migration(s) written to ${target}`);
      } else {
        process.stdout.write(out + '\n');
      }
