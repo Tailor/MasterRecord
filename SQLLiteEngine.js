@@ -706,7 +706,10 @@ class SQLLiteEngine {
     buildFrom(query, entity){
         const entityName = this.getEntity(entity.__name, query.entityMap);
         if(entityName ){
-            return `FROM ${entity.__name } AS ${entityName}`;
+            // Bracket-quoted like every other table reference in this engine: an
+            // entity named with a SQL reserved word (Order, Group, Transaction…)
+            // otherwise produced `FROM Order AS ran` -> "near \"Order\": syntax error".
+            return `FROM [${entity.__name}] AS ${entityName}`;
         }
         else{ return "" }
     }

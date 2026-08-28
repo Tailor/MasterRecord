@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.24.2 — reserved-word entity names work end to end on SQLite
+
+- **Fix (SQLite):** `buildFrom` emitted `FROM Order AS ran` unquoted, so every query
+  against an entity named with a SQL reserved word (`Order`, `Group`, `Transaction`,
+  `Index`…) failed with `near "Order": syntax error`. It is now bracket-quoted like every
+  other table reference in that engine. Together with the DDL quoting in 1.24.0, a
+  reserved-word entity now creates, inserts, queries, filters, counts, updates and deletes
+  normally. MySQL (backticks) and Postgres (`_q()`) already quoted correctly — this was
+  SQLite-only. New test: `test/reserved-word-entity.test.js`.
+- **Fix (tooling):** `mySQLEngine.js` contained a literal NUL byte — a deliberate delimiter
+  in a composite cache key, but written as a raw byte rather than the `\u0000` escape. That
+  made the file count as binary, so `grep` skipped it **silently**: no search of the
+  repository ever matched anything in the MySQL engine. Same runtime value, now written as
+  an escape; the file is UTF-8 text again and searchable.
+
 ## v1.24.1 — MySQL/Postgres coverage for the EF port, and a Postgres `ensureDeleted` fix
 
 1.24.0's MySQL and Postgres providers shipped without ever being executed — masterrecord

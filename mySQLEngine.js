@@ -197,7 +197,7 @@ class MySQLEngine {
         // column defaults.
         const groups = new Map();
         for (const row of rows) {
-            const key = `${row.sql.tableName} ${row.sql.columns}`;
+            const key = `${row.sql.tableName}\u0000${row.sql.columns}`;
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(row);
         }

@@ -126,5 +126,7 @@ test('SQLite engine directly: buildFrom on empty entityMap now produces a valid 
     const fakeScript = { entityMap: [], parentName: '' };
     const fakeEntity = { __name: 'Thing' };
     const from = engine.buildFrom(fakeScript, fakeEntity);
-    assert.match(from, /^FROM\s+Thing\b/, `empty entityMap should now produce a FROM clause; got "${from}"`);
+    // quoted or unquoted — the bug under test is the missing FROM, and since 1.24.2
+    // the table name is bracket-quoted so reserved words like Order are legal.
+    assert.match(from, /^FROM\s+\[?"?Thing"?\]?\b/, `empty entityMap should now produce a FROM clause; got "${from}"`);
 });
