@@ -12,6 +12,8 @@ import { resolveMigrationsDirectory, toPosixPath } from './pathUtils.js';
 import Migration from './migrations.js';
 import schema from './schema.js';
 import { instantiateReadyContext } from './contextInit.js';
+import Migrator from './Migrator.js';
+import MigrationsAssembly from './MigrationsAssembly.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,26 +90,6 @@ function __getMigrationTimestamp(file){
 // ============================================================================
 
 const __MIGRATIONS_TABLE__ = '_masterrecord_migrations';
-
-async function __ensureMigrationsTable(ctx){
-  if (ctx.isSQLite) {
-    await ctx._execute(`CREATE TABLE IF NOT EXISTS [${__MIGRATIONS_TABLE__}] (
-      migration_name TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    )`);
-  } else if (ctx.isMySQL) {
-    await ctx._execute(`CREATE TABLE IF NOT EXISTS \`${__MIGRATIONS_TABLE__}\` (
-      migration_name VARCHAR(255) PRIMARY KEY,
-      applied_at VARCHAR(64) NOT NULL
-    )`);
-  } else if (ctx.isPostgres) {
-    await ctx._execute(`CREATE TABLE IF NOT EXISTS "${__MIGRATIONS_TABLE__}" (
-      migration_name VARCHAR(255) PRIMARY KEY,
-      applied_at VARCHAR(64) NOT NULL
-    )`);
-  }
-}
-
 async function __getAppliedMigrations(ctx){
   const applied = new Set();
   const engine = ctx._SQLEngine;
@@ -140,17 +122,6 @@ async function __recordMigrationApplied(ctx, migrationName){
     await ctx._execute(`INSERT INTO "${__MIGRATIONS_TABLE__}" (migration_name, applied_at) VALUES ($1, $2)`, [migrationName, appliedAt]);
   }
 }
-
-async function __removeMigrationApplied(ctx, migrationName){
-  if (ctx.isSQLite) {
-    await ctx._execute(`DELETE FROM [${__MIGRATIONS_TABLE__}] WHERE migration_name = ?`, [migrationName]);
-  } else if (ctx.isMySQL) {
-    await ctx._execute(`DELETE FROM \`${__MIGRATIONS_TABLE__}\` WHERE migration_name = ?`, [migrationName]);
-  } else if (ctx.isPostgres) {
-    await ctx._execute(`DELETE FROM "${__MIGRATIONS_TABLE__}" WHERE migration_name = $1`, [migrationName]);
-  }
-}
-
 /** Applied migrations with timestamps: [{ migration_name, applied_at }] (EF `migrations list`). */
 async function __getAppliedMigrationRows(ctx){
   const engine = ctx._SQLEngine;
@@ -166,46 +137,6 @@ async function __getAppliedMigrationRows(ctx){
   } catch (_) { /* table may not exist yet */ }
   return [];
 }
-
-/**
- * Apply ONE migration step atomically (EF Core: each migration runs in its own
- * transaction). The migration's DDL/DML and its tracking-table row commit or
- * roll back together, so a failure can never leave a half-applied schema that
- * is (or isn't) recorded.
- *   - PostgreSQL: transactional DDL -> BEGIN ... COMMIT.
- *   - SQLite: transactional DDL too, but `PRAGMA foreign_keys` is a no-op inside
- *     a transaction and the table-rebuild path relies on toggling it, so FK
- *     enforcement is switched off BEFORE the transaction and restored after
- *     (exactly what EF does for SQLite rebuilds).
- *   - MySQL: DDL implicitly commits, so a migration cannot be made atomic there
- *     (EF documents the same limitation); statements run directly.
- * Runs on the migration's own context (it shares the engine/connection with
- * `contextInstance`), so the tracking row is written inside the same transaction.
- */
-async function __applyMigrationStep(contextInstance, instance, tableObj, migrationName, direction = 'up'){
-  const ctx = (instance && instance.context) ? instance.context : contextInstance;
-  const run = async () => {
-    if (direction === 'down') await instance.down(tableObj); else await instance.up(tableObj);
-    if (typeof instance.finalize === 'function') await instance.finalize();
-    if (direction === 'down') await __removeMigrationApplied(ctx, migrationName);
-    else await __recordMigrationApplied(ctx, migrationName);
-  };
-  if (ctx.isMySQL || typeof ctx.transaction !== 'function') { await run(); return 'autocommit'; }
-
-  let fkWasOn = false;
-  if (ctx.isSQLite) {
-    await ctx._ensureReady();
-    try { fkWasOn = ctx._SQLEngine.db.pragma('foreign_keys', { simple: true }) === 1; } catch (_) { /* older driver */ }
-    if (fkWasOn) { try { ctx._SQLEngine.db.pragma('foreign_keys = OFF'); } catch (_) { /* ignore */ } }
-  }
-  try {
-    await ctx.transaction(run);
-    return 'transaction';
-  } finally {
-    if (ctx.isSQLite && fkWasOn) { try { ctx._SQLEngine.db.pragma('foreign_keys = ON'); } catch (_) { /* ignore */ } }
-  }
-}
-
 /** Resolve everything a migration command needs for a context (snapshot, files, constructor). */
 async function __resolveMigrationPlan(contextFileName){
   const executedLocation = process.cwd();
@@ -652,46 +583,51 @@ program.hook('preAction', () => {
          // no-ops on undefined `table.col`) make this safe in practice.
          const tableObj = migration.buildUpObject(contextSnapshot.schema, cleanEntities);
 
-         // Bootstrap the migrations tracking table, then filter out any
-         // migrations already applied so re-running update-database is a
-         // no-op. Must run before any migration's `up()`.
+         // EF: `dotnet ef database update` is a thin shell over IMigrator.Migrate().
+         // Planning, the per-migration transaction and the history bookkeeping all
+         // live in Migrations/Migrator.js — this command only supplies the snapshot,
+         // the migration files and the console output.
+         let currentMigration = null;
+         const migrator = new Migrator({
+           context: contextInstance,
+           contextCtor: ContextCtor,
+           snapshot: contextSnapshot,
+           tableObj,
+           migrationsAssembly: new MigrationsAssembly({ files: mFiles }),
+           historyRepository: contextInstance.database.historyRepository,
+           databaseCreator: contextInstance.database.databaseCreator,
+           loadMigration: __loadUserModule,
+           logger: {
+             migrationApplying: (id) => { currentMigration = id; console.log(`\n  → ${id}`); },
+             migrationApplied: (id, mode) => console.log(`    ✓ applied${mode === 'transaction' ? ' (transactional)' : ''}`),
+           },
+         });
+
          try {
-           await __ensureMigrationsTable(contextInstance);
+           const alreadyApplied = await contextInstance.database.getAppliedMigrations();
+           const pendingCount = mFiles.filter(f => !alreadyApplied.includes(path.basename(f))).length;
+           if (pendingCount === 0) {
+             console.log(`\n✓ All migrations already applied (${alreadyApplied.length} on record). Database is up to date.`);
+           } else {
+             console.log(`\n🚀 Running ${pendingCount} pending migration(s)...`);
+           }
          } catch (err) {
-           console.error(`\n❌ Error - Could not create migration tracking table`);
+           console.error(`\n❌ Error - Could not read the migration tracking table`);
            console.error(`\nDetails: ${err.message}`);
            await __cleanupAndExit(contextInstance, 1);
          }
 
-         const appliedMigrations = await __getAppliedMigrations(contextInstance);
-         const pending = mFiles.filter(f => !appliedMigrations.has(path.basename(f)));
-
-         if (pending.length === 0) {
-           console.log(`\n✓ All migrations already applied (${appliedMigrations.size} on record). Database is up to date.`);
-         } else {
-           console.log(`\n🚀 Running ${pending.length} pending migration(s)...`);
-         }
-
-         for (const mFile of pending) {
-           const migrationName = path.basename(mFile);
-           console.log(`\n  → ${migrationName}`);
-           try {
-             const MigrationCtor = await __loadUserModule(mFile);
-             const instance = new MigrationCtor(ContextCtor);
-             // Atomic: DDL + tracking row commit/roll back together (EF: one
-             // transaction per migration; MySQL DDL autocommits — see helper).
-             const mode = await __applyMigrationStep(contextInstance, instance, tableObj, migrationName, 'up');
-             console.log(`    ✓ applied${mode === 'transaction' ? ' (transactional)' : ''}`);
-           } catch (err) {
-             console.error(`\n❌ Error - Migration '${migrationName}' failed during execution`);
-             console.error(`\nDetails: ${err.message}`);
-             if (err.stack) {
-               console.error(`\nStack trace:`);
-               console.error(err.stack);
-             }
-             console.error(`\n💡 Earlier migrations (if any) were already applied and recorded. Fix the failing migration and re-run update-database to resume from this point.`);
-             await __cleanupAndExit(contextInstance, 1);
+         try {
+           await migrator.migrate();
+         } catch (err) {
+           console.error(`\n❌ Error - Migration '${currentMigration || "(unknown)"}' failed during execution`);
+           console.error(`\nDetails: ${err.message}`);
+           if (err.stack) {
+             console.error(`\nStack trace:`);
+             console.error(err.stack);
            }
+           console.error(`\n💡 Earlier migrations (if any) were already applied and recorded. Fix the failing migration and re-run update-database to resume from this point.`);
+           await __cleanupAndExit(contextInstance, 1);
          }
 
          console.log(`\n💾 Updating snapshot...`);
@@ -812,29 +748,30 @@ program.hook('preAction', () => {
        // latest migration file on disk if the tracking table is missing or
        // empty (preserves legacy behavior for users who haven't run
        // update-database under the tracked system yet).
-       await __ensureMigrationsTable(contextInstance);
-       const applied = await __getAppliedMigrations(contextInstance);
-       let rollbackFile;
+       // Reverting goes through Migrator too, so a rollback gets the same
+       // per-migration transaction and history bookkeeping as applying does
+       // (it used to run down() outside any transaction).
+       const downMigrator = new Migrator({
+         context: contextInstance,
+         contextCtor: ContextCtor,
+         snapshot: contextSnapshot,
+         tableObj,
+         migrationsAssembly: new MigrationsAssembly({ files: mFiles }),
+         historyRepository: contextInstance.database.historyRepository,
+         databaseCreator: contextInstance.database.databaseCreator,
+         loadMigration: __loadUserModule,
+       });
+       const applied = await contextInstance.database.getAppliedMigrations();
        let rollbackName;
-       if (applied.size > 0) {
-         // Pick the applied file with the latest timestamp prefix.
-         const appliedFiles = mFiles.filter(f => applied.has(path.basename(f)));
-         rollbackFile = appliedFiles[appliedFiles.length - 1];
-         rollbackName = path.basename(rollbackFile || mFiles[mFiles.length - 1]);
+       if (applied.length > 0) {
+         rollbackName = applied[applied.length - 1];
+         // EF reverts by targeting the migration BEFORE the one being rolled back.
+         const target = applied.length > 1 ? applied[applied.length - 2] : Migrator.InitialDatabase;
+         await downMigrator.migrate(target);
        } else {
-         rollbackFile = mFiles[mFiles.length - 1];
-         rollbackName = path.basename(rollbackFile);
+         rollbackName = path.basename(mFiles[mFiles.length - 1]);
          console.log(`⚠️  No applied-migration record found; falling back to latest file on disk: ${rollbackName}`);
-       }
-
-       const MigCtor = await __loadUserModule(rollbackFile);
-       const migInstance = new MigCtor(ContextCtor);
-       if(typeof migInstance.down === 'function'){
-         await migInstance.down(tableObj);
-         if (typeof migInstance.finalize === 'function') await migInstance.finalize();
-         await __removeMigrationApplied(contextInstance, rollbackName);
-       }else{
-         console.log(`Warning - Migration '${rollbackName}' has no down method; skipping.`);
+         await downMigrator.revertMigration(rollbackName);
        }
 
        // Update snapshot
@@ -1019,12 +956,18 @@ program.hook('preAction', () => {
         const migration = new Migration();
         const cleanEntities = migration.cleanEntities(contextInstance.__entities);
         const tableObj = migration.buildUpObject(plan.contextSnapshot.schema, cleanEntities);
-        const MigCtor = await __loadUserModule(latest);
-        const instance = new MigCtor(plan.ContextCtor);
-        if (typeof instance.down !== 'function') throw new Error(`Migration '${name}' has no down() method; cannot revert it.`);
-        const mode = await __applyMigrationStep(contextInstance, instance, tableObj, name, 'down');
+        const removeMigrator = new Migrator({
+          context: contextInstance,
+          contextCtor: plan.ContextCtor,
+          snapshot: plan.contextSnapshot,
+          tableObj,
+          migrationsAssembly: new MigrationsAssembly({ files: plan.mFiles }),
+          historyRepository: contextInstance.database.historyRepository,
+          databaseCreator: contextInstance.database.databaseCreator,
+          loadMigration: __loadUserModule,
+        });
+        const mode = await removeMigrator.revertMigration(name);
         console.log(`↩  Reverted '${name}' (${mode})`);
-        try { if (instance.context && instance.context !== contextInstance && typeof instance.context.close === 'function') await instance.context.close(); } catch (_) { /* best-effort */ }
         // Snapshot follows the applied state: previous applied migration becomes the latest.
         const remaining = plan.mFiles.filter(f => path.basename(f) !== name && appliedNames.has(path.basename(f)));
         migration.createSnapShot({
@@ -1461,47 +1404,40 @@ program.hook('preAction', () => {
           // latest migration file and never consulted/wrote the tracking table,
           // so earlier pending migrations were silently skipped and nothing was
           // recorded ("schema changes silently stop applying").
-          try {
-            await __ensureMigrationsTable(contextInstance);
-          } catch (err) {
-            console.error(`❌ ${entry.ctxName}: could not create migration tracking table — ${err.message}`);
-            summary.push({ ctxName: entry.ctxName, status: 'FAILED (tracking table)', applied: 0 });
-            anyFailed = true;
-            continue;
-          }
-
-          const appliedMigrations = await __getAppliedMigrations(contextInstance);
-          const pending = mFiles.filter(f => !appliedMigrations.has(path.basename(f)));
+          // Same Migrator the single-context update-database uses, so this batch
+          // command can never drift from it again.
+          let currentName = null;
+          const batchMigrator = new Migrator({
+            context: contextInstance,
+            contextCtor: ContextCtor,
+            snapshot: entry.cs,
+            tableObj,
+            migrationsAssembly: new MigrationsAssembly({ files: mFiles }),
+            historyRepository: contextInstance.database.historyRepository,
+            databaseCreator: contextInstance.database.databaseCreator,
+            loadMigration: __loadUserModule,
+            logger: { migrationApplying: (id) => { currentName = id; } },
+          });
 
           let appliedCount = 0;
           let ctxFailed = false;
-          for (const mFile of pending) {
-            const migrationName = path.basename(mFile);
-            try {
-              const MigrationCtor = await __loadUserModule(mFile);
-              const inst = new MigrationCtor(ContextCtor);
-              await __applyMigrationStep(contextInstance, inst, tableObj, migrationName, 'up');
-              appliedCount++;
-              // Release the migration's own context (opened by its schema
-              // constructor) so connections don't accumulate across the batch.
-              try {
-                const mc = inst && (inst.context || inst._context);
-                if (mc && mc !== contextInstance && typeof mc.close === 'function') { await mc.close(); }
-              } catch(_){ /* best-effort teardown */ }
-            } catch (err) {
-              console.error(`❌ ${entry.ctxName}: migration '${migrationName}' failed — ${err.message}`);
-              console.error(`   Earlier migrations (if any) were applied and recorded. Fix and re-run to resume.`);
-              ctxFailed = true;
-              anyFailed = true;
-              break;
-            }
+          let recordedBefore = 0;
+          try {
+            recordedBefore = (await contextInstance.database.getAppliedMigrations()).length;
+            const result = await batchMigrator.migrate();
+            appliedCount = result.applied.length;
+          } catch (err) {
+            console.error(`❌ ${entry.ctxName}: migration '${currentName || "(unknown)"}' failed — ${err.message}`);
+            console.error(`   Earlier migrations (if any) were applied and recorded. Fix and re-run to resume.`);
+            ctxFailed = true;
+            anyFailed = true;
           }
 
           if (ctxFailed) {
             summary.push({ ctxName: entry.ctxName, status: `FAILED (after ${appliedCount} applied)`, applied: appliedCount });
           } else {
             if (appliedCount === 0) {
-              console.log(`✓ ${entry.ctxName}: up to date (${appliedMigrations.size} on record)`);
+              console.log(`✓ ${entry.ctxName}: up to date (${recordedBefore} on record)`);
             } else {
               console.log(`✓ ${entry.ctxName}: applied ${appliedCount} migration(s)`);
             }

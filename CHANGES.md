@@ -1,5 +1,33 @@
 # MasterRecord Changelog
 
+## v1.26.0 — one migration code path: `Migrator.Migrate` (EF), and the CLI is a thin shell over it
+
+EF's `IMigrator` is `Migrate` / `GenerateScript` / `HasPendingModelChanges` — applying
+migrations *is* the Migrator, and `dotnet ef database update` is a thin shell over it.
+masterrecord had the apply logic living inside the `update-database` CLI command instead,
+with `update-database-all`, `update-database-down` and `remove-migration` each carrying
+their own copy. That is now one path.
+
+- **`Migrator.migrate(target)`** applies and reverts: no target applies everything pending,
+  a migration id migrates up or down to it, and `'0'` (EF's `Migration.InitialDatabase`)
+  reverts everything, newest first. Each migration is applied **atomically with its history
+  row** and recorded as it goes, so an interrupted run resumes where it stopped.
+- **`context.database.migrate()`** — EF's `context.Database.Migrate()`, callable from an app
+  at startup, not just from the CLI. It discovers the snapshot and migration files, or takes
+  them explicitly.
+- **`update-database`, `update-database-all`, `update-database-down` and `remove-migration`
+  now all delegate to `Migrator`**, and 71 lines of duplicated apply logic were deleted
+  (`__applyMigrationStep`, `__ensureMigrationsTable`, `__removeMigrationApplied`).
+- **Fix:** `update-database-down` ran `down()` **outside any transaction** — a failed
+  rollback could leave a half-reverted schema with the history row still present. Rolling
+  back now uses the same per-migration transaction as applying.
+- **Fix:** every migration opens its own context (its schema constructor builds one); it is
+  now released after the migration runs. Only `update-database-all` did this before, so
+  single-context runs leaked a connection per migration.
+
+New tests: `test/ef-migrator-apply.test.js` (apply-all and idempotency, targeted up/down,
+revert-to-`'0'`, and `context.database.migrate()`).
+
 ## v1.25.0 — EF's Migrator planning: getMigrations / getPendingMigrations
 
 Completes the read half of EF's `DbContext.Database` surface. Ported from Entity
