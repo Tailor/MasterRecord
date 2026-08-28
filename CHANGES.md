@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.28.1 — the package no longer contradicts its own engine requirement
+
+- **Fix:** `package.json` declared `engines.node: ">=20.0.0"` while depending on
+  `commander@^15`, which itself requires `>=22.12.0`. Every Node 20 consumer got an
+  `EBADENGINE` warning on install, and the promise of Node 20 support was not actually
+  backed by the dependency tree. Pinned to `commander@^14.0.3`, whose own requirement is
+  `>=20` — matching what masterrecord claims. No API changes: the CLI uses only
+  `command/option/action/alias/description/version/parse`, stable across both majors.
+
+Also validated in this release cycle, against a live PostgreSQL 16.15 server rather than
+SQLite: `update-database-all` (the production deploy path) applying a migration and being
+a no-op on re-run, `migrations-status`, `update-database-down` (transactional since 1.26.0
+— table dropped and history row removed), correct Postgres column types including
+`boolean` and temporal columns as `TEXT`, and the history table carrying `product_version`.
+
 ## v1.28.0 — `ensureCreated()` actually works on MySQL/Postgres (found by live testing)
 
 The first live run of the cross-engine suite, against a real PostgreSQL 16.15 server,
