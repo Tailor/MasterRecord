@@ -5,6 +5,25 @@ import tools from '../Tools.js';
 import queryScript from './queryScript.js';
 import FieldTransformer from '../Entity/fieldTransformer.js';
 
+/**
+ * A row count is always an integer, on every engine.
+ *
+ * node-postgres returns COUNT(*) (int8) as a STRING so a count beyond 2^53 cannot
+ * lose precision, and MySQL can hand back a BigInt. Passing that through made
+ * `count()` engine-dependent: `n === 0` was never true on Postgres while working on
+ * SQLite, and `n + 1` produced "01" instead of 1 — a bug that only shows up in
+ * production. EF's CountAsync returns an int everywhere; so does this.
+ * sum()/avg()/min()/max() and groupBy().aggregate() already coerced; count() did not.
+ */
+function toCountNumber(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'bigint') return Number(value);
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+}
+
+
 // Security: `.take()`/`.skip()` values are interpolated directly into
 // LIMIT/OFFSET (these clauses cannot be parameterized on SQLite/MySQL/Postgres).
 // Pagination values are the single most common place an application forwards
@@ -704,30 +723,17 @@ class queryMethods{
 
         await this.__context._ensureReady();
 
-        if(this.__context.isSQLite){
-            // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
-            var val = entityValue[Object.keys(entityValue)[0]];
-            this.__reset();
-            return val;
-        }
-        else if(this.__context.isMySQL){
-            // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
-            var val = entityValue[Object.keys(entityValue)[0]];
-            this.__reset();
-            return val;
-        }
-        else if(this.__context.isPostgres){
-            // trying to match string select and relace with select Count(*);
-            var entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
-            var val = entityValue[Object.keys(entityValue)[0]];
-            this.__reset();
-            return val;
-        }
-        else {
+        if(!(this.__context.isSQLite || this.__context.isMySQL || this.__context.isPostgres)){
             this.__reset();
             throw new Error('No database type configured. Ensure context.env() or context.useMySql()/useSqlite() has been called and awaited.');
+        }
+
+        try {
+            const entityValue = await this.__context._execWithRetry(() => this.__context._SQLEngine.getCount(this.__queryObject, this.__entity, this.__context));
+            const raw = (entityValue && typeof entityValue === 'object') ? entityValue[Object.keys(entityValue)[0]] : entityValue;
+            return toCountNumber(raw);
+        } finally {
+            this.__reset();
         }
     }
 

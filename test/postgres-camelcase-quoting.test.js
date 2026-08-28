@@ -176,11 +176,14 @@ test('Postgres UPDATE SET clause quotes each column name', () => {
     assert.match(argu.query, /"acquiredAt"\s*=\s*\$2/);
 });
 
-test('Postgres COUNT(*) for untyped count (not COUNT(alias.*) which is invalid)', () => {
+test('Postgres COUNT(*)::int for untyped count (not COUNT(alias.*), which is invalid)', () => {
     const engine = new PostgresEngine();
     const script = { count: 'none', entityMap: [], parentName: 'SchedulerLeader' };
     const entity = { __name: 'SchedulerLeader' };
-    assert.equal(engine.buildCount(script, entity), 'COUNT(*)');
+    // ::int since 1.29.0 — count(*) is bigint and node-postgres returns int8 as a string,
+    // so the cast is what makes count() a number here as it is on the other engines
+    // (the same translation EF Core's Npgsql provider emits for Queryable.Count()).
+    assert.equal(engine.buildCount(script, entity), 'COUNT(*)::int');
 });
 
 test('Postgres DELETE emits quoted CamelCase table and primary key', async () => {

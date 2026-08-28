@@ -1,5 +1,33 @@
 # MasterRecord Changelog
 
+## v1.29.0 — count() returns a number on Postgres; one snapshot shape across every command
+
+Both found by running against a live PostgreSQL 16.15 server. Neither was a regression —
+both predate the 1.2x series — but both are real.
+
+- **Fix: `count()` was engine-dependent.** Postgres `count(*)` is `bigint`, and
+  node-postgres returns `int8` as a **string** so a count past 2^53 cannot silently lose
+  precision. Un-cast, `count()` returned `"0"` on Postgres and `0` on SQLite: `n === 0`
+  was never true, `n + 1` produced `"01"`, and `>` still worked by coercion — so it failed
+  *selectively*, which is the worst kind. Fixed the way EF Core's Npgsql provider fixes
+  it — **cast in SQL**, `count(*)::int`, so the driver returns a native integer rather
+  than repairing the value in the client. `COUNT` inside `groupBy().aggregate()` is cast
+  too; `SUM`/`AVG` are deliberately not, since they can be fractional. (As in EF, whose
+  `Count()` is an int32, this overflows past ~2.1 billion rows; EF's answer there is
+  `LongCount()`.) `sum`/`avg`/`min`/`max` already coerced correctly — `count()` was the gap.
+- **Fix: the two migration commands wrote different snapshots.** `update-database`
+  recorded `latestMigration` but omitted `contextSeedConfig`; `update-database-all` did
+  the reverse — so running one after the other rewrote the same files back and forth, and
+  the batch command recorded `latestMigration: null` even after applying migrations. All
+  commands now build the snapshot through one helper, and `latestMigration` comes from the
+  **history table** (what actually applied) rather than the last file on disk, so a
+  partially-failed run cannot claim a migration it never ran. Verified on live Postgres:
+  `update-database` -> `update-database-all` -> `update-database` now produce byte-identical
+  snapshots.
+
+New tests: `test/count-returns-number.test.js` (generated SQL per engine + behaviour), plus
+a `count()` type assertion in the live cross-engine suite.
+
 ## v1.28.1 — the package no longer contradicts its own engine requirement
 
 - **Fix:** `package.json` declared `engines.node: ">=20.0.0"` while depending on

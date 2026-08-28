@@ -103,6 +103,15 @@ for (const engine of ENGINES) {
             assert.equal(rows.length, 1);
             assert.equal(rows[0].name, 'acme');
 
+            // count() must be a NUMBER on the real engine — Postgres returns bigint as a
+            // string, so this is the assertion that catches the un-cast regression.
+            const n = await ctx.MrEfProbeTenant.count();
+            assert.equal(typeof n, 'number', `count() returned ${typeof n} on ${engine.name}`);
+            assert.strictEqual(n, 1);
+            assert.strictEqual(n + 1, 2, 'arithmetic, not string concatenation');
+            const none = await ctx.MrEfProbeInvoice.count();
+            assert.strictEqual(none, 0, 'an empty count is strictly 0');
+
             // history table: create, record, read back with EF's ProductVersion
             const history = ctx.database.historyRepository;
             await history.createIfNotExists();

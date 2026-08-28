@@ -104,6 +104,34 @@ async function __resolveMigrationPlan(contextFileName){
 }
 
 // Helper to cleanup context and exit
+/**
+ * The snapshot shape EVERY command writes.
+ *
+ * `update-database` used to record `latestMigration` but not `contextSeedConfig`, while
+ * `update-database-all` did the reverse — so running one after the other rewrote the same
+ * files back and forth, and the batch command recorded `latestMigration: null` even after
+ * applying migrations. `latestMigration` now comes from the history table (what actually
+ * applied) rather than the last file on disk, so a partially-failed run cannot claim a
+ * migration it never ran.
+ */
+async function __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName }){
+  let latestMigration = null;
+  try {
+    const applied = await contextInstance.database.getAppliedMigrations();
+    latestMigration = applied.length ? applied[applied.length - 1] : null;
+  } catch (_) { /* no history table yet — leave null */ }
+  return {
+    file: contextAbs,
+    executedLocation,
+    context: contextInstance,
+    contextEntities: cleanEntities,
+    contextSeedData: contextInstance.__contextSeedData || {},
+    contextSeedConfig: contextInstance.__contextSeedConfig || {},
+    contextFileName,
+    latestMigration,
+  };
+}
+
 async function __cleanupAndExit(contextInstance, exitCode = 0) {
   try {
     if (contextInstance && typeof contextInstance.close === 'function') {
@@ -576,15 +604,7 @@ program.hook('preAction', () => {
          }
 
          console.log(`\n💾 Updating snapshot...`);
-         const snap = {
-           file : contextAbs,
-           executedLocation : executedLocation,
-           context : contextInstance,
-           contextEntities : cleanEntities,
-           contextSeedData: contextInstance.__contextSeedData || {},
-           contextFileName: contextFileName,
-           latestMigration: mFiles.length ? path.basename(mFiles[mFiles.length - 1]) : null
-         }
+         const snap = await __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName });
 
          migration.createSnapShot(snap);
          console.log(`\n✅ Database updated successfully!`);
@@ -720,15 +740,7 @@ program.hook('preAction', () => {
        }
 
        // Update snapshot
-       const snap = {
-         file : contextAbs,
-         executedLocation : executedLocation,
-         context : contextInstance,
-         contextEntities : cleanEntities,
-         contextSeedData: contextInstance.__contextSeedData || {},
-         contextSeedConfig: contextInstance.__contextSeedConfig || {},
-         contextFileName: contextFileName
-       }
+       const snap = await __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName });
        migration.createSnapShot(snap);
        console.log("✓ Database rolled back successfully");
        await __cleanupAndExit(contextInstance, 0);
@@ -1370,15 +1382,7 @@ program.hook('preAction', () => {
               console.log(`✓ ${entry.ctxName}: applied ${appliedCount} migration(s)`);
             }
             // Snapshot only a context that fully applied without error.
-            const snap = {
-              file : entry.contextAbs,
-              executedLocation : executedLocation,
-              context : contextInstance,
-              contextEntities : cleanEntities,
-              contextSeedData: contextInstance.__contextSeedData || {},
-              contextSeedConfig: contextInstance.__contextSeedConfig || {},
-              contextFileName: entry.ctxName
-            }
+            const snap = await __buildSnapshot({ contextInstance, contextAbs: entry.contextAbs, executedLocation, cleanEntities, contextFileName: entry.ctxName });
             migration.createSnapShot(snap);
             summary.push({ ctxName: entry.ctxName, status: appliedCount === 0 ? 'up to date' : `applied ${appliedCount}`, applied: appliedCount });
           }

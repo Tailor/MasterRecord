@@ -162,7 +162,9 @@ class postgresEngine {
         const qi = (n) => this._q(n);
         const sel = [
             ...groups.map(g => `${alias}.${qi(g.column)} AS ${qi(g.column)}`),
-            ...aggs.map(a => `${a.fn}(${a.column ? `${alias}.${qi(a.column)}` : '*'}) AS ${qi(a.alias)}`),
+            // COUNT is bigint on Postgres; cast it to int so the driver returns a number
+            // (EF/Npgsql does the same). SUM/AVG must NOT be cast — they can be fractional.
+            ...aggs.map(a => `${a.fn}(${a.column ? `${alias}.${qi(a.column)}` : '*'})${a.fn === 'COUNT' ? '::int' : ''} AS ${qi(a.alias)}`),
         ].join(', ');
         const params = q.parameters ? [...q.parameters.getParams()] : [];
         let sql = `SELECT ${sel} ${this.buildFrom(q, entity)} ${this.buildWhere(q, entity)} ${this.buildAnd(q, entity)} GROUP BY ${groups.map(g => `${alias}.${qi(g.column)}`).join(', ')}`;
@@ -566,11 +568,21 @@ class postgresEngine {
         return cols.join(', ');
     }
 
+    /**
+     * Postgres `count(*)` is bigint (int8), and node-postgres returns int8 as a STRING
+     * so a value beyond 2^53 cannot silently lose precision. Un-cast, that made count()
+     * engine-dependent — `n === 0` was never true here but was on SQLite.
+     *
+     * Cast in SQL rather than coercing in JS, which is how EF Core's Npgsql provider
+     * translates `Queryable.Count()`: it emits `count(*)::int` so the driver returns a
+     * native 32-bit integer. (EF's `Count()` is likewise an int32; it offers
+     * `LongCount()` for tables past ~2.1 billion rows, where this cast would overflow.)
+     */
     buildCount(query, entity) {
         const entityStr = this.getEntity(entity.__name, query.entityMap);
         if (query.count === "none") {
             // `alias.*` is not standard Postgres syntax — use COUNT(*) instead.
-            return `COUNT(*)`;
+            return `COUNT(*)::int`;
         }
         // query.count is a cachedExpr with selectFields when set via `.count(p => p.field)`.
         let field;
@@ -579,8 +591,8 @@ class postgresEngine {
         } else if (typeof query.count === 'string') {
             field = query.count;
         }
-        if (!field) return `COUNT(*)`;
-        return `COUNT(${entityStr}.${this._q(field)})`;
+        if (!field) return `COUNT(*)::int`;
+        return `COUNT(${entityStr}.${this._q(field)})::int`;
     }
 
     buildFrom(query, entity) {
