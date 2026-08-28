@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 // version 0.1.0 - ESM only
-// https://docs.microsoft.com/en-us/ef/ef6/modeling/code-first/migrations/
 // how to add environment variables on cli call example - master=development masterrecord add-migration auth authContext
 
 import { program } from 'commander';
@@ -1621,6 +1620,125 @@ program.hook('preAction', () => {
     }
   });
 
+
+
+// ============================================================================
+// EF Core database creation + history (see Migrations/RelationalDatabaseCreator.js,
+// Migrations/HistoryRepository.js, Migrations/DatabaseFacade.js)
+// ============================================================================
+
+/**
+ * Resolve a context CLASS by name: prefer the snapshot's recorded location (the
+ * same resolution every other command uses), and fall back to searching for the
+ * context file so `ensure-created` works on a project with no migrations yet.
+ */
+async function __resolveContextCtor(executedLocation, contextFileName){
+  const snaps = globSync(`**/*${contextFileName}_contextSnapShot.json`, { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true });
+  if (snaps && snaps[0]) {
+    const file = path.resolve(executedLocation, snaps[0]);
+    try {
+      const snapshot = __normalizeSnapshotPaths(JSON.parse(fs.readFileSync(file, 'utf8')));
+      const contextAbs = path.resolve(path.dirname(file), snapshot.contextLocation || '');
+      if (fs.existsSync(contextAbs)) return await __loadUserModule(contextAbs);
+    } catch (_) { /* fall through to the file search */ }
+  }
+  const candidates = globSync(`**/${contextFileName}.js`, {
+    cwd: executedLocation, dot: true, windowsPathsNoEscape: true, nocase: true,
+    ignore: ['**/node_modules/**', '**/*_migration.js'],
+  });
+  if (!candidates || !candidates.length) {
+    throw new Error(`Cannot find a context named '${contextFileName}' in '${executedLocation}'. Expected ${contextFileName}.js (or a ${contextFileName}_contextSnapShot.json).`);
+  }
+  return await __loadUserModule(path.resolve(executedLocation, candidates[0]));
+}
+
+program
+  .command('ensure-created <contextFileName>')
+  .alias('ec')
+  .description('Create the database and every table in the model when the database has no tables (EF: EnsureCreated). Does not use migrations and never alters an existing table.')
+  .action(async function(contextFileName){
+    const executedLocation = process.cwd();
+    let ctx = null;
+    try {
+      const ContextCtor = await __resolveContextCtor(executedLocation, contextFileName.toLowerCase());
+      ctx = await instantiateReadyContext(ContextCtor);
+      const created = await ctx.database.ensureCreated();
+      if (created) {
+        console.log('✓ Database and schema created');
+      } else if (await ctx.database.hasTables()) {
+        console.log('✓ Database already has tables — nothing to do (EnsureCreated never alters an existing schema; use update-database for that)');
+      } else {
+        console.log('✓ Database already up to date');
+      }
+      await __cleanupAndExit(ctx, 0);
+    } catch (e) {
+      console.error('❌ ensure-created failed:', e.message);
+      await __cleanupAndExit(ctx, 1);
+    }
+  });
+
+program
+  .command('ensure-deleted <contextFileName>')
+  .alias('edel')
+  .option('-f, --force', 'confirm that the database and ALL of its data may be destroyed')
+  .description('Drop the database if it exists (EF: EnsureDeleted). Requires --force.')
+  .action(async function(contextFileName, options){
+    const executedLocation = process.cwd();
+    let ctx = null;
+    try {
+      const ContextCtor = await __resolveContextCtor(executedLocation, contextFileName.toLowerCase());
+      ctx = await instantiateReadyContext(ContextCtor);
+      if (!options.force) {
+        console.error('❌ ensure-deleted DROPS the database and every row in it. Re-run with --force if that is what you want.');
+        await __cleanupAndExit(ctx, 1);
+        return;
+      }
+      const deleted = await ctx.database.ensureDeleted();
+      console.log(deleted ? '✓ Database deleted' : '✓ No database to delete');
+      await __cleanupAndExit(ctx, 0);
+    } catch (e) {
+      console.error('❌ ensure-deleted failed:', e.message);
+      await __cleanupAndExit(ctx, 1);
+    }
+  });
+
+program
+  .command('baseline <contextFileName> [migrationName]')
+  .description('Record a migration as applied WITHOUT running it — brings a database that already has the schema under migration control (EF: insert the history row). Use --all for every migration on disk.')
+  .option('-a, --all', 'baseline every migration file found, not just one')
+  .action(async function(contextFileName, migrationName, options){
+    const executedLocation = process.cwd();
+    let ctx = null;
+    try {
+      if (!migrationName && !options.all) {
+        console.error('❌ baseline needs a migration name, or --all.');
+        process.exit(1);
+      }
+      const ContextCtor = await __resolveContextCtor(executedLocation, contextFileName.toLowerCase());
+      ctx = await instantiateReadyContext(ContextCtor);
+
+      let ids;
+      if (options.all) {
+        ids = globSync('**/*_migration.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, ignore: ['**/node_modules/**'] })
+          .map(f => path.basename(f))
+          .sort((a, b) => __getMigrationTimestamp(a) - __getMigrationTimestamp(b));
+        if (!ids.length) { console.log('No migration files found.'); await __cleanupAndExit(ctx, 0); return; }
+      } else {
+        ids = [path.basename(migrationName)];
+      }
+
+      let recorded = 0;
+      for (const id of ids) {
+        if (await ctx.database.baseline(id)) { console.log(`  ✓ baselined ${id}`); recorded++; }
+        else { console.log(`  · already applied ${id}`); }
+      }
+      console.log(`✓ Baseline complete — ${recorded} migration(s) recorded as applied, no SQL executed.`);
+      await __cleanupAndExit(ctx, 0);
+    } catch (e) {
+      console.error('❌ baseline failed:', e.message);
+      await __cleanupAndExit(ctx, 1);
+    }
+  });
 
 program.parse(process.argv);
 

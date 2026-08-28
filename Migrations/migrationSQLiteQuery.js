@@ -214,7 +214,7 @@ class migrationSQLiteQuery {
             queryVar += `${this.foreignKeyClause(fk)}, `;
         }
 
-        return `CREATE TABLE IF NOT EXISTS ${table.__name} (${queryVar.replace(/,\s*$/, "")});`;
+        return `CREATE TABLE IF NOT EXISTS "${table.__name}" (${queryVar.replace(/,\s*$/, "")});`;
 
             /*
                 INTEGER PRIMARY KEY AUTOINCREMENT
@@ -237,11 +237,11 @@ class migrationSQLiteQuery {
         // `IF NOT EXISTS` and dropColumn's skip-if-gone, and matching the Postgres
         // builder. A migration that DROPs a legacy table which never existed on a
         // fresh install is then a no-op instead of a hard failure.
-        return `DROP TABLE IF EXISTS ${name}`
+        return `DROP TABLE IF EXISTS "${name}"`
     }
 
     renameTable(table){
-        return `ALTER TABLE ${table.tableName} RENAME TO ${table.newName}`;
+        return `ALTER TABLE "${table.tableName}" RENAME TO "${table.newName}"`;
     }
 
     renameColumn(table){

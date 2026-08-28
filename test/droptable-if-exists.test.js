@@ -24,7 +24,7 @@ process.env.master = 'droptable';
 // ── SQL-shape across all three engines ───────────────────────────────────────
 
 test('every engine emits DROP TABLE IF EXISTS', () => {
-    assert.match(new sqliteQuery().dropTable('Backstage'), /DROP TABLE IF EXISTS\s+Backstage/i);
+    assert.match(new sqliteQuery().dropTable('Backstage'), /DROP TABLE IF EXISTS\s+"?Backstage"?/i);
     assert.match(new mysqlQuery().dropTable('Backstage'), /DROP TABLE IF EXISTS\s+`Backstage`/i);
     assert.match(new postgresQuery().dropTable('Backstage'), /DROP TABLE IF EXISTS\s+"Backstage"/i);
 });

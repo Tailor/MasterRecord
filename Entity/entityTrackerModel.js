@@ -5,9 +5,6 @@ import FieldTransformer from './fieldTransformer.js';
 
 class EntityTrackerModel {
 
-
-    // entity states https://docs.microsoft.com/en-us/dotnet/api/system.data.entitystate?view=netframework-4.7.2
-
     // start tracking model
     build(dataModel, currentEntity, context){
         const $that = this;

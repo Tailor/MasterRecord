@@ -1,5 +1,49 @@
 # MasterRecord Changelog
 
+## v1.24.0 — EF Core's database-creation and migrations-history object model
+
+Ported from Entity Framework Core (dotnet/efcore, MIT — see `THIRD-PARTY-NOTICES.md`),
+preserving EF's class structure, method names and algorithms.
+
+- **`context.database`** — EF's `DbContext.Database` facade: `ensureCreated()`,
+  `ensureDeleted()`, `canConnect()`, `hasTables()`, `generateCreateScript()`,
+  `getAppliedMigrations()`, `getAppliedMigrationRows()`, `baseline()`.
+- **`RelationalDatabaseCreator`** (`Migrations/RelationalDatabaseCreator.js`) with SQLite,
+  MySQL and Postgres implementations: `exists`, `create`, `delete`, `hasTables`,
+  `createTables`, `ensureCreated`, `ensureDeleted`, `generateCreateScript`, `canConnect`.
+  **`ensureCreated()` is all-or-nothing, exactly as in EF**: it creates the database and the
+  model's tables only when the database has *no tables at all*, and never alters an existing
+  table. It does not use migrations — use it for tests, prototypes and cold starts, and
+  migrations for a schema that has to evolve.
+- **`HistoryRepository`** (`Migrations/HistoryRepository.js`) — the migrations history table
+  as a first-class, overridable abstraction (EF's `__EFMigrationsHistory`): `exists`,
+  `create`, `createIfNotExists`, `getAppliedMigrations`, `getInsertScript`,
+  `getDeleteScript`, `recordApplied`, `recordReverted`, and EF's
+  `getBeginIfNotExistsScript`/`getEndIfScript` idempotency hooks (implemented for Postgres;
+  SQLite refuses them, as EF's SQLite provider does). masterrecord's existing
+  `_masterrecord_migrations` table and its column names remain the defaults, so nothing
+  changes for existing databases; EF's `ProductVersion` is added as a nullable
+  `product_version` column the first time history is written.
+- **`HistoryRow`** (`Migrations/HistoryRow.js`) — EF's history row, plus `appliedAt`.
+- **Baselining** — `ctx.database.baseline(migrationId)` and `masterrecord baseline <context>
+  [migration] [--all]` record a migration as applied **without running it**: EF's documented
+  way to bring a database that already has the schema under migration control.
+- **CLI**: `masterrecord ensure-created <context>` (EF `EnsureCreated`),
+  `masterrecord ensure-deleted <context> --force` (EF `EnsureDeleted`; refuses without
+  `--force`), `masterrecord baseline`. `ensure-created` works on a project with no
+  migrations yet, so a cold start no longer needs a hand-written bootstrap script.
+- **Subpath exports opened** for `Migrations/HistoryRow`, `Migrations/HistoryRepository`,
+  `Migrations/RelationalDatabaseCreator`, `Migrations/DatabaseFacade` and
+  `Migrations/contextInit` — the last of which previously forced callers to bypass the
+  package's `exports` map to reach `instantiateReadyContext`.
+- **Fix (SQLite DDL):** `createTable`/`dropTable`/`renameTable` now quote the table name,
+  as the MySQL and Postgres builders already did. An entity named with a reserved word
+  (`Order`, `Group`, `Transaction`…) previously failed to create with
+  `near "Order": syntax error`. Note that **queries** against such a table still fail —
+  the query builder does not yet quote table names.
+
+New tests: `test/ef-database-creator.test.js`.
+
 ## v1.23.0 — entity property reads ~16x faster (shared prototype per entity type)
 
 - **Perf:** every entity of a type now shares **one prototype** and keeps its backing slots (`_<col>`, `_<nav>`, `__loading_<nav>`) as **non-enumerable own properties**. Before, each row got a fresh `{}` prototype holding its slots, so every entity had its own V8 hidden class and `entity.col` was a megamorphic accessor read: **~326 ns/read** (both tracked and `asNoTracking()`), i.e. an O(n²) loop over two 2 000-row tables took seconds and over larger tables minutes. Now **~20 ns/read**; the 2 000×2 000 nested loop went from 2.07 s to 0.19 s. EF Core entities are POCOs — a property read should cost about what a plain object read costs.

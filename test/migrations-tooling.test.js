@@ -90,8 +90,8 @@ test('script prints the SQL for pending migrations and does NOT apply it', () =>
     const r = run(['script', 'toolctx'], projectDir);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /-- Migration: 1700000001000_CreateAuthor_migration\.js/);
-    assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS Author/i, 'DDL is in the script');
-    assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS Book/i);
+    assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS "?Author"?/i, 'DDL is in the script');
+    assert.match(r.stdout, /CREATE TABLE IF NOT EXISTS "?Book"?/i);
     assert.match(r.stdout, /INSERT INTO \[_masterrecord_migrations\]/, 'tracking-table insert is part of the script');
     // Nothing was applied: no Author/Book tables, no tracking rows.
     const f = dbFile(dbDir);
@@ -103,7 +103,7 @@ test('script prints the SQL for pending migrations and does NOT apply it', () =>
     const out = path.join(projectDir, 'pending.sql');
     const r2 = run(['script', 'toolctx', '--output', out], projectDir);
     assert.equal(r2.status, 0, r2.stderr);
-    assert.match(fs.readFileSync(out, 'utf8'), /CREATE TABLE IF NOT EXISTS Author/i);
+    assert.match(fs.readFileSync(out, 'utf8'), /CREATE TABLE IF NOT EXISTS "?Author"?/i);
 });
 
 test('a failing migration is rolled back atomically: no half-applied table, nothing recorded for it', () => {

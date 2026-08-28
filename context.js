@@ -17,6 +17,7 @@
 import modelBuilder from './Entity/entityModelBuilder.js';
 import query from './QueryLanguage/queryMethods.js';
 import tools from './Tools.js';
+import DatabaseFacade from './Migrations/DatabaseFacade.js';
 import SQLLiteEngine from './SQLLiteEngine.js';
 import MySQLEngine from './mySQLEngine.js';
 import insertManager from './insertManager.js';
@@ -2028,6 +2029,16 @@ class context {
      * Same shape on SQLite, MySQL and Postgres (engine-specific extras such as
      * pool counters / server version are added when available).
      */
+    /**
+     * Database-level operations for this context — EF's `context.Database`:
+     * ensureCreated / ensureDeleted / canConnect / hasTables /
+     * generateCreateScript / getAppliedMigrations / baseline.
+     */
+    get database() {
+        if (!this.__database) { this.__database = new DatabaseFacade(this); }
+        return this.__database;
+    }
+
     async healthCheck() {
         const engine = this.isSQLite ? 'sqlite' : this.isMySQL ? 'mysql' : this.isPostgres ? 'postgres' : 'unknown';
         const started = Date.now();
