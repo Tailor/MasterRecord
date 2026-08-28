@@ -216,12 +216,24 @@ class DatabaseFacade {
         return this.historyRepository.getInsertScript(new HistoryRow(migrationId, PRODUCT_VERSION, new Date().toISOString()));
     }
 
+    /**
+     * Wait for the context's connection, but do NOT fail when the database simply
+     * does not exist yet — that is precisely the state `ensureCreated()` exists to
+     * fix, and on MySQL/Postgres the context cannot connect until the database is
+     * there. Existence checks and creation run over an admin connection instead.
+     */
     async _ready() {
         if (this.context && this.context._initPromise) {
-            try { await this.context._initPromise; } catch (_) { /* provider reports it on first use */ }
+            try { await this.context._initPromise; } catch (_) { /* reported by the first real query */ }
         }
         if (this.context && typeof this.context._ensureReady === 'function') {
-            await this.context._ensureReady();
+            try {
+                await this.context._ensureReady();
+            } catch (err) {
+                const msg = String((err && err.message) || '');
+                const missing = /does not exist|Unknown database/i.test(msg);
+                if (!missing) throw err;
+            }
         }
     }
 }

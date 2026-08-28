@@ -80,15 +80,18 @@ for (const engine of ENGINES) {
 
         const ctx = contextFor(configFrom(engine.url, engine.type, dbName));
         try {
-            await ctx._ensureReady();
-
             if (ALLOW_CREATE_DB) {
+                // The database does not exist yet — ensureCreated() is the entry point,
+                // and it must not require a connectable context to get there.
                 assert.equal(await ctx.database.ensureCreated(), true, 'created the scratch database and its schema');
             } else {
-                // Never touch tables we did not make.
+                await ctx._ensureReady();
+                // Never touch tables we did not make. The target database may be
+                // empty (a dedicated test database) or already populated (an app's
+                // own database) — either is fine, we only add our own tables.
                 await dropProbeTables(ctx);
-                assert.equal(await ctx.database.hasTables(), true, 'using an existing database');
                 await ctx.database.databaseCreator.createTables();
+                assert.equal(await ctx.database.hasTables(), true, 'our tables exist now');
             }
 
             assert.equal(await ctx.database.canConnect(), true);

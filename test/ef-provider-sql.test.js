@@ -105,18 +105,29 @@ test('database creator: provider resolution', () => {
     assert.ok(creatorFor('postgres') instanceof PostgresDatabaseCreator);
 });
 
-test('database creator: exists() queries the right catalog on MySQL and Postgres', async () => {
-    const my = creatorFor('mysql', { database: 'shop', rows: [{ SCHEMA_NAME: 'shop' }] });
-    assert.equal(await my.exists(), true);
-    assert.match(my.context.executed[0], /INFORMATION_SCHEMA\.SCHEMATA WHERE SCHEMA_NAME = 'shop'/);
+/** Stub the admin channel: exists()/create() must NOT need the context's engine,
+ *  because the database they are asked about may not exist yet. */
+function withAdmin(creator, rows = []) {
+    const seen = [];
+    creator._adminQuery = async (sql) => { seen.push(sql); return rows; };
+    creator.adminSql = seen;
+    return creator;
+}
 
-    const pg = creatorFor('postgres', { database: 'shop', rows: [{ '?column?': 1 }] });
+test('database creator: exists() asks an ADMIN connection, not the context engine', async () => {
+    const my = withAdmin(creatorFor('mysql', { database: 'shop' }), [{ SCHEMA_NAME: 'shop' }]);
+    assert.equal(await my.exists(), true);
+    assert.match(my.adminSql[0], /INFORMATION_SCHEMA\.SCHEMATA WHERE SCHEMA_NAME = 'shop'/);
+    assert.equal(my.context.executed.length, 0, 'the context engine is never used — it may not be connectable');
+
+    const pg = withAdmin(creatorFor('postgres', { database: 'shop' }), [{ '?column?': 1 }]);
     assert.equal(await pg.exists(), true);
-    assert.match(pg.context.executed[0], /FROM pg_database WHERE datname = 'shop'/);
+    assert.match(pg.adminSql[0], /FROM pg_database WHERE datname = 'shop'/);
+    assert.equal(pg.context.executed.length, 0);
 
     // no row back => the database is absent
-    assert.equal(await creatorFor('mysql', { rows: [] }).exists(), false);
-    assert.equal(await creatorFor('postgres', { rows: [] }).exists(), false);
+    assert.equal(await withAdmin(creatorFor('mysql', { database: 'shop' }), []).exists(), false);
+    assert.equal(await withAdmin(creatorFor('postgres', { database: 'shop' }), []).exists(), false);
 });
 
 test('database creator: hasTables() counts tables in the current schema', async () => {
@@ -134,7 +145,7 @@ test('database creator: hasTables() counts tables in the current schema', async 
 });
 
 test('database creator: exists() is what canConnect() reports, and a thrown provider error is false', async () => {
-    const c = creatorFor('postgres', { rows: [{ x: 1 }] });
+    const c = withAdmin(creatorFor('postgres', { database: 'shop' }), [{ x: 1 }]);
     assert.equal(await c.canConnect(), true);
     c.exists = async () => { throw new Error('connection refused'); };
     assert.equal(await c.canConnect(), false, 'canConnect never throws');

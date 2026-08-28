@@ -239,14 +239,28 @@ class MySqlDatabaseCreator extends RelationalDatabaseCreator {
     }
 
     async exists() {
-        const rows = await this._executeRows(
-            `SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${String(this.databaseName).replace(/'/g, "''")}'`);
+        const rows = await this._adminQuery(
+            `SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${assertDatabaseName(this.databaseName)}'`);
         return !!(rows && rows.length);
     }
 
     async create() {
         const schema = await this.getSchema();
         await schema._createDatabaseFromConfig();
+        await this._reconnect();
+    }
+
+    /**
+     * Re-open the context's pool now that the database exists, and mark the context
+     * ready — its original _initPromise rejected (the database was missing) and
+     * _ensureReady() would otherwise keep re-awaiting that stale rejection.
+     */
+    async _reconnect() {
+        const schema = await this.getSchema();
+        if (typeof schema._retryMySQLInit === 'function') {
+            await schema._retryMySQLInit();
+            this.context._ready = true;
+        }
     }
 
     async hasTables() {
@@ -266,7 +280,7 @@ class MySqlDatabaseCreator extends RelationalDatabaseCreator {
         await this._adminQuery(`DROP DATABASE IF EXISTS \`${dbName}\``);
     }
 
-    /** Run a statement on a connection that has no database selected. */
+    /** Run a statement on a connection that has no database selected; returns rows. */
     async _adminQuery(sql) {
         const config = this.context._dbConfig || {};
         const { default: MySQLAsyncClient } = await import('../mySQLConnect.js');
@@ -277,7 +291,9 @@ class MySqlDatabaseCreator extends RelationalDatabaseCreator {
         await admin.connect();
         try {
             const pool = admin.getPool();
-            if (pool) await pool.query(sql);
+            if (!pool) return [];
+            const [rows] = await pool.query(sql);
+            return Array.isArray(rows) ? rows : [];
         } finally {
             await admin.close();
         }
@@ -291,8 +307,8 @@ class PostgresDatabaseCreator extends RelationalDatabaseCreator {
     }
 
     async exists() {
-        const rows = await this._executeRows(
-            `SELECT 1 FROM pg_database WHERE datname = '${String(this.databaseName).replace(/'/g, "''")}'`);
+        const rows = await this._adminQuery(
+            `SELECT 1 FROM pg_database WHERE datname = '${assertDatabaseName(this.databaseName)}'`);
         return !!(rows && rows.length);
     }
 
@@ -300,6 +316,20 @@ class PostgresDatabaseCreator extends RelationalDatabaseCreator {
         const schema = await this.getSchema();
         if (typeof schema._createPostgresDatabaseFromConfig === 'function') {
             await schema._createPostgresDatabaseFromConfig();
+        }
+        await this._reconnect();
+    }
+
+    /**
+     * Re-open the context's pool now that the database exists, and mark the context
+     * ready — its original _initPromise rejected (the database was missing) and
+     * _ensureReady() would otherwise keep re-awaiting that stale rejection.
+     */
+    async _reconnect() {
+        const schema = await this.getSchema();
+        if (typeof schema._retryPostgresInit === 'function') {
+            await schema._retryPostgresInit();
+            this.context._ready = true;
         }
     }
 
@@ -337,7 +367,8 @@ class PostgresDatabaseCreator extends RelationalDatabaseCreator {
             ssl: config.ssl || false,
         });
         try {
-            await adminPool.query(sql);
+            const r = await adminPool.query(sql);
+            return (r && r.rows) ? r.rows : [];
         } finally {
             await adminPool.end();
         }

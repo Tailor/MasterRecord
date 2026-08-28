@@ -1,5 +1,28 @@
 # MasterRecord Changelog
 
+## v1.28.0 — `ensureCreated()` actually works on MySQL/Postgres (found by live testing)
+
+The first live run of the cross-engine suite, against a real PostgreSQL 16.15 server,
+found that **`ensureCreated()` could never work on MySQL or Postgres when the database did
+not exist** — which is the one case it exists for. The context cannot connect without an
+existing database, so it threw during initialization long before `ensureCreated()` ran. It
+only appeared to work on SQLite, where opening the file creates it.
+
+- **Fix:** `exists()` and `create()` now run over an **admin connection** (the `postgres`
+  maintenance database; MySQL with no database selected) instead of the context's own
+  engine, so they work when the target database is absent — the approach EF's providers
+  take. After creating it the context's pool is reopened and the context marked ready, so
+  its stale rejected init promise is not re-awaited.
+- **Fix:** `context.database` no longer fails outright when the database is missing; that
+  is the state `ensureCreated()` is for. Any other connection error still propagates.
+- Verified end to end on live PostgreSQL 16.15: `CREATE DATABASE` -> `EnsureCreated`
+  (schema) -> insert/read -> history + `ProductVersion` -> `baseline()` -> `EnsureDeleted`
+  (`pg_terminate_backend` + drop from the maintenance database), with no scratch databases
+  or stray tables left behind.
+- The cross-engine suite is safe against a shared server by default — it only creates and
+  drops its own `MrEfProbe*` tables. The create/drop-database lifecycle is opt-in with
+  `MR_TEST_ALLOW_CREATE_DB=1`.
+
 ## v1.27.0 — `Migrator.GenerateScript` and `HasPendingModelChanges`: EF's `IMigrator` is now complete
 
 1.26.0 moved applying into `Migrator`; this finishes the interface. EF's `IMigrator` is
