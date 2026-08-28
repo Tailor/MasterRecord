@@ -9,6 +9,14 @@ import fs from 'node:fs';
 // close a cycle (context -> DatabaseFacade -> creator -> schema -> context) and
 // leave context.js half-initialized. It is loaded on demand instead, which also
 // keeps the migrations stack (pg, mysql2) out of the runtime graph until used.
+/** Database names are interpolated into DDL that cannot be parameterized. */
+function assertDatabaseName(name) {
+    if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
+        throw new Error(`masterrecord: refusing to operate on an invalid database name '${name}'.`);
+    }
+    return name;
+}
+
 let _schemaCtor = null;
 let _queryBuilders = null;
 
@@ -247,8 +255,32 @@ class MySqlDatabaseCreator extends RelationalDatabaseCreator {
         return Number(count) !== 0;
     }
 
+    /**
+     * Drop through an ADMIN connection with no database selected, after closing the
+     * context's own pool — dropping the schema a live pool is pointed at leaves every
+     * pooled connection referring to a database that no longer exists.
+     */
     async delete() {
-        await this.context._execute(`DROP DATABASE IF EXISTS \`${this.databaseName}\``);
+        const dbName = assertDatabaseName(this.databaseName);
+        try { await this.context.close(); } catch (_) { /* already closed */ }
+        await this._adminQuery(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    }
+
+    /** Run a statement on a connection that has no database selected. */
+    async _adminQuery(sql) {
+        const config = this.context._dbConfig || {};
+        const { default: MySQLAsyncClient } = await import('../mySQLConnect.js');
+        const adminConfig = { ...config };
+        delete adminConfig.database;
+        delete adminConfig.type;
+        const admin = new MySQLAsyncClient(adminConfig);
+        await admin.connect();
+        try {
+            const pool = admin.getPool();
+            if (pool) await pool.query(sql);
+        } finally {
+            await admin.close();
+        }
     }
 }
 
@@ -277,8 +309,38 @@ class PostgresDatabaseCreator extends RelationalDatabaseCreator {
         return Number(count) !== 0;
     }
 
+    /**
+     * Postgres refuses to drop the database the session is connected to
+     * ("cannot drop the currently open database"), so this closes the context's
+     * pool and drops from the `postgres` maintenance database, terminating any
+     * other backend still attached — the same shape as EF's Npgsql provider and
+     * as masterrecord's own _createPostgresDatabaseFromConfig().
+     */
     async delete() {
-        await this.context._execute(`DROP DATABASE IF EXISTS "${this.databaseName}"`);
+        const dbName = assertDatabaseName(this.databaseName);
+        try { await this.context.close(); } catch (_) { /* already closed */ }
+        await this._adminQuery(
+            `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`);
+        await this._adminQuery(`DROP DATABASE IF EXISTS "${dbName}"`);
+    }
+
+    /** Run a statement on the `postgres` maintenance database. */
+    async _adminQuery(sql) {
+        const config = this.context._dbConfig || {};
+        const { default: pg } = await import('pg');
+        const adminPool = new pg.Pool({
+            host: config.host || 'localhost',
+            port: config.port || 5432,
+            user: config.user,
+            password: config.password,
+            database: 'postgres',
+            ssl: config.ssl || false,
+        });
+        try {
+            await adminPool.query(sql);
+        } finally {
+            await adminPool.end();
+        }
     }
 }
 

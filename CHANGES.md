@@ -1,5 +1,29 @@
 # MasterRecord Changelog
 
+## v1.24.1 — MySQL/Postgres coverage for the EF port, and a Postgres `ensureDeleted` fix
+
+1.24.0's MySQL and Postgres providers shipped without ever being executed — masterrecord
+has no live cross-engine suite (`docker-compose.test.yml` advertises `MR_TEST_MYSQL_URL` /
+`MR_TEST_PG_URL`, but nothing read them). Reviewing and testing those paths found a real bug:
+
+- **Fix (Postgres):** `ensureDeleted()` issued `DROP DATABASE` on the context's own
+  connection, which Postgres always rejects — *"cannot drop the currently open database"*.
+  It now closes the context's pool, connects to the `postgres` maintenance database,
+  terminates any other backend attached to the target, and drops from there — the shape
+  EF's Npgsql provider uses and the one masterrecord's own
+  `_createPostgresDatabaseFromConfig()` already used for CREATE.
+- **Fix (MySQL):** `ensureDeleted()` likewise drops through an admin connection with no
+  database selected, after closing the context pool. Dropping the schema a live pool points
+  at left every pooled connection referring to a database that no longer existed.
+- **Hardening:** a database name that is not a plain identifier is now refused rather than
+  interpolated into `DROP DATABASE` (the same rule the schema layer already applied to CREATE).
+- **Tests:** `test/ef-provider-sql.test.js` drives the HistoryRepository and
+  RelationalDatabaseCreator SQL for **all three engines** with a context that captures
+  statements instead of running them — no database required, so MySQL/Postgres SQL
+  generation is covered on every `npm test`. `test/ef-cross-engine.integration.test.js`
+  adds real end-to-end coverage (EnsureCreated → query → history → baseline → EnsureDeleted
+  against a scratch database), skipped unless `MR_TEST_MYSQL_URL` / `MR_TEST_PG_URL` are set.
+
 ## v1.24.0 — EF Core's database-creation and migrations-history object model
 
 Ported from Entity Framework Core (dotnet/efcore, MIT — see `THIRD-PARTY-NOTICES.md`),
