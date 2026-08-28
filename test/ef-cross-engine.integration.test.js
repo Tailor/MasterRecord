@@ -32,83 +32,103 @@ function configFrom(url, type, database) {
     };
 }
 
-class Tenant {
+// Deliberately unlikely table names: these run against whatever database the
+// URL points at, so they must not collide with anything real.
+class MrEfProbeTenant {
     id(db) { db.integer().primary().auto(); }
     name(db) { db.string(); }
 }
-class Invoice {
+class MrEfProbeInvoice {
     id(db) { db.integer().primary().auto(); }
     total(db) { db.integer(); }
 }
 
 function contextFor(config) {
     class EfCtx extends masterrecord.context {
-        constructor() { super(); this.env(config); this.dbset(Tenant); this.dbset(Invoice); }
+        constructor() { super(); this.env(config); this.dbset(MrEfProbeTenant); this.dbset(MrEfProbeInvoice); }
     }
     return new EfCtx();
 }
 
 const ENGINES = [
-    { name: 'mysql', url: process.env.MR_TEST_MYSQL_URL, type: 'mysql' },
-    { name: 'postgres', url: process.env.MR_TEST_PG_URL, type: 'postgres' },
+    { name: 'mysql', url: process.env.MR_TEST_MYSQL_URL, type: 'mysql', env: 'MR_TEST_MYSQL_URL' },
+    { name: 'postgres', url: process.env.MR_TEST_PG_URL, type: 'postgres', env: 'MR_TEST_PG_URL' },
 ];
 
-for (const engine of ENGINES) {
-    const skip = engine.url ? false : `set MR_TEST_${engine.name === 'mysql' ? 'MYSQL' : 'PG'}_URL to run (see docker-compose.test.yml)`;
+// Creating and dropping a DATABASE needs elevated rights and is far more invasive
+// than this coverage needs, so it is OPT-IN. By default the tests use the database
+// the URL already points at and only create/drop their own `MrEfProbe*` tables,
+// which makes them safe to run against a shared or hosted server.
+const ALLOW_CREATE_DB = process.env.MR_TEST_ALLOW_CREATE_DB === '1';
 
-    test(`${engine.name}: EnsureCreated / HasTables / history / baseline / EnsureDeleted end to end`, { skip }, async () => {
-        const dbName = `mr_ef_${Date.now()}_${Math.floor(Math.random() * 1e5)}`;
+async function dropProbeTables(ctx) {
+    for (const t of ['MrEfProbeInvoice', 'MrEfProbeTenant']) {
+        const q = ctx.isMySQL ? `DROP TABLE IF EXISTS \`${t}\`` : `DROP TABLE IF EXISTS "${t}"`;
+        try { await ctx._execute(q); } catch (_) { /* never existed */ }
+    }
+}
+
+for (const engine of ENGINES) {
+    const skip = engine.url ? false : `set ${engine.env} to run (see docker-compose.test.yml)`;
+
+    test(`${engine.name}: schema creation, history, baseline and migration planning against a live server`, { skip }, async () => {
+        const url = new URL(engine.url);
+        const dbName = ALLOW_CREATE_DB
+            ? `mr_ef_${Date.now()}_${Math.floor(Math.random() * 1e5)}`
+            : decodeURIComponent(url.pathname.replace(/^\//, ''));
+        assert.ok(dbName, `${engine.env} must include a database name`);
+
         const ctx = contextFor(configFrom(engine.url, engine.type, dbName));
-        let cleaned = false;
         try {
             await ctx._ensureReady();
 
-            // the scratch database does not exist yet -> EnsureCreated creates it AND the schema
-            const created = await ctx.database.ensureCreated();
-            assert.equal(created, true, 'EnsureCreated reports that it created something');
-            assert.equal(await ctx.database.hasTables(), true, 'the model tables exist');
+            if (ALLOW_CREATE_DB) {
+                assert.equal(await ctx.database.ensureCreated(), true, 'created the scratch database and its schema');
+            } else {
+                // Never touch tables we did not make.
+                await dropProbeTables(ctx);
+                assert.equal(await ctx.database.hasTables(), true, 'using an existing database');
+                await ctx.database.databaseCreator.createTables();
+            }
+
             assert.equal(await ctx.database.canConnect(), true);
 
-            // the tables really work
-            const t = ctx.Tenant.new(); t.name = 'acme'; ctx.Tenant.add(t);
+            // the tables really work on this engine
+            const t = ctx.MrEfProbeTenant.new(); t.name = 'acme'; ctx.MrEfProbeTenant.add(t);
             await ctx.saveChanges();
-            const rows = await ctx.Tenant.toList();
+            const rows = await ctx.MrEfProbeTenant.toList();
             assert.equal(rows.length, 1);
             assert.equal(rows[0].name, 'acme');
 
-            // EF semantics: a second call performs nothing
-            assert.equal(await ctx.database.ensureCreated(), false, 'second EnsureCreated is a no-op');
-
-            // history table: create, record, read back
+            // history table: create, record, read back with EF's ProductVersion
             const history = ctx.database.historyRepository;
-            assert.equal(await history.createIfNotExists(), true, 'history table created');
+            await history.createIfNotExists();
             assert.equal(await history.exists(), true);
-            await history.recordApplied('1700000000000_Init_migration.js');
+            const probeId = `1700000000000_MrEfProbe_${Date.now()}_migration.js`;
+            await history.recordApplied(probeId);
             const applied = await history.getAppliedMigrations();
-            assert.deepEqual(applied.map(r => r.migrationId), ['1700000000000_Init_migration.js']);
-            assert.match(applied[0].productVersion, /^\d+\.\d+\.\d+/, 'ProductVersion recorded');
-            assert.ok(applied[0].appliedAt, 'applied_at recorded');
+            const mine = applied.find(r => r.migrationId === probeId);
+            assert.ok(mine, 'the migration was recorded');
+            assert.match(mine.productVersion, /^\d+\.\d+\.\d+/, 'ProductVersion recorded');
+            assert.ok(mine.appliedAt, 'applied_at recorded');
 
-            // baseline records without running DDL
-            assert.equal(await ctx.database.baseline('1700000000001_Next_migration.js'), true);
-            assert.deepEqual(await ctx.database.getAppliedMigrations(), [
-                '1700000000000_Init_migration.js',
-                '1700000000001_Next_migration.js',
-            ]);
-            assert.equal(await ctx.database.baseline('1700000000001_Next_migration.js'), false, 'idempotent');
+            // baseline is idempotent, and planning reads the live history
+            assert.equal(await ctx.database.baseline(probeId), false, 'already applied');
+            const secondId = `1700000000001_MrEfProbe_${Date.now()}_migration.js`;
+            assert.equal(await ctx.database.baseline(secondId), true);
+            const ids = await ctx.database.getAppliedMigrations();
+            assert.ok(ids.includes(probeId) && ids.includes(secondId));
 
-            await history.recordReverted('1700000000001_Next_migration.js');
-            assert.deepEqual(await ctx.database.getAppliedMigrations(), ['1700000000000_Init_migration.js']);
-
-            // EnsureDeleted drops the scratch database through an admin connection
-            assert.equal(await ctx.database.ensureDeleted(), true, 'dropped');
-            cleaned = true;
+            // clean up our history rows
+            await history.recordReverted(probeId);
+            await history.recordReverted(secondId);
+            const after = await ctx.database.getAppliedMigrations();
+            assert.ok(!after.includes(probeId) && !after.includes(secondId), 'history rows removed');
         } finally {
-            if (!cleaned) {
-                // best-effort cleanup so a failing assertion does not leave a stray database
-                try { await ctx.database.ensureDeleted(); } catch (_) { /* nothing to drop */ }
-            }
-            try { await ctx.close(); } catch (_) { /* already closed by delete() */ }
+            try {
+                if (ALLOW_CREATE_DB) await ctx.database.ensureDeleted();
+                else { await dropProbeTables(ctx); await ctx.close(); }
+            } catch (_) { /* best-effort cleanup */ }
         }
     });
 }
