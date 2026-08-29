@@ -104,34 +104,6 @@ async function __resolveMigrationPlan(contextFileName){
 }
 
 // Helper to cleanup context and exit
-/**
- * The snapshot shape EVERY command writes.
- *
- * `update-database` used to record `latestMigration` but not `contextSeedConfig`, while
- * `update-database-all` did the reverse — so running one after the other rewrote the same
- * files back and forth, and the batch command recorded `latestMigration: null` even after
- * applying migrations. `latestMigration` now comes from the history table (what actually
- * applied) rather than the last file on disk, so a partially-failed run cannot claim a
- * migration it never ran.
- */
-async function __buildSnapshot({ contextInstance, contextAbs, executedLocation, cleanEntities, contextFileName }){
-  let latestMigration = null;
-  try {
-    const applied = await contextInstance.database.getAppliedMigrations();
-    latestMigration = applied.length ? applied[applied.length - 1] : null;
-  } catch (_) { /* no history table yet — leave null */ }
-  return {
-    file: contextAbs,
-    executedLocation,
-    context: contextInstance,
-    contextEntities: cleanEntities,
-    contextSeedData: contextInstance.__contextSeedData || {},
-    contextSeedConfig: contextInstance.__contextSeedConfig || {},
-    contextFileName,
-    latestMigration,
-  };
-}
-
 async function __cleanupAndExit(contextInstance, exitCode = 0) {
   try {
     if (contextInstance && typeof contextInstance.close === 'function') {
@@ -1566,24 +1538,32 @@ program
   .description('Record a migration as applied WITHOUT running it — brings a database that already has the schema under migration control (EF: insert the history row). Use --all for every migration on disk.')
   .option('-a, --all', 'baseline every migration file found, not just one')
   .action(async function(contextFileName, migrationName, options){
-    const executedLocation = process.cwd();
     let ctx = null;
     try {
       if (!migrationName && !options.all) {
         console.error('❌ baseline needs a migration name, or --all.');
         process.exit(1);
       }
-      const ContextCtor = await __resolveContextCtor(executedLocation, contextFileName.toLowerCase());
-      ctx = await instantiateReadyContext(ContextCtor);
+      // EF scopes migrations by OWNERSHIP, never by searching the filesystem:
+      // `IMigrationsAssembly.Migrations` contains only the migrations whose
+      // `[DbContext(typeof(T))]` matches the context being operated on. This used to glob
+      // `**/*_migration.js` from the working directory, so in a repo with several contexts
+      // `--all` recorded EVERY context's migrations into the one target context's history
+      // (141 rows for 8 real migrations). Resolve through the context's own snapshot and
+      // migration folder — the same MigrationsAssembly every other command uses.
+      const plan = await __resolveMigrationPlan(contextFileName);
+      ctx = await instantiateReadyContext(plan.ContextCtor);
+      const migrationsAssembly = new MigrationsAssembly({ files: plan.mFiles });
 
       let ids;
       if (options.all) {
-        ids = globSync('**/*_migration.js', { cwd: executedLocation, dot: true, windowsPathsNoEscape: true, ignore: ['**/node_modules/**'] })
-          .map(f => path.basename(f))
-          .sort((a, b) => __getMigrationTimestamp(a) - __getMigrationTimestamp(b));
-        if (!ids.length) { console.log('No migration files found.'); await __cleanupAndExit(ctx, 0); return; }
+        ids = migrationsAssembly.migrationIds;
+        if (!ids.length) { console.log(`No migration files found for '${contextFileName}' in ${plan.migBase}.`); await __cleanupAndExit(ctx, 0); return; }
       } else {
-        ids = [path.basename(migrationName)];
+        // Resolves a full id, a file name or the bare name, and throws listing the
+        // context's known migrations if it owns no such migration (EF:
+        // MigrationsAssemblyExtensions.GetMigrationId).
+        ids = [migrationsAssembly.getMigrationId(path.basename(migrationName))];
       }
 
       let recorded = 0;

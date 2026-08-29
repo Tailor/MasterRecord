@@ -1,5 +1,38 @@
 # MasterRecord Changelog
 
+## v1.30.1 — `baseline` is scoped to one context, as everything in EF is
+
+**Data-corrupting bug.** `baseline <ctx> --all` globbed `**/*_migration.js` from the working
+directory and recorded **every context's migrations into the one target context's history
+table**. In a repo with several contexts that meant a context could end up with 141 history
+rows for 8 real migrations, listing migrations owned by entirely unrelated contexts.
+
+This was a divergence from EF, which never searches the filesystem for migrations: EF
+resolves them by *ownership* — `IMigrationsAssembly.Migrations` contains only the migrations
+whose `[DbContext(typeof(T))]` matches the context being operated on, so another context's
+migration is simply not visible. `baseline` now resolves through the context's own snapshot
+and migration folder via `MigrationsAssembly`, the same path every other command already
+used; it was the only command still globbing from the working directory.
+
+- `baseline <ctx> --all` records only the migrations that context owns.
+- `baseline <ctx> <name>` resolves the name through `MigrationsAssembly.getMigrationId()`
+  (EF's `MigrationsAssemblyExtensions.GetMigrationId`), so a full id, a file name or the
+  bare name all work — and a migration the context does not own is refused with the list of
+  the ones it does own, instead of being silently written into its history.
+- Removed the unused `__buildSnapshot()` helper, which derived `latestMigration` from the
+  history table. 1.30.0 made snapshot writing authoring-only, which orphaned it; with a
+  polluted history it could have reported a foreign migration as a context's latest.
+
+**Repairing an already-polluted history.** Upgrading stops new pollution but does not remove
+rows already written. For each affected context, delete the history rows naming migrations
+that are not in its own migrations folder, then confirm with `masterrecord migrations-status
+<ctx>` — it reports recorded-but-missing files, which is exactly what the foreign rows look
+like.
+
+New tests: `test/baseline-context-scoped.test.js` — a two-context repo proves `--all` records
+only the named context's migrations, that a foreign migration is refused by name and nothing
+is written on failure, and that a baselined migration is not replayed by `update-database`.
+
 ## v1.30.0 — the snapshot belongs to authoring, as in EF Core (migrations now replay from empty)
 
 **Behaviour change. Read this before upgrading a project with existing migrations.**
