@@ -25,6 +25,7 @@ import deleteManager from './deleteManager.js';
 import EntityTrackerModel from './Entity/entityTrackerModel.js';
 import { ConcurrencyError } from './errors.js';
 import { withRetry } from './resilience.js';
+import { log } from './logging.js';
 import { globSync } from 'glob';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -532,13 +533,13 @@ class context {
                     const result = await cached.promise;
                     this._SQLEngine = result.engine;
                     this.isMySQL = true;
-                    console.log(`[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                    log('debug', `[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
                     return result.client;
                 }
                 // Already resolved
                 this._SQLEngine = cached.engine;
                 this.isMySQL = true;
-                console.log(`[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                log('debug', `[MySQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
                 return cached.client;
             }
 
@@ -644,13 +645,13 @@ class context {
                     const result = await cached.promise;
                     this._SQLEngine = result.engine;
                     this._SQLEngine.__name = sqlName;
-                    console.log(`[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                    log('debug', `[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
                     return result.pool;
                 }
                 // Already resolved
                 this._SQLEngine = cached.engine;
                 this._SQLEngine.__name = sqlName;
-                console.log(`[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
+                log('debug', `[PostgreSQL] Reusing pool for ${env.database} (refs: ${cached.refCount})`);
                 return cached.pool;
             }
 

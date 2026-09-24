@@ -1,5 +1,20 @@
 # MasterRecord Changelog
 
+## v1.30.2 — pool reuse is a debug message
+
+Every context a server constructs reuses the process's connection pool, and each
+reuse printed `[PostgreSQL] Reusing pool for <db> (refs: N)` (or `[MySQL] …`) with
+`console.log`, whatever the log level. A long-running server writes thousands of
+these a minute. In CodeBook's production log they buried the one line that said
+why a deploy was failing.
+
+Reuse now goes through the logger at `debug`, so it is hidden at the default
+`info` level and visible with `configureLogging({ level: 'debug' })`. Creating a
+pool, which happens once per process, is logged as before. Nothing else changed:
+the refcount is unchanged and still only decides when an idle pool may close.
+
+New test: `test/pool-reuse-log-level.test.js`.
+
 ## v1.30.1 — `baseline` is scoped to one context, as everything in EF is
 
 **Data-corrupting bug.** `baseline <ctx> --all` globbed `**/*_migration.js` from the working
