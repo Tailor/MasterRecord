@@ -207,24 +207,27 @@ npm install masterrecord better-sqlite3  # SQLite
 MasterRecord includes the following database drivers by default:
 - `pg@^8.22.0` - PostgreSQL (async)
 - `mysql2@^3.23.2` - MySQL (async with connection pooling)
-- `better-sqlite3@^13.0.2` - SQLite (async API wrapper for consistency)
+- `better-sqlite3@^13.0.3` - SQLite (async API wrapper for consistency)
 
-### npm v12+ install note (native SQLite build)
+### npm install-script note (native SQLite build)
 
-`better-sqlite3` is a native module — it runs a `node-gyp` build in its install
-script. As of **npm v12**, dependency lifecycle scripts (`preinstall` / `install` /
-`postinstall`) are **off by default** (`allowScripts` is opt-in). If you install
-MasterRecord with npm v12+ and SQLite fails to load with a "did not self-register"
-or missing-binding error, approve the build scripts once:
+npm 12 (and the npm 11.19+ bundled with Node 24.22) **blocks dependency install
+scripts by default** and lists them under `npm install-scripts ls`.
+`better-sqlite3@13` ships prebuilt N-API binaries for macOS, Linux (glibc and musl)
+and Windows on x64 and arm64, so SQLite loads without its install script running and
+there is nothing to approve on those platforms. npm still lists it, because the
+package carries a `binding.gyp`; record the decision once so the notice goes away:
 
 ```bash
-npm approve-scripts --allow-scripts-pending   # review, then approve the trusted build scripts
-# commit the resulting allowlist in your package.json
+npm install-scripts deny better-sqlite3      # prebuilt binary is enough
+# or, on a platform with no prebuilt binary (it will compile from source):
+npm install-scripts approve better-sqlite3
 ```
 
-Older npm (≤11) builds native modules automatically and needs no action. If you
-only use MySQL or Postgres, you can drop `better-sqlite3` entirely and this doesn't
-apply.
+Either command writes `allowScripts` into your `package.json`; commit it. If SQLite
+fails to load with a "did not self-register" or missing-binding error, you are on a
+platform without a prebuilt binary — approve the script. If you only use MySQL or
+Postgres, you can drop `better-sqlite3` entirely and this doesn't apply.
 
 ## Two Patterns: Entity Framework & Active Record
 

@@ -1,5 +1,33 @@
 # MasterRecord Changelog
 
+## v1.31.0 — security maintenance: Node 22.12+, patched SQLite, clean audit
+
+Node 20 reached end-of-life on 2026-04-30 and no longer receives security releases,
+so this release stops claiming it. No API changes.
+
+- **`engines.node` is now `>=22.12.0`.** The `>=20` claim was not backed by anything:
+  CI has only run Node 22 and 24, and `better-sqlite3@13` (which the old range already
+  resolved to) declares `node >=22`. The README and the docs site have said 22.12+ since
+  1.2x; `package.json` now agrees with them. CI runs Node 22, 24 and 26. Use a current
+  patch release of your line — the 2026-10-20 Node.js security releases are 22.23.4,
+  24.22.1 and 26.12.1.
+- **`better-sqlite3` floor raised to `^13.0.3`** (was `>=12.6.2 <14`). 13.0.2 bundles
+  SQLite 3.53.4 and fixes table-parameter validation; 12.x bundled an older SQLite.
+  13.x ships prebuilt N-API binaries, so SQLite loads even when npm blocks dependency
+  install scripts (see the README's install note).
+- **`npm audit`: 0 vulnerabilities.** The lockfile now resolves `brace-expansion@5.0.12`
+  (GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p — DoS via crafted brace
+  patterns), reached through `glob` → `minimatch`. Consumers get the fixed version from
+  the existing `^` ranges on a fresh install; `npm update` picks it up in an existing app.
+  `mysql2` 3.24.6 and `pg` 8.23.1 are in the lockfile; their ranges are unchanged.
+- **CI actions moved off the Node 20 runtime:** `actions/checkout@v6`,
+  `actions/setup-node@v5`.
+- `update-database` no longer prints `💾 Updating snapshot...`. Since 1.30.0 it does not
+  write the snapshot (EF semantics); the message was left behind and said otherwise.
+
+Verified: full suite (440 pass, 22 live-DB tests skipped) on Node 22.23.4, 24.22.1 and
+26.12.1.
+
 ## v1.30.2 — pool reuse is a debug message
 
 Every context a server constructs reuses the process's connection pool, and each
