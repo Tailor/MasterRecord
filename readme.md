@@ -207,27 +207,30 @@ npm install masterrecord better-sqlite3  # SQLite
 MasterRecord includes the following database drivers by default:
 - `pg@^8.22.0` - PostgreSQL (async)
 - `mysql2@^3.23.2` - MySQL (async with connection pooling)
-- `better-sqlite3@^13.0.3` - SQLite (async API wrapper for consistency)
+- `better-sqlite3@>=12.6.2 <14` - SQLite (async API wrapper for consistency; an app-pinned 12.x is shared)
 
 ### npm install-script note (native SQLite build)
 
-npm 12 (and the npm 11.19+ bundled with Node 24.22) **blocks dependency install
-scripts by default** and lists them under `npm install-scripts ls`.
-`better-sqlite3@13` ships prebuilt N-API binaries for macOS, Linux (glibc and musl)
-and Windows on x64 and arm64, so SQLite loads without its install script running and
-there is nothing to approve on those platforms. npm still lists it, because the
-package carries a `binding.gyp`; record the decision once so the notice goes away:
+How `better-sqlite3` gets its native binary depends on its major version and your npm:
+
+| | npm 10 / 11 (Node 20–24) | npm 12 |
+|---|---|---|
+| **13.x** (what a fresh install gets) | runs `node-gyp rebuild` — needs `python3`, `make` and `g++` in the build image | script blocked by default; the bundled prebuilt binary is used — nothing to approve |
+| **12.x** (if your app pins it) | runs its install script, which downloads a prebuilt binary — no compiler needed | script blocked by default — **approve it**, or SQLite fails with "Could not locate the bindings file" |
+
+npm 11 runs dependency install scripts but lists them with a notice; npm 12 blocks
+them unless your `package.json` `allowScripts` allows them. Record the decision once:
 
 ```bash
-npm install-scripts deny better-sqlite3      # prebuilt binary is enough
-# or, on a platform with no prebuilt binary (it will compile from source):
-npm install-scripts approve better-sqlite3
+npm install-scripts deny better-sqlite3      # on 13.x: the bundled binary is enough
+npm install-scripts approve better-sqlite3   # on 12.x, or on a platform with no prebuilt binary
 ```
 
-Either command writes `allowScripts` into your `package.json`; commit it. If SQLite
-fails to load with a "did not self-register" or missing-binding error, you are on a
-platform without a prebuilt binary — approve the script. If you only use MySQL or
-Postgres, you can drop `better-sqlite3` entirely and this doesn't apply.
+Either command writes `allowScripts` into your `package.json`; commit it. On a slim
+Docker or Nixpacks image with npm 10/11 and no Python, pin `better-sqlite3@^12.6.2`
+in your app — masterrecord accepts `>=12.6.2 <14` and shares your copy, so nothing
+compiles. If you only use MySQL or Postgres, you can drop `better-sqlite3` entirely and
+this doesn't apply.
 
 ## Two Patterns: Entity Framework & Active Record
 
