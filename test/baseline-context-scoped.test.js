@@ -25,6 +25,9 @@ const run = (args, cwd) => spawnSync(process.execPath, [cli, ...args], { cwd, en
 
 /** Two independent contexts in one repo, each with its own models + migrations folder. */
 function twoContextProject() {
+    // test/fixtures is git-ignored and made by other test files as they run; on a clean
+    // checkout this file can run first, and mkdtemp does not create parents.
+    fs.mkdirSync(path.join(root, 'test', 'fixtures'), { recursive: true });
     const dir = fs.mkdtempSync(path.join(root, 'test', 'fixtures', 'baseline-scope-'));
     fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
     fs.symlinkSync(root, path.join(dir, 'node_modules', 'masterrecord'), 'dir');

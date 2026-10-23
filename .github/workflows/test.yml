@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: [22, 24, 26]
 
     # CI runs the SQLite unit suite only. The cross-engine MySQL/Postgres
     # integration tests (test/integration/cross-engine.test.js) are gated on
@@ -21,9 +21,9 @@ jobs:
     # they don't run here (no service containers spun up). To exercise them
     # locally, start a MySQL/Postgres and set those env vars before `npm test`.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm

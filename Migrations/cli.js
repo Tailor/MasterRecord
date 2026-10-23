@@ -586,7 +586,6 @@ program.hook('preAction', () => {
            await __cleanupAndExit(contextInstance, 1);
          }
 
-         console.log(`\n💾 Updating snapshot...`);
          // EF: applying migrations does NOT touch the snapshot — only the history table.
          console.log(`\n✅ Database updated successfully!`);
 
