@@ -1,5 +1,27 @@
 # MasterRecord Changelog
 
+## v1.31.1 — better-sqlite3 range back to `>=12.6.2 <14`
+
+**Fix for a build break introduced in 1.31.0.** 1.31.0 raised the floor to
+`better-sqlite3@^13.0.3`. An app that pins `better-sqlite3@12` itself could then no longer
+share its copy: npm installed a second, nested 13.x under `masterrecord/node_modules`. npm 10
+(bundled with Node 20 and 22) runs `node-gyp rebuild` for that copy, which needs Python and
+a compiler, so builds on slim images failed (`gyp ERR! find Python`). Three production apps
+built with Nixpacks hit exactly this.
+
+- The range is `>=12.6.2 <14` again, as in 1.30: npm shares an app-pinned 12.x, and a fresh
+  install still gets 13.x. 12.6.2+ ships prebuilt binaries for Node 22 and 24 (12.11.1 also
+  for Node 26), so no compiler is needed on either line.
+- New test `test/better-sqlite3-range.test.js` keeps the range from being narrowed again.
+  The full suite also passes against `better-sqlite3@12.11.1` (SQLite 3.53.2).
+- README install note corrected: 1.31.0 said npm 11.19+ blocks dependency install scripts.
+  Only npm 12 does; npm 11 runs them with a notice. The note now has a table for 12.x vs
+  13.x on npm 10/11 vs 12 — `deny` is only right on 13.x, and a pinned 12.x must be
+  approved under npm 12.
+
+Engines stay at `>=22.12.0`. If you are on 1.31.0 with a pinned `better-sqlite3@12`, upgrade
+and re-lock: `npm install masterrecord@^1.31.1` leaves one copy in the lockfile.
+
 ## v1.31.0 — security maintenance: Node 22.12+, patched SQLite, clean audit
 
 Node 20 reached end-of-life on 2026-04-30 and no longer receives security releases,
