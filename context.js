@@ -23,6 +23,7 @@ import MySQLEngine from './mySQLEngine.js';
 import insertManager from './insertManager.js';
 import deleteManager from './deleteManager.js';
 import EntityTrackerModel from './Entity/entityTrackerModel.js';
+import FieldTransformer from './Entity/fieldTransformer.js';
 import { ConcurrencyError } from './errors.js';
 import { withRetry } from './resilience.js';
 import { log } from './logging.js';
@@ -135,6 +136,73 @@ function _poolKey(type, cfg) {
     }
     return key;
 }
+
+// ----------------------------------------------------------------------------
+// Identity resolution (EF Core's identity map keyed by primary key)
+// ----------------------------------------------------------------------------
+// A tracked query that reads a row this context already tracks returns the
+// tracked instance instead of building a second copy. The key is
+// "<table>\0<primary key>". Without it a long-lived context that re-reads the
+// same rows kept a new tracked copy per read, so memory grew with the number of
+// reads instead of the number of distinct rows.
+
+// Entity definition -> its primary-key column names, or null when the type
+// cannot be keyed (no key, or a key column that is a navigation).
+const _identityColumnsCache = new WeakMap();
+
+function _identityColumns(def) {
+    let cols = _identityColumnsCache.get(def);
+    if (cols !== undefined) return cols;
+    cols = tools.primaryKeys(def);
+    if (cols.length === 0 || cols.some(k => def[k].relationshipType === 'belongsTo')) cols = null;
+    _identityColumnsCache.set(def, cols);
+    return cols;
+}
+
+// One key column value as a string, or null when it cannot identify a row
+// (unset, or a type with no reliable string form). Numbers and numeric strings
+// map to the same text on purpose: Postgres returns BIGINT as "5" where the app
+// assigned 5, and both name the same row. A column holds one type, so this
+// cannot make two different rows equal.
+function _identityPart(v) {
+    switch (typeof v) {
+        case 'string': return v === '' ? null : v;
+        case 'number': return Number.isFinite(v) ? String(v) : null;
+        case 'bigint': return String(v);
+        case 'boolean': return v ? 'true' : 'false';
+        case 'object':
+            if (v === null) return null;
+            if (v instanceof Date) { const t = v.getTime(); return Number.isNaN(t) ? null : `\u0001d${t}`; }
+            if (ArrayBuffer.isView(v)) return `\u0001x${Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString('hex')}`;
+            return null;
+        default: return null;
+    }
+}
+
+// Identity key for one row of `def`. `read(column)` returns that column's value
+// in its in-memory form. null = this row cannot be identity-resolved.
+function _identityKey(def, read) {
+    const cols = def ? _identityColumns(def) : null;
+    if (!cols) return null;
+    if (cols.length === 1) {
+        const p = _identityPart(read(cols[0]));
+        return p === null ? null : `${def.__name}\u0000${p}`;
+    }
+    const parts = new Array(cols.length);
+    for (let i = 0; i < cols.length; i++) {
+        const p = _identityPart(read(cols[i]));
+        if (p === null) return null;
+        parts[i] = p;
+    }
+    return `${def.__name}\u0000${JSON.stringify(parts)}`;
+}
+
+/**
+ * Default size of a context's tracked set at which a one-time warning is
+ * logged. Override per context with setTrackedEntityWarningThreshold(n), or
+ * process-wide with MASTERRECORD_TRACKED_WARN_THRESHOLD=<n>; 0 turns it off.
+ */
+const DEFAULT_TRACKED_WARN_THRESHOLD = 10000;
 
 // ============================================================================
 // CONSTANTS - Extract all magic numbers for maintainability
@@ -257,6 +325,17 @@ class context {
     // writes whenever the two disagreed (a stale/colliding id in one but not the
     // other). All mutations go through __track / __untrack / __clearTracked.
     __trackedEntitiesMap = new Map();  // __ID -> entity; the authority
+    // Identity index beside the map: "<table>\0<primary key>" -> the one tracked
+    // instance of that row, so a tracked query returns it instead of a new copy.
+    // __identityKeys remembers which key each entity was indexed under, so it can
+    // be removed even after its key value changed. Both are kept in step by
+    // __track / __untrack / __clearTracked; a stale entry is also dropped when a
+    // lookup finds it (see __trackedForRow).
+    __identityIndex = new Map();
+    __identityKeys = new WeakMap();
+    // One-time "tracked set is large" warning (see __checkTrackedSize).
+    __trackedWarnThreshold = undefined;   // undefined = not resolved yet
+    __trackedWarned = false;
     // Default query tracking behavior, EF-style (QueryTrackingBehavior).
     // 'track'  — queries track their results (edits persist); the default.
     // 'no-track' — queries do NOT track (read-only; nothing retained). Set once
@@ -1942,23 +2021,48 @@ class context {
         const uniq = (arr) => [...new Set(arr.filter(v => v !== undefined && v !== null && typeof v !== 'function'))];
         const loadedOut = [];
         const pending = [];
+        // opts.run (one per query): the parents whose `nav` this query has
+        // already loaded. With identity resolution a query can return an
+        // instance whose navigation an EARLIER query loaded (with other filters);
+        // an explicit include() reloads it, so the result reflects this query.
+        let loadedThisRun = null;
+        if (opts.run instanceof Map) {
+            const runKey = `${ownerDef.__name}.${nav}`;
+            loadedThisRun = opts.run.get(runKey);
+            if (!loadedThisRun) { loadedThisRun = new WeakSet(); opts.run.set(runKey, loadedThisRun); }
+        }
+        const reloading = new Set();   // pending parents whose nav an earlier query loaded
         for (const p of list) {
-            if (this.isNavigationLoaded(p, nav)) {
+            const loaded = this.isNavigationLoaded(p, nav);
+            if (loaded && (!loadedThisRun || loadedThisRun.has(p))) {
                 const v = slotOf(p)['_' + nav];
                 if (Array.isArray(v)) loadedOut.push(...v); else if (v && typeof v === 'object') loadedOut.push(v);
-            } else pending.push(p);
+            } else {
+                pending.push(p);
+                if (loaded) reloading.add(p);
+            }
         }
+        if (loadedThisRun) for (const p of pending) loadedThisRun.add(p);
         if (!pending.length) return loadedOut;
 
         if (isBt) {
             const parentSet = this._dbsetByName(def.foreignTable);
             if (!parentSet) throw new Error(`masterrecord: entity '${def.foreignTable}' (referenced by ${ownerDef.__name}.${nav}) is not registered on this context.`);
             const pk = tools.getPrimaryKeyObject(parentSet.__entity) || 'id';
-            const keys = uniq(pending.map(p => tools.foreignKeyValue(p, nav)));
+            // On a reload the navigation slot holds the earlier result (null when
+            // that query's filters hid the parent), so read the FK column itself.
+            const fkOf = (p) => {
+                if (reloading.has(p) && def.foreignKey) {
+                    const fk = tools.dataValue(p, def.foreignKey);
+                    if (fk === null || (fk !== undefined && typeof fk !== 'object' && typeof fk !== 'function')) return fk;
+                }
+                return tools.foreignKeyValue(p, nav);
+            };
+            const keys = uniq(pending.map(fkOf));
             const byKey = new Map();
             for (const c of chunks(keys)) for (const t of await withFilters(parentSet).where(`r => $$.includes(r.${pk})`, c).toList()) byKey.set(String(tools.dataValue(t, pk)), t);
             for (const p of pending) {
-                const k = tools.foreignKeyValue(p, nav);
+                const k = fkOf(p);
                 const t = (k === undefined || k === null) ? null : (byKey.get(String(k)) || null);
                 setSlot(p, t);
                 if (t) loadedOut.push(t);
@@ -2865,6 +2969,11 @@ class context {
             } catch (attachErr) {
                 console.error(`[Context] Could not attach change-tracking to inserted ${entity.__name || 'entity'}: ${attachErr.message}`);
             }
+            // The INSERT may have just assigned the key (auto-increment, read
+            // back). Index the entity under it while it is still tracked.
+            if (entity.__ID != null && this.__trackedEntitiesMap.get(entity.__ID) === entity) {
+                this.__indexIdentity(entity);
+            }
         }
     }
 
@@ -3566,6 +3675,7 @@ class context {
             if (!e) continue;
             if (e.__ID != null) this.__trackedEntitiesMap.delete(e.__ID);
             this.__dirtyEntities.delete(e);   // keep the dirty index in lockstep
+            this.__unindexIdentity(e);        // and the identity index
         }
     }
 
@@ -4055,6 +4165,7 @@ class context {
         if (previous && previous !== this && entity.__ID &&
             previous.__trackedEntitiesMap && previous.__trackedEntitiesMap.has(entity.__ID)) {
             previous.__trackedEntitiesMap.delete(entity.__ID);  // list view follows the map
+            if (typeof previous.__unindexIdentity === 'function') previous.__unindexIdentity(entity);
         }
 
         // Mark entity as modified
@@ -4197,7 +4308,14 @@ class context {
         // the list view derives from it, so they cannot desynchronise.
         const wasTracked = this.__trackedEntitiesMap.has(model.__ID);
         this.__trackedEntitiesMap.set(model.__ID, model);
-        if (!wasTracked) this._emit('tracked', { context: this, entity: model });
+        // Every path that tracks or re-tracks an entity (queries, setters,
+        // add/remove, attach) comes through here, so this also picks up a key
+        // that was assigned after the entity was first tracked.
+        this.__indexIdentity(model);
+        if (!wasTracked) {
+            this._emit('tracked', { context: this, entity: model });
+            this.__checkTrackedSize();
+        }
         // Robustness: if the entity being tracked is ALREADY dirty, enqueue it in
         // the dirty index too. This guarantees the index is complete no matter
         // how an entity gets tracked (setter, add/remove, or a direct __track
@@ -4253,6 +4371,129 @@ class context {
     __clearTracked() {
         this.__trackedEntitiesMap.clear();  // sole registry; the list view follows
         this.__dirtyEntities.clear();
+        this.__identityIndex.clear();
+        this.__identityKeys = new WeakMap();
+    }
+
+    // ---- Identity resolution ------------------------------------------------
+
+    /**
+     * Index a tracked entity under its type + primary key, so a later tracked
+     * query that reads the same row returns this instance. Called from
+     * __track(). An entity with no usable key yet (a pending insert with an
+     * auto key) is skipped, and indexed once its key is assigned.
+     *
+     * A context can still end up tracking two instances of one row: saved
+     * entities are detached, and a later edit re-tracks the old instance while a
+     * newer query copy is tracked. Then the instance with pending changes takes
+     * the key from a clean holder, so once it is saved (and detached) the next
+     * query reads the row afresh instead of returning the stale clean copy.
+     * Otherwise the instance that already holds the key keeps it.
+     * @private
+     */
+    __indexIdentity(model) {
+        if (!model || !model.__entity) return;
+        const key = (model.__noTracking || model.__noIdentity)
+            ? null
+            : _identityKey(model.__entity, (c) => tools.dataValue(model, c));
+        const prev = this.__identityKeys.get(model);
+        if (prev !== undefined && prev !== key) this.__unindexIdentity(model);
+        if (key === null) return;
+        const holder = this.__identityIndex.get(key);
+        if (holder !== undefined && holder !== model && this.__isLiveIdentity(holder, key)) {
+            const modelDirty = context._isEntityDirty(model);
+            if (!modelDirty || context._isEntityDirty(holder)) return;
+            this.__identityKeys.delete(holder);   // the clean copy stays tracked, unindexed
+        }
+        this.__identityIndex.set(key, model);
+        this.__identityKeys.set(model, key);
+    }
+
+    /** Remove an entity from the identity index (it stays tracked). @private */
+    __unindexIdentity(model) {
+        if (!model || typeof model !== 'object') return;
+        const key = this.__identityKeys.get(model);
+        if (key === undefined) return;
+        if (this.__identityIndex.get(key) === model) this.__identityIndex.delete(key);
+        this.__identityKeys.delete(model);
+    }
+
+    /** Is `e` still tracked here and does its current key still equal `key`? @private */
+    __isLiveIdentity(e, key) {
+        return e.__ID != null
+            && this.__trackedEntitiesMap.get(e.__ID) === e
+            && !e.__noTracking
+            && _identityKey(e.__entity, (c) => tools.dataValue(e, c)) === key;
+    }
+
+    /**
+     * The tracked instance of the row `row` (a raw database row of `def`), or
+     * null. Used by tracked queries before they build a new entity. The tracked
+     * instance is returned as is: database values do not overwrite it, and a
+     * modified instance keeps its pending changes (EF Core identity resolution).
+     * @private
+     */
+    __trackedForRow(def, row) {
+        if (this.__identityIndex.size === 0 || !row) return null;
+        let key;
+        try {
+            key = _identityKey(def, (c) => FieldTransformer.fromDatabase(row[c], def[c], def.__name, c));
+        } catch (_) {
+            return null;   // a failing transformer: let the normal build path report it
+        }
+        if (key === null) return null;
+        const e = this.__identityIndex.get(key);
+        if (e === undefined) return null;
+        if (this.__isLiveIdentity(e, key)) return e;
+        // Stale entry (detached elsewhere, or its key changed): drop it.
+        this.__identityIndex.delete(key);
+        this.__identityKeys.delete(e);
+        return null;
+    }
+
+    /**
+     * Log a warning, once per context, when the tracked set reaches the
+     * threshold. A context that keeps growing past this is usually a long-lived
+     * context used for reads.
+     * @private
+     */
+    __checkTrackedSize() {
+        if (this.__trackedWarned) return;
+        let threshold = this.__trackedWarnThreshold;
+        if (threshold === undefined) {
+            const env = process.env.MASTERRECORD_TRACKED_WARN_THRESHOLD;
+            const n = env === undefined || env === '' ? NaN : Number(env);
+            threshold = Number.isFinite(n) && n >= 0 ? n : DEFAULT_TRACKED_WARN_THRESHOLD;
+            this.__trackedWarnThreshold = threshold;
+        }
+        if (!threshold || this.__trackedEntitiesMap.size < threshold) return;
+        this.__trackedWarned = true;
+        log('warn',
+            `[masterrecord] WARNING: context '${this.__name}' is tracking ${this.__trackedEntitiesMap.size} entities ` +
+            `(warning threshold ${threshold}). Every entity a tracked query returns stays in memory until it is ` +
+            `saved, detached or the context is closed. If this context lives for the whole process, read with ` +
+            `asNoTracking() (or setQueryTrackingBehavior('no-track') on the context), call clearChangeTracker() ` +
+            `after read-only work, or create a context per request / unit of work (ContextPool). ` +
+            `Change the threshold with setTrackedEntityWarningThreshold(n) or ` +
+            `MASTERRECORD_TRACKED_WARN_THRESHOLD=<n>; 0 turns the warning off.`
+        );
+    }
+
+    /**
+     * Set the tracked-set size at which this context logs its one-time
+     * "tracking many entities" warning (default 10,000, or
+     * MASTERRECORD_TRACKED_WARN_THRESHOLD). 0, null or false turns it off.
+     * Setting it re-arms the warning.
+     */
+    setTrackedEntityWarningThreshold(n) {
+        if (n === null || n === false) n = 0;
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+            throw new TypeError(`masterrecord: setTrackedEntityWarningThreshold expects a non-negative number, got ${JSON.stringify(n)}`);
+        }
+        this.__trackedWarnThreshold = n;
+        this.__trackedWarned = false;
+        this.__checkTrackedSize();
+        return this;
     }
 
     /**
@@ -4261,7 +4502,8 @@ class context {
      *
      * A context is a unit of work and is safest scoped per request. If you must
      * reuse a long-lived (e.g. singleton) context, read-only queries still
-     * auto-track their results, and those clean entities accumulate — call this
+     * auto-track their results: one instance per distinct row (identity
+     * resolution), which still grows with every new row read — call this
      * after a read-only operation to release them and keep the tracked set
      * bounded. It drops PENDING changes too, so only call it when there is
      * nothing dirty you still intend to save.

@@ -324,11 +324,21 @@ class queryMethods{
         }
     }
 
+    /**
+     * Can this query's rows be identity-resolved? Only when each row is a whole
+     * entity row: not raw() SQL, not a select() projection (a partial row must
+     * not stand in for the entity later), and not a full-text search (each row
+     * carries a per-query __rank).
+     */
+    __identityResolvable(){
+        const s = this.__queryObject.script;
+        return !this.__noTracking && !s.raw && !s.select && !s.search;
+    }
+
     // build a single entity
-    __singleEntityBuilder(dataModel){
+    __singleEntityBuilder(dataModel, resolvable = this.__identityResolvable()){
         const $that = this;
         if(dataModel){
-            const ent = new entityTrackerModel();
             // TPH: materialize the row as its DERIVED type when the discriminator
             // names one (EF returns Cat/Dog instances from the Animal set).
             let def = $that.__entity;
@@ -337,6 +347,14 @@ class queryMethods{
                 const derived = tph.derived.get(String(dataModel[tph.column]));
                 if (derived) def = derived;
             }
+            // Identity resolution (EF Core): if this context already tracks the
+            // row, return that instance. It is NOT refreshed from the row, so
+            // pending changes on it are kept.
+            if (resolvable) {
+                const tracked = $that.__context.__trackedForRow(def, dataModel);
+                if (tracked) return tracked;
+            }
+            const ent = new entityTrackerModel();
             const mod = ent.build(dataModel, def, $that.__context);
             mod.__state = "track";
             if ($that.__noTracking) {
@@ -344,6 +362,12 @@ class queryMethods{
                 // (__markDirty ignores no-tracking entities) and never track it.
                 mod.__noTracking = true;
             } else {
+                if (!resolvable) {
+                    // Projection / raw / search row: tracked as before, but kept
+                    // out of the identity index so it never stands in for the
+                    // whole entity.
+                    Object.defineProperty(mod, '__noIdentity', { value: true, enumerable: false, writable: true, configurable: true });
+                }
                 $that.__context.__track(mod);
             }
             return mod;
@@ -357,8 +381,9 @@ class queryMethods{
         const $that = this;
         const listArray = [];
         if(entityValue){
+            const resolvable = $that.__identityResolvable();
             for(let i = 0; i < entityValue.length; i++){
-                listArray.push($that.__singleEntityBuilder(entityValue[i]));
+                listArray.push($that.__singleEntityBuilder(entityValue[i], resolvable));
              }
              return listArray;
         }else{
@@ -625,10 +650,11 @@ class queryMethods{
         if (!paths || !paths.length) return;
         const roots = Array.isArray(result) ? result : (result ? [result] : []);
         if (!roots.length) return;
+        const run = new Map();   // navigations this query has loaded (see __batchLoadNavigation)
         for (const path of paths) {
             let level = roots;
             for (const nav of path) {
-                level = await this.__context.__batchLoadNavigation(level, nav, { ignoredFilters: this.__ignoredFilters });
+                level = await this.__context.__batchLoadNavigation(level, nav, { ignoredFilters: this.__ignoredFilters, run });
                 if (!level.length) break;
             }
         }
@@ -1398,7 +1424,9 @@ class queryMethods{
 
             // Fetch fresh from database
             const EntityClass = this.__context[this.__name];
-            const fresh = await EntityClass.findById(primaryKeyValue);
+            // No tracking: a tracked findById would return THIS instance
+            // (identity resolution), not the database values.
+            const fresh = await EntityClass.asNoTracking().findById(primaryKeyValue);
             if (!fresh) {
                 throw new Error(
                     `Cannot reload: ${this.__name} with ${primaryKey}=${primaryKeyValue} not found`
@@ -1428,11 +1456,6 @@ class queryMethods{
             if (typeof this.__context._refreshOriginalValues === 'function') {
                 this.__context._refreshOriginalValues(this);
             }
-            // Drop the duplicate instance findById tracked (one copy per row).
-            if (typeof this.__context.__untrack === 'function') {
-                this.__context.__untrack([fresh]);
-            }
-
             return this;
         };
 
