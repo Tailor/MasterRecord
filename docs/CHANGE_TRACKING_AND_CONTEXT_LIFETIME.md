@@ -19,6 +19,23 @@ user.blocked = 1;                                                 // dirty
 await db.saveChanges();                                           // one UPDATE
 ```
 
+### Identity resolution (since 1.32.0)
+
+A context tracks **one instance per row**. When a tracked query reads a row the context already tracks (same entity type and primary key, composite keys included), it returns the tracked instance instead of building a new one, as EF Core does:
+
+- The tracked instance is **not** overwritten with the database values. Pending changes on it survive a re-read; unchanged columns keep the values they had when the row was first loaded. Use `asNoTracking()`, `entry(e).getDatabaseValues()` or `reload()` to see the current row.
+- A long-lived context's memory is bounded by the number of **distinct** rows it has loaded, not by how many times it re-reads them.
+- An explicit `include()` still loads the navigation for every row the query returns, including instances an earlier query loaded.
+- `select()` projections, `raw()` SQL and full-text `search()` rows are tracked as before but never identity-resolved: a partial row never stands in for the whole entity.
+
+```javascript
+const a = await db.User.findById(1);
+a.name = 'pending';
+const b = await db.User.where('u => u.id == $$', 1).single();
+b === a;          // true
+b.name;           // 'pending': the re-read did not overwrite it
+```
+
 ---
 
 ## Controlling what gets tracked (EF's `QueryTrackingBehavior`)
@@ -60,6 +77,8 @@ If you set a `no-track` default on a shared/long-lived context, remember every w
 | `(await post.tags).add(tag)` / `.remove(tag)`, `ctx.entry(post).collection('tags')` | `Collection(n).Add/Remove` | `db.manyToMany('Tag')` synthesizes the join entity (EF skip navigation); add tracks a join row (new targets inserted first), remove schedules its DELETE; hasMany add sets the child FK. Persisted by `saveChanges()`. |
 
 `clearChangeTracker()` drops pending changes, so on a shared context it can destroy another in-flight request's writes — it is not a safe per-request mitigation. Use request-scoped contexts or `asNoTracking()` instead.
+
+**Large tracked sets are reported once.** When a context's tracked set reaches 10,000 entities it logs one warning (through `configureLogging`'s logger) naming `asNoTracking()`, `clearChangeTracker()` and per-request contexts. Change the threshold per context with `context.setTrackedEntityWarningThreshold(n)` or process-wide with `MASTERRECORD_TRACKED_WARN_THRESHOLD=<n>`; `0` turns it off.
 
 ---
 
@@ -249,7 +268,7 @@ Transient errors (deadlocks, lock timeouts, busy SQLite, dropped connections) ar
 A singleton context shared across concurrent requests is the root cause of an entire class of bugs (and is unsupported in EF for the same reasons):
 
 - **Lost writes** — one request's `saveChanges()` interacting with another's tracked entities.
-- **Unbounded memory** — read-only queries track results that are never released.
+- **Unbounded memory** — read-only queries track results that are never released. Identity resolution bounds this by the number of distinct rows, but a singleton that reads a large or growing table still keeps every row it has seen.
 - **Undefined behavior** under concurrent access (EF: "application crashes and data corruption").
 
 MasterRecord hardens against the worst symptoms (each save commits only its own change set; identities are collision-free; the dirty index is complete), but the correct and supported model is a **per-request context** — pooled if you need to amortize setup.

@@ -1,5 +1,5 @@
 /**
- * Multi-row bulkInsert keeps add order on MySQL and Postgres (1.31.2).
+ * Multi-row bulkInsert keeps add order on MySQL and Postgres (1.32.1).
  *
  * A multi-value INSERT can only serve rows with the same column list, so a
  * batch with different optional columns needs several statements. Pooling every

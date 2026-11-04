@@ -1,6 +1,6 @@
 # MasterRecord Changelog
 
-## v1.31.2 — batched inserts keep add order on MySQL and Postgres
+## v1.32.1 — batched inserts keep add order on MySQL and Postgres
 
 **Fix: `saveChanges()` could assign ids out of add order on MySQL and Postgres.** A
 multi-row INSERT can only serve rows with the same column list, and since 1.3.1 `bulkInsert`
@@ -26,6 +26,60 @@ inherited key then surfaced as a column on MySQL (`Unknown column 'ran.operator'
 later test in the file. The suite now sets the entity's own slot. Its check that a batch does
 not fall back to per-row inserts looked for a log message that no longer exists, so it could
 never fail; it now matches, and the `.set()` batch test makes the same check.
+
+## v1.32.0 — identity resolution: one tracked instance per row
+
+**Memory fix for long-lived contexts.** A tracked query built a new entity for every row
+and tracked it, even when the context already tracked that row. Nothing matched a row to
+the instance already tracked, so a context kept alive for the whole process and re-reading
+the same rows grew without limit: about 2 KB per row read. OpenBook's API ran out of heap
+this way: a process-wide context polled a 200-row query every 30 s. Measured on one
+context, 1,000 reads of 200 rows: 614 MB retained and 200,200 tracked entities before;
+0.5 MB and 200 tracked entities now.
+
+Tracked queries now do EF Core's identity resolution. When a row's entity type and primary
+key (every column of a composite key) match an entity this context already tracks, the
+query returns that instance instead of a new one. A long-lived context's memory is bounded
+by the number of distinct rows it has loaded, not by how many times it reads them.
+
+**Behaviour changes you may notice:**
+
+- **The same instance comes back.** `findById`, `find`, `single`, `toList` and lazy or
+  `include()` loading on one context return the same object for the same row
+  (`a === b`).
+- **A re-read does not refresh a tracked entity.** As in EF, database values do not
+  overwrite the tracked instance: its pending changes are kept, and its unchanged columns
+  keep the values from when it was first loaded, even if the row changed since. Before,
+  each query returned a new copy with the current row. To see the current row, use
+  `asNoTracking()`, `entry(e).getDatabaseValues()`, `reload()`, or a fresh context.
+- **A re-read returns a deleted-but-unsaved entity** in its `delete` state, instead of a
+  second clean copy.
+- **`include()` reloads the navigation** on every row the query returns, including
+  instances an earlier query loaded (with other filters, for example). It used to skip any
+  navigation already loaded on the instance, which only mattered once instances were
+  shared.
+
+Unchanged: `asNoTracking()` (new instances, database values, nothing tracked). `select()`
+projections, `raw()` SQL and full-text `search()` rows are tracked as before but never
+identity-resolved, so a partial row never stands in for the whole entity. Saved entities
+are still detached after `saveChanges()`. If an edit re-tracks such an older instance while
+a newer clean copy of the row is tracked, the instance with the pending change is the one
+queries return, and after it is saved the next read loads the row again.
+
+**New: one-time warning for large tracked sets.** When a context tracks 10,000 entities it
+logs one warning (through `configureLogging`'s logger) that names `asNoTracking()`,
+`setQueryTrackingBehavior('no-track')`, `clearChangeTracker()` and per-request contexts.
+Change the threshold with `context.setTrackedEntityWarningThreshold(n)` or
+`MASTERRECORD_TRACKED_WARN_THRESHOLD=<n>`; `0` turns it off.
+
+Internals: an index keyed by table + primary key sits beside `__trackedEntitiesMap` and is
+kept in step by `__track`, `__untrack`, `__clearTracked`, `attach()` re-homing and the insert
+path (once an INSERT assigns the key). A lookup that finds a stale entry drops it. `reload()`
+now reads with `asNoTracking()`, because a tracked `findById` would return the instance
+being reloaded.
+
+New test: `test/identity-resolution.test.js`. Full suite: 453 pass, 0 fail, 22 live-DB
+tests skipped (MySQL/Postgres were not run locally).
 
 ## v1.31.1 — better-sqlite3 range back to `>=12.6.2 <14`
 
