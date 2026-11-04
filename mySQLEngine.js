@@ -195,15 +195,23 @@ class MySQLEngine {
         // by table + exact column signature and emit one statement per group.
         // No NULL-padding to a column union — that would override DB-level
         // column defaults.
-        const groups = new Map();
+        //
+        // Only CONSECUTIVE rows share a statement: pooling all rows of a
+        // signature would hand out auto-increment ids out of add order, unlike
+        // SQLite, the single-insert path and the per-row fallback.
+        const groups = [];
+        let lastKey;
         for (const row of rows) {
             const key = `${row.sql.tableName}\u0000${row.sql.columns}`;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(row);
+            if (groups.length === 0 || key !== lastKey) {
+                groups.push([]);
+                lastKey = key;
+            }
+            groups[groups.length - 1].push(row);
         }
 
         const results = new Array(entities.length);
-        for (const group of groups.values()) {
+        for (const group of groups) {
             const first = group[0].sql;
             const valueGroups = [];
             const allParams = [];

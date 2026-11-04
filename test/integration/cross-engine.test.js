@@ -92,6 +92,27 @@ async function buildCtx(eng, entities, tag) {
     return { ctx, Cls };
 }
 
+// Put a RAW (un-transformed) label in an entity's backing slot, simulating a
+// construction path that didn't run the setter at assignment. Slots are
+// non-enumerable OWN properties since 1.23.0 (see tools.slotOwner). A new entity's
+// prototype is Object.prototype, so writing to the prototype here would set `_role`
+// on every object in the process and corrupt later tests' column lists.
+const seedRawRole = (entity, label) => {
+    Object.defineProperty(entity, '_role', { value: label, writable: true, enumerable: false, configurable: true });
+};
+
+// Record whether the context gave up on the bulk path, while still printing
+// real errors. Covers both messages from context._bulkWithFallback.
+const watchFallback = () => {
+    const original = console.error;
+    let fellBack = false;
+    console.error = (...args) => {
+        if (args.join(' ').includes('falling back')) fellBack = true;
+        original(...args);
+    };
+    return { fellBack: () => fellBack, restore: () => { console.error = original; } };
+};
+
 for (const eng of ENGINES) {
     const skip = eng.target ? false : `set ${eng.envVar} to run (e.g. ${eng.name}://user:pass@host/db)`;
 
@@ -107,15 +128,22 @@ for (const eng of ENGINES) {
             // the engine on the batch path.
             const seedRaw = (label) => {
                 const e = ctx.User.new();
-                Object.getPrototypeOf(e)._role = label;
+                seedRawRole(e, label);
                 ctx.User.add(e);
             };
             seedRaw('operator');
             seedRaw('administrator');
-            await ctx.saveChanges();
+
+            const w = watchFallback();
+            try {
+                await ctx.saveChanges();
+            } finally {
+                w.restore();
+            }
 
             const rows = await ctx.query(`SELECT role FROM ${T} ORDER BY id`);
             assert.deepEqual(rows.map(r => Number(r.role)), [2, 1], '.set() must map labels to ints on the multi-row batch path');
+            assert.equal(w.fellBack(), false, 'the multi-row path must handle it — no fallback to per-row inserts');
         } finally {
             await ctx.close();
         }
@@ -148,8 +176,6 @@ for (const eng of ENGINES) {
     test(`[${eng.name}] heterogeneous batch (different column sets) stays on the bulk path`, { skip }, async () => {
         const { ctx } = await buildCtx(eng, [Profile], 'hetero');
         const T = qt(eng, 'Profile');
-        const errors = [];
-        const origError = console.error;
         try {
             await ctx.query(`DROP TABLE IF EXISTS ${T}`);
             await ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, name VARCHAR(50), bio VARCHAR(50) DEFAULT 'dft')`);
@@ -157,7 +183,6 @@ for (const eng of ENGINES) {
             // Rows alternate column signatures: {name,bio} vs {name}. Before
             // 1.3.1 this emitted ONE INSERT with the first row's column list →
             // ER_WRONG_VALUE_COUNT_ON_ROW and a silent per-row fallback.
-            console.error = (...a) => { errors.push(a.join(' ')); origError(...a); };
             const mk = (name, bio) => {
                 const e = ctx.Profile.new();
                 e.name = name;
@@ -168,19 +193,20 @@ for (const eng of ENGINES) {
             const a = mk('first', 'custom');
             const b = mk('second');          // bio omitted → must take the DB DEFAULT
             const c = mk('third', 'last');
-            await ctx.saveChanges();
-            console.error = origError;
+            const w = watchFallback();
+            try {
+                await ctx.saveChanges();
+            } finally {
+                w.restore();
+            }
 
-            assert.ok(
-                !errors.some(m => m.includes('falling back to individual inserts')),
-                'heterogeneous batch must NOT fall back to per-row inserts',
-            );
+            assert.equal(w.fellBack(), false, 'heterogeneous batch must NOT fall back to per-row inserts');
 
             const rows = await ctx.query(`SELECT name, bio FROM ${T} ORDER BY id`);
             assert.deepEqual(
                 rows.map(r => [r.name, r.bio]),
                 [['first', 'custom'], ['second', 'dft'], ['third', 'last']],
-                'omitted column must take its DB-level DEFAULT (no NULL-padding to a column union)',
+                'rows keep add order by id, and an omitted column takes its DB-level DEFAULT (no NULL-padding to a column union)',
             );
 
             // Ids must map back to entities in ORIGINAL input order.
@@ -190,7 +216,6 @@ for (const eng of ENGINES) {
             assert.equal(Number(b.id), dbIds.second);
             assert.equal(Number(c.id), dbIds.third);
         } finally {
-            console.error = origError;
             await ctx.close();
         }
     });
@@ -206,7 +231,7 @@ for (const eng of ENGINES) {
                 await built.ctx.query(`DROP TABLE IF EXISTS ${T}`);
                 await built.ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, role INTEGER NOT NULL)`);
                 const e = built.ctx.User.new();
-                Object.getPrototypeOf(e)._role = 'operator';
+                seedRawRole(e, 'operator');
                 built.ctx.User.add(e);
                 await built.ctx.saveChanges();
                 single = Number((await built.ctx.query(`SELECT role FROM ${T}`))[0].role);
@@ -224,7 +249,7 @@ for (const eng of ENGINES) {
                 await built.ctx.query(`CREATE TABLE ${T} (id ${eng.pkDdl}, role INTEGER NOT NULL)`);
                 for (const label of ['operator', 'administrator']) {
                     const x = built.ctx.User.new();
-                    Object.getPrototypeOf(x)._role = label;
+                    seedRawRole(x, label);
                     built.ctx.User.add(x);
                 }
                 await built.ctx.saveChanges();
