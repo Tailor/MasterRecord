@@ -1,5 +1,32 @@
 # MasterRecord Changelog
 
+## v1.32.1 — batched inserts keep add order on MySQL and Postgres
+
+**Fix: `saveChanges()` could assign ids out of add order on MySQL and Postgres.** A
+multi-row INSERT can only serve rows with the same column list, and since 1.3.1 `bulkInsert`
+pooled every row of a column list into one statement. A batch of `{name,bio}`, `{name}`,
+`{name,bio}` therefore got the ids 1, 3, 2, and `ORDER BY id` returned the rows in a
+different order than they were added. SQLite, the single-insert path and the per-row fallback
+all assign ids in add order, so the result depended on the engine. Each entity still received
+its own row's id, and stored values were correct.
+
+- Only consecutive rows with the same columns now share a statement, so ids ascend in add
+  order. A batch whose rows all set the same columns is still one statement. One that
+  alternates column lists takes one statement per run, up to one per row, inside the same
+  transaction. Omitted columns still take their DB-level `DEFAULT`.
+- New `test/bulk-insert-order.test.js` covers both engines without a server, because CI runs
+  SQLite only.
+
+**Tests: the live MySQL and Postgres suite passes again.** 8 of the 20 tests in
+`test/integration/cross-engine.test.js` failed, and only on a live server. Apart from the
+ordering bug above, the rest were test faults. Since 1.23.0 a new entity's prototype is
+`Object.prototype`, so the suite's `Object.getPrototypeOf(e)._role = …` wrote to every object
+in the process. That emptied the row being tested (`No columns to insert`), and the
+inherited key then surfaced as a column on MySQL (`Unknown column 'ran.operator'`) for any
+later test in the file. The suite now sets the entity's own slot. Its check that a batch does
+not fall back to per-row inserts looked for a log message that no longer exists, so it could
+never fail; it now matches, and the `.set()` batch test makes the same check.
+
 ## v1.32.0 — identity resolution: one tracked instance per row
 
 **Memory fix for long-lived contexts.** A tracked query built a new entity for every row
