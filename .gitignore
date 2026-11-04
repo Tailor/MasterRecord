@@ -1,3 +1,4 @@
 node_modules
 test/fixtures/
 .claude/
+test/integration/fixtures/
