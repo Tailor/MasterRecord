@@ -88,6 +88,7 @@ context.User.where(u => $$.includes(u.id), [1, 2, 3]).toList();
 | `context.setRetryOnFailure(opts)` | `EnableRetryOnFailure` | Transient-error retry |
 | `await context.healthCheck()` / `await context.canConnect()` | `Database.CanConnect` / health check | `{ healthy, engine, latencyMs, version, … }`; never throws |
 | `context.setQueryTrackingBehavior('no-track')` / `clearChangeTracker()` / `reset()` / `close()` | `QueryTrackingBehavior` / `ChangeTracker.Clear` / `Dispose` | Tracker lifetime |
+| `context.setTrackedEntityWarningThreshold(n)` | — | One-time warning when the tracked set reaches `n` (default 10,000; `0` = off; or `MASTERRECORD_TRACKED_WARN_THRESHOLD`) |
 | `db.rowVersion()` / `db.concurrencyToken()` (model builder) | `IsRowVersion` / `IsConcurrencyToken` | Optimistic concurrency (throws `ConcurrencyError`) |
 | `db.belongsTo(...).onDelete('cascade'\|'restrict'\|'setNull'\|'noAction')` / `.excludeForeignKeyFromMigrations()` | `OnDelete` / EF 11 | FK constraint behavior |
 | `db.defaultSql('CURRENT_TIMESTAMP')` | `HasDefaultValueSql` | Database-side default expression (read back after insert) |

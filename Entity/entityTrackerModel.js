@@ -194,7 +194,9 @@ class EntityTrackerModel {
 
             // Fetch fresh from database
             const EntityClass = this.__context[this.__name];
-            const fresh = await EntityClass.findById(...keyValues);
+            // No tracking: a tracked findById would return THIS instance
+            // (identity resolution), not the database values.
+            const fresh = await EntityClass.asNoTracking().findById(...keyValues);
             if (!fresh) {
                 throw new Error(
                     `Cannot reload: ${this.__name} with ${keys.map((k, i) => `${k}=${keyValues[i]}`).join(', ')} not found`
@@ -225,12 +227,6 @@ class EntityTrackerModel {
             if (typeof this.__context._refreshOriginalValues === 'function') {
                 this.__context._refreshOriginalValues(this);
             }
-            // findById tracked a second instance of this row; drop it so the
-            // identity map holds only this entity (EF never tracks two copies).
-            if (typeof this.__context.__untrack === 'function') {
-                this.__context.__untrack([fresh]);
-            }
-
             return this;
         };
 
