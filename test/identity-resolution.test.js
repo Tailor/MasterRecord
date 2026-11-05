@@ -1,14 +1,14 @@
 /**
- * Identity resolution for tracked queries (EF Core's identity map).
+ * Re-reads on a tracked context: current data, one clean copy per row.
  *
- * A tracked query that reads a row this context already tracks returns the
- * tracked instance, not a new copy. Without it a long-lived context (a
- * singleton polled every 30 s, say) kept a new tracked copy of every row on
- * every read, so its memory grew with the number of reads (measured: ~2.1 KB
- * per row read, +423 MB after 1,000 reads of 200 rows).
+ * A tracked query returns the row as the database has it now, as a new object,
+ * and releases the clean copy of that row the context already holds. So a read
+ * sees writes made another way (executeUpdate, another context, another process),
+ * and a long-lived context's memory follows its distinct rows, not its reads
+ * (without this: ~2.1 KB per row read, +423 MB after 1,000 reads of 200 rows).
  *
- * EF semantics: the tracked instance is NOT overwritten with database values,
- * so pending changes on it survive a re-read. asNoTracking() is unchanged.
+ * 1.32.0 and 1.32.1 returned the tracked instance without refreshing it, so a read
+ * after such a write answered with the old row.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,68 +47,111 @@ async function makeCtx({ rows = 0 } = {}) {
     return { Ctx, ctx, db };
 }
 
-// Every identity-index entry points at an entity this context still tracks.
+// Every index entry points at an entity this context still tracks.
 function assertIndexConsistent(ctx) {
-    for (const [key, e] of ctx.__identityIndex) {
-        assert.equal(ctx.__trackedEntitiesMap.get(e.__ID), e, `identity entry ${JSON.stringify(key)} is a tracked entity`);
+    for (const map of [ctx.__identityIndex, ctx.__identityCopies]) {
+        for (const [key, e] of map) {
+            assert.equal(ctx.__trackedEntitiesMap.get(e.__ID), e, `entry ${JSON.stringify(key)} is a tracked entity`);
+        }
     }
-    assert.ok(ctx.__identityIndex.size <= ctx.__trackedEntitiesMap.size, 'index is never larger than the tracked set');
+    assert.ok(ctx.__identityIndex.size + ctx.__identityCopies.size <= ctx.__trackedEntitiesMap.size, 'the indexes are never larger than the tracked set');
 }
 
 test('re-reading the same 200 rows 100 times on one context keeps 200 tracked entities', async () => {
     const { ctx } = await makeCtx({ rows: 200 });
-    let first;
+    let list;
     for (let i = 0; i < 100; i++) {
-        const list = await ctx.Item.toList();
+        list = await ctx.Item.toList();
         assert.equal(list.length, 200);
-        if (i === 0) first = list;
-        else assert.equal(list[17], first[17], 'same instance on every read');
     }
     assert.equal(ctx.__trackedEntitiesMap.size, 200, 'tracked set is bounded by distinct rows, not reads');
     assert.equal(ctx.__identityIndex.size, 200);
-    assert.equal(new Set(first).size, 200, 'one instance per row');
+    for (const e of list) assert.equal(ctx.__trackedEntitiesMap.get(e.__ID), e, 'the latest read is the tracked copy');
     assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('the same instance comes back from different query shapes', async () => {
+test('every query shape keeps one tracked copy per row', async () => {
     const { ctx } = await makeCtx({ rows: 10 });
-    const list = await ctx.Item.toList();
-    const three = list.find(x => x.id === 3);
-    assert.equal(await ctx.Item.findById(3), three, 'findById');
-    assert.equal(await ctx.Item.find(3), three, 'find');
-    assert.equal(await ctx.Item.where('i => i.name == $$', 'item-3').single(), three, 'where().single()');
+    await ctx.Item.toList();
+    assert.equal((await ctx.Item.findById(3)).name, 'item-3', 'findById');
+    assert.equal((await ctx.Item.where('i => i.name == $$', 'item-3').single()).id, 3, 'where().single()');
     const page = await ctx.Item.orderByDescending('i => i.id').take(8).toList();
-    assert.equal(page.find(x => x.id === 3), three, 'orderBy/take list');
+    assert.equal(page.length, 8, 'orderBy/take list');
     assert.equal(ctx.__trackedEntitiesMap.size, 10);
+    assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('a re-read does not overwrite a tracked entity: pending changes survive and are saved', async () => {
+test('a re-read sees a conditional executeUpdate on the same context', async () => {
+    // The shape that broke on 1.32.0: UPDATE ... WHERE, then read the row to answer the caller.
+    const { ctx } = await makeCtx({ rows: 3 });
+    const before = await ctx.Item.findById(1);
+    assert.equal(before.qty, 1);
+    const n = await ctx.Item.where('i => i.id == $$', 1).and('i => i.qty == $$', 1).executeUpdate({ qty: 2 });
+    assert.equal(n, 1);
+    const after = await ctx.Item.findById(1);
+    assert.equal(after.qty, 2, 'the read answers with the row as written');
+    assert.equal((await ctx.Item.where('i => i.id == $$', 1).single()).qty, 2);
+    assert.equal(before.qty, 1, 'an object read earlier keeps what it read');
+    await ctx.close();
+});
+
+test('a re-read sees a write from another context and from outside', async () => {
+    const { Ctx, ctx, db } = await makeCtx({ rows: 3 });
+    assert.equal((await ctx.Item.findById(2)).name, 'item-2');
+
+    const other = new Ctx();
+    const theirs = await other.Item.findById(2);
+    theirs.name = 'other-context';
+    await other.saveChanges();
+    assert.equal((await ctx.Item.findById(2)).name, 'other-context');
+
+    db.prepare('UPDATE Item SET name = ? WHERE id = 2').run('outside');
+    const [row] = (await ctx.Item.toList()).filter(x => x.id === 2);
+    assert.equal(row.name, 'outside', 'a list read too');
+    await other.close();
+    await ctx.close();
+});
+
+test('an object read earlier can still be edited and saved after a re-read released it', async () => {
+    const { ctx, db } = await makeCtx({ rows: 2 });
+    const first = await ctx.Item.findById(1);
+    const second = await ctx.Item.findById(1);
+    assert.notEqual(second, first);
+    first.name = 'edited-through-the-first';
+    assert.equal(ctx.entry(first).state, 'modified');
+    await ctx.saveChanges();
+    assert.equal(db.prepare('SELECT name FROM Item WHERE id = 1').get().name, 'edited-through-the-first');
+    assert.equal((await ctx.Item.findById(1)).name, 'edited-through-the-first');
+    assertIndexConsistent(ctx);
+    await ctx.close();
+});
+
+test('a re-read leaves pending changes alone, answers with the database, and stays bounded', async () => {
     const { ctx, db } = await makeCtx({ rows: 3 });
     const a = await ctx.Item.findById(1);
     a.name = 'pending';
     // Someone else changes the row in the database meanwhile.
     db.prepare('UPDATE Item SET name = ?, qty = ? WHERE id = 1').run('external', 999);
 
-    const again = await ctx.Item.findById(1);
-    assert.equal(again, a, 'tracked instance returned');
-    assert.equal(again.name, 'pending', 'pending change kept');
-    assert.equal(again.qty, 1, 'not refreshed from the database (EF identity resolution)');
+    let again;
+    for (let i = 0; i < 50; i++) again = await ctx.Item.findById(1);
+    assert.notEqual(again, a, 'a query answers with the row, not the pending edit');
+    assert.equal(again.name, 'external');
+    assert.equal(again.qty, 999);
+    assert.equal(a.name, 'pending', 'pending change kept');
     assert.equal(ctx.entry(a).state, 'modified');
     assert.equal(ctx.__dirtyEntities.size, 1);
-
-    // asNoTracking still reads the database and never returns the tracked instance.
-    const fresh = await ctx.Item.asNoTracking().findById(1);
-    assert.notEqual(fresh, a);
-    assert.equal(fresh.name, 'external');
-    assert.equal(fresh.qty, 999);
+    assert.equal(ctx.__trackedEntitiesMap.size, 2, 'the edited instance and one clean copy, however many reads');
 
     await ctx.saveChanges();
     const row = db.prepare('SELECT name, qty FROM Item WHERE id = 1').get();
     assert.equal(row.name, 'pending', 'the pending change was written');
     assert.equal(row.qty, 999, 'only the changed column was written');
     assertIndexConsistent(ctx);
+    assert.equal((await ctx.Item.findById(1)).name, 'pending', 'the next read is not the stale clean copy');
+    assert.equal(ctx.__trackedEntitiesMap.size, 1);
     await ctx.close();
 });
 
@@ -121,32 +164,32 @@ test('reload() still reads the database values', async () => {
     a.name = 'mine';
     await ctx.entry(a).reload();
     assert.equal(a.name, 'changed', 'entry().reload() discards the pending change');
-    assert.equal(await ctx.Item.findById(2), a);
     assert.equal(ctx.__trackedEntitiesMap.size, 1, 'reload does not track a second copy');
+    assert.equal(ctx.__trackedEntitiesMap.get(a.__ID), a, 'reload does not release the instance');
     await ctx.close();
 });
 
-test('deletes: a re-read returns the tracked deleted instance; after save the row and its entry are gone', async () => {
+test('deletes: a pending delete survives a re-read; after save the row and its entries are gone', async () => {
     const { ctx, db } = await makeCtx({ rows: 3 });
     const items = await ctx.Item.orderBy('i => i.id').toList();
     const victim = items[0];
     ctx.Item.remove(victim);
     const again = await ctx.Item.orderBy('i => i.id').toList();
-    assert.equal(again[0], victim);
+    assert.equal(again[0].id, victim.id, 'the row is still there until the save');
     assert.equal(ctx.entry(victim).state, 'delete', 'still marked for delete');
 
     await ctx.saveChanges();
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM Item').get().n, 2);
     const after = await ctx.Item.orderBy('i => i.id').toList();
     assert.deepEqual(after.map(x => x.id), [2, 3]);
-    assert.equal(after[0], items[1], 'surviving rows keep their instances');
-    assert.equal(ctx.__trackedEntitiesMap.size, 2);
+    assert.equal(ctx.__trackedEntitiesMap.size, 2, 'no copy of the deleted row stays tracked');
     assert.equal(ctx.__identityIndex.size, 2);
+    assert.equal(ctx.__identityCopies.size, 0);
     assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('inserts: auto keys are assigned (single and batch) and re-reads resolve to one instance per row', async () => {
+test('inserts: auto keys are assigned (single and batch) and re-reads keep one tracked copy per row', async () => {
     const { ctx, db } = await makeCtx();
     const one = new Item(); one.name = 'one'; one.qty = 1;
     ctx.Item.add(one);
@@ -162,13 +205,13 @@ test('inserts: auto keys are assigned (single and batch) and re-reads resolve to
     const r1 = await ctx.Item.toList();
     const r2 = await ctx.Item.toList();
     assert.equal(r1.length, 6);
-    r1.forEach((x, i) => assert.equal(r2[i], x));
+    assert.deepEqual(r2.map(x => x.id), r1.map(x => x.id));
     assert.equal(ctx.__trackedEntitiesMap.size, 6);
     assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('an edit through an older, detached instance wins over a clean tracked copy and the next read sees it', async () => {
+test('an edit through an older, detached instance is saved and the next read sees it', async () => {
     const { ctx } = await makeCtx();
     const a = new Item(); a.name = 'v1'; a.qty = 1;
     ctx.Item.add(a);
@@ -177,16 +220,17 @@ test('an edit through an older, detached instance wins over a clean tracked copy
     assert.notEqual(copy, a);
 
     a.name = 'v2';                                 // re-tracks `a` with a pending change
-    assert.equal(await ctx.Item.findById(a.id), a, 'the instance with pending changes is the one returned');
+    assert.equal((await ctx.Item.findById(a.id)).name, 'v1', 'not saved yet');
     await ctx.saveChanges();
 
     const after = await ctx.Item.findById(a.id);
-    assert.equal(after.name, 'v2', 'the next read is not the stale clean copy');
+    assert.equal(after.name, 'v2', 'the next read is not a stale clean copy');
+    assert.equal(ctx.__trackedEntitiesMap.size, 1);
     assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('composite keys: identity by the whole key; update and delete still address the right rows', async () => {
+test('composite keys: copies follow the whole key; update and delete still address the right rows', async () => {
     const { ctx, db } = await makeCtx();
     const mk = (o, l, sku, qty) => { const x = new OrderLine(); x.orderId = o; x.lineNo = l; x.sku = sku; x.qty = qty; return x; };
     ctx.OrderLine.add(mk(1, 1, 'A', 10)); ctx.OrderLine.add(mk(1, 2, 'B', 20)); ctx.OrderLine.add(mk(2, 1, 'C', 30)); ctx.OrderLine.add(mk(2, 2, 'D', 40));
@@ -195,14 +239,13 @@ test('composite keys: identity by the whole key; update and delete still address
     for (let i = 0; i < 50; i++) await ctx.OrderLine.toList();
     assert.equal(ctx.__trackedEntitiesMap.size, 4, '(1,2) and (2,1) are different rows; each tracked once');
 
-    const l12 = await ctx.OrderLine.find(1, 2);
+    const l12 = await ctx.OrderLine.findById(1, 2);
     assert.equal(l12.sku, 'B');
-    assert.equal(await ctx.OrderLine.findById(1, 2), l12);
-    assert.equal(await ctx.OrderLine.where('l => l.orderId == $$', 1).and('l => l.lineNo == $$', 2).single(), l12);
-    assert.notEqual(await ctx.OrderLine.findById(2, 1), l12);
+    assert.equal((await ctx.OrderLine.where('l => l.orderId == $$', 1).and('l => l.lineNo == $$', 2).single()).sku, 'B');
+    assert.equal((await ctx.OrderLine.findById(2, 1)).sku, 'C');
 
     l12.qty = 21;
-    assert.equal((await ctx.OrderLine.findById(1, 2)).qty, 21, 'pending change kept on re-read');
+    assert.equal((await ctx.OrderLine.findById(1, 2)).qty, 20, 'a read answers with the row until the save');
     ctx.OrderLine.remove(await ctx.OrderLine.findById(2, 2));
     await ctx.saveChanges();
 
@@ -210,6 +253,7 @@ test('composite keys: identity by the whole key; update and delete still address
         [[1, 1, 10], [1, 2, 21], [2, 1, 30]]);
     const rows = await ctx.OrderLine.toList();
     assert.equal(rows.length, 3);
+    assert.equal(rows.find(r => r.orderId === 1 && r.lineNo === 2).qty, 21);
     assert.equal(ctx.__trackedEntitiesMap.size, 3);
     assertIndexConsistent(ctx);
     await ctx.close();
@@ -231,25 +275,25 @@ test('asNoTracking() is unchanged: new instances, database values, nothing track
     await ctx.close();
 });
 
-test('a select() projection is not identity-resolved and never stands in for the whole entity', async () => {
+test('a select() projection does not replace the whole entity', async () => {
     const { ctx } = await makeCtx({ rows: 3 });
-    const projected = await ctx.Item.select('i => i.name').toList();
-    assert.equal(projected.length, 3);
     const full = await ctx.Item.toList();
-    assert.notEqual(full[0], projected[0]);
-    assert.equal(full[0].qty, 1, 'full read has every column');
-    assert.equal(await ctx.Item.findById(1), full[0]);
+    await ctx.Item.select('i => i.name').toList();
+    assert.equal(ctx.__trackedEntitiesMap.get(full[0].__ID), full[0], 'the whole entity is still the tracked copy');
+    const again = await ctx.Item.toList();
+    assert.equal(again[0].qty, 1, 'full read has every column');
     assertIndexConsistent(ctx);
     await ctx.close();
 });
 
-test('include() on a resolved instance loads the navigation for this query', async () => {
+test('include() loads the navigation on every read and keeps one tracked copy per row', async () => {
     const { ctx, db } = await makeCtx();
     db.exec(`INSERT INTO Author (name) VALUES ('ann'); INSERT INTO Post (title, author_id) VALUES ('p1', 1), ('p2', 1);`);
     const p1 = await ctx.Post.asSplitQuery().include('p => p.author').where('p => p.id == $$', 1).single();
     assert.equal(p1.author.name, 'ann');
+    db.prepare('UPDATE Author SET name = ? WHERE id = 1').run('anne');
     const posts = await ctx.Post.asSplitQuery().include('p => p.author').orderBy('p => p.id').toList();
-    assert.equal(posts[0], p1);
+    assert.equal(posts[0].author.name, 'anne', 'the included row is current too');
     assert.equal(posts[0].author, posts[1].author, 'one Author instance for both posts');
     assert.equal(ctx.__trackedEntitiesMap.size, 3, '2 posts + 1 author');
     await ctx.close();

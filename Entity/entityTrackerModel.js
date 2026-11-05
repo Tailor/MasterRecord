@@ -194,8 +194,8 @@ class EntityTrackerModel {
 
             // Fetch fresh from database
             const EntityClass = this.__context[this.__name];
-            // No tracking: a tracked findById would return THIS instance
-            // (identity resolution), not the database values.
+            // No tracking: reading the values for THIS instance must not release it
+            // or track a second copy.
             const fresh = await EntityClass.asNoTracking().findById(...keyValues);
             if (!fresh) {
                 throw new Error(

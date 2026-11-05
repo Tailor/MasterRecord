@@ -19,24 +19,27 @@ user.blocked = 1;                                                 // dirty
 await db.saveChanges();                                           // one UPDATE
 ```
 
-### Identity resolution (since 1.32.0)
+### Re-reads: current data, one clean copy per row (since 1.32.2)
 
-A context tracks **one instance per row**. When a tracked query reads a row the context already tracks (same entity type and primary key, composite keys included), it returns the tracked instance instead of building a new one, as EF Core does:
+A tracked query returns the row **as the database has it now, as a new object**. It releases the clean copy of that row the context already holds (same entity type and primary key, composite keys included).
 
-- The tracked instance is **not** overwritten with the database values. Pending changes on it survive a re-read; unchanged columns keep the values they had when the row was first loaded. Use `asNoTracking()`, `entry(e).getDatabaseValues()` or `reload()` to see the current row.
+- A read sees writes made any other way: `executeUpdate`, another context, another process.
 - A long-lived context's memory is bounded by the number of **distinct** rows it has loaded, not by how many times it re-reads them.
-- An explicit `include()` still loads the navigation for every row the query returns, including instances an earlier query loaded.
-- `select()` projections, `raw()` SQL and full-text `search()` rows are tracked as before but never identity-resolved: a partial row never stands in for the whole entity.
+- An object you read earlier keeps the values it read. It still works: editing it tracks it again, and `saveChanges()` writes the change.
+- An instance with pending changes (modified, or pending delete or insert) stays tracked, and a re-read does not touch it. The read answers with the database row until you save.
+- `select()` projections, `raw()` SQL and full-text `search()` rows are tracked as before and do not replace the whole entity.
 
 ```javascript
 const a = await db.User.findById(1);
 a.name = 'pending';
 const b = await db.User.where('u => u.id == $$', 1).single();
-b === a;          // true
-b.name;           // 'pending': the re-read did not overwrite it
+b === a;          // false
+b.name;           // the database value: 'pending' is not saved yet
+a.name;           // 'pending'
+await db.saveChanges();   // writes a's change
 ```
 
----
+1.32.0 and 1.32.1 returned the tracked instance without refreshing it. A read after `executeUpdate` or a write from another context answered with the old row. Don't use those two versions.
 
 ## Controlling what gets tracked (EF's `QueryTrackingBehavior`)
 
@@ -268,7 +271,7 @@ Transient errors (deadlocks, lock timeouts, busy SQLite, dropped connections) ar
 A singleton context shared across concurrent requests is the root cause of an entire class of bugs (and is unsupported in EF for the same reasons):
 
 - **Lost writes** — one request's `saveChanges()` interacting with another's tracked entities.
-- **Unbounded memory** — read-only queries track results that are never released. Identity resolution bounds this by the number of distinct rows, but a singleton that reads a large or growing table still keeps every row it has seen.
+- **Unbounded memory** — read-only queries track results that are never released. One clean copy per row bounds this by the number of distinct rows, but a singleton that reads a large or growing table still keeps every row it has seen.
 - **Undefined behavior** under concurrent access (EF: "application crashes and data corruption").
 
 MasterRecord hardens against the worst symptoms (each save commits only its own change set; identities are collision-free; the dirty index is complete), but the correct and supported model is a **per-request context** — pooled if you need to amortize setup.
