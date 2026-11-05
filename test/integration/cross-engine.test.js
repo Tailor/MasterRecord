@@ -22,11 +22,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { mysqlTarget, postgresTarget } from './engineTargets.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { default: context } = await import('../../context.js');
 const { default: schemaCls } = await import('../../Migrations/schema.js');
 const { instantiateReadyContext } = await import('../../Migrations/contextInit.js');
@@ -74,14 +73,27 @@ const ENGINES = [
 // `"Note"`. MySQL preserves case unquoted, so the bare name is correct there.
 const qt = (eng, name) => (eng.name === 'mysql' ? name : `"${name}"`);
 
+// Write a context's env file and return its folder. The file holds the target's
+// connection details, so it goes in a private temp directory, removed at exit,
+// and never in the repository.
+let envRoot;
+function writeEnvFile(master, ctxName, target) {
+    if (!envRoot) {
+        envRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'masterrecord-xeng-'));
+        process.on('exit', () => fs.rmSync(envRoot, { recursive: true, force: true }));
+    }
+    const envDir = path.join(envRoot, master, 'config', 'environments');
+    fs.mkdirSync(envDir, { recursive: true });
+    fs.writeFileSync(path.join(envDir, `env.${master}.json`), JSON.stringify({ [ctxName]: target }), { mode: 0o600 });
+    return envDir;
+}
+
 // Build a fresh context (and its class, for the migration schema harness) pointed
 // at the live engine. MySQL/Postgres init is async, so we await _ensureReady().
 async function buildCtx(eng, entities, tag) {
     const master = `xeng_${eng.name}_${tag}`;
-    const envDir = path.join(__dirname, 'fixtures', master, 'config', 'environments');
-    fs.mkdirSync(envDir, { recursive: true });
     const ctxName = `XCtx_${eng.name}_${tag}`;
-    fs.writeFileSync(path.join(envDir, `env.${master}.json`), JSON.stringify({ [ctxName]: eng.target }));
+    const envDir = writeEnvFile(master, ctxName, eng.target);
     process.env.master = master;
     // Computed class name so context.env() resolves the matching JSON key.
     const Cls = { [ctxName]: class extends context {
@@ -383,10 +395,8 @@ for (const eng of ENGINES) {
             // way the migration CLI does. Before 1.3.2 this threw "Unknown
             // database" / "does not exist" and never created it.
             const master = `xeng_${eng.name}_autocreate`;
-            const envDir = path.join(__dirname, 'fixtures', master, 'config', 'environments');
-            fs.mkdirSync(envDir, { recursive: true });
             const ctxName = `XCtx_${eng.name}_autocreate`;
-            fs.writeFileSync(path.join(envDir, `env.${master}.json`), JSON.stringify({ [ctxName]: autoTarget }));
+            const envDir = writeEnvFile(master, ctxName, autoTarget);
             process.env.master = master;
             const Cls = { [ctxName]: class extends context {
                 constructor() { super(); this.env(envDir); this.dbset(User); }
