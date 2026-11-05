@@ -1,5 +1,21 @@
 # MasterRecord Changelog
 
+## v1.32.2 — re-reads return current data again
+
+**Fix: since 1.32.0 a tracked re-read could answer with an old row.** 1.32.0 returned the
+instance the context already tracked and didn't refresh it, so `UPDATE ... WHERE` through
+`executeUpdate` followed by a read of that row, or a write from another context or process
+followed by a read, answered with the values from the first read. Applications written against
+1.31 rely on that read being current: CodeBook's run claims returned the lease as it was before
+the update. **Don't use 1.32.0 or 1.32.1.**
+
+- A tracked query returns the row as the database has it now, as a new object, as it did up to
+  1.31. `a === b` for two reads of one row is no longer true.
+- The memory fix from 1.32.0 stays: the read releases the clean copy of that row, so a long-lived
+  context holds one clean copy per row, not one per read.
+- An object read earlier keeps its values and still works: editing it tracks it again. An instance
+  with pending changes stays tracked, and a re-read doesn't touch it.
+
 ## v1.32.1 — batched inserts keep add order on MySQL and Postgres
 
 **Fix: `saveChanges()` could assign ids out of add order on MySQL and Postgres.** A

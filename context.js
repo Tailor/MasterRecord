@@ -138,13 +138,13 @@ function _poolKey(type, cfg) {
 }
 
 // ----------------------------------------------------------------------------
-// Identity resolution (EF Core's identity map keyed by primary key)
+// One clean copy per row
 // ----------------------------------------------------------------------------
-// A tracked query that reads a row this context already tracks returns the
-// tracked instance instead of building a second copy. The key is
-// "<table>\0<primary key>". Without it a long-lived context that re-reads the
-// same rows kept a new tracked copy per read, so memory grew with the number of
-// reads instead of the number of distinct rows.
+// A tracked query returns the row as the database has it now, as a new object,
+// and releases the clean copy of that row this context already holds. Without
+// this a long-lived context that re-reads the same rows kept a new tracked copy
+// per read, so memory grew with the number of reads instead of the number of
+// distinct rows. The key is "<table>\0<primary key>".
 
 // Entity definition -> its primary-key column names, or null when the type
 // cannot be keyed (no key, or a key column that is a navigation).
@@ -325,13 +325,15 @@ class context {
     // writes whenever the two disagreed (a stale/colliding id in one but not the
     // other). All mutations go through __track / __untrack / __clearTracked.
     __trackedEntitiesMap = new Map();  // __ID -> entity; the authority
-    // Identity index beside the map: "<table>\0<primary key>" -> the one tracked
-    // instance of that row, so a tracked query returns it instead of a new copy.
+    // Identity index beside the map: "<table>\0<primary key>" -> the tracked
+    // instance of that row a query's read replaces, or which has pending changes.
+    // __identityCopies holds the row's clean copy while an instance with pending
+    // changes holds the key, so that copy is released by the next read as well.
     // __identityKeys remembers which key each entity was indexed under, so it can
-    // be removed even after its key value changed. Both are kept in step by
-    // __track / __untrack / __clearTracked; a stale entry is also dropped when a
-    // lookup finds it (see __trackedForRow).
+    // be removed even after its key value changed. All three are kept in step by
+    // __track / __untrack / __clearTracked.
     __identityIndex = new Map();
+    __identityCopies = new Map();
     __identityKeys = new WeakMap();
     // One-time "tracked set is large" warning (see __checkTrackedSize).
     __trackedWarnThreshold = undefined;   // undefined = not resolved yet
@@ -2022,9 +2024,9 @@ class context {
         const loadedOut = [];
         const pending = [];
         // opts.run (one per query): the parents whose `nav` this query has
-        // already loaded. With identity resolution a query can return an
-        // instance whose navigation an EARLIER query loaded (with other filters);
-        // an explicit include() reloads it, so the result reflects this query.
+        // already loaded. A query can reach an instance whose navigation an
+        // EARLIER query loaded (with other filters); an explicit include()
+        // reloads it, so the result reflects this query.
         let loadedThisRun = null;
         if (opts.run instanceof Map) {
             const runKey = `${ownerDef.__name}.${nav}`;
@@ -4372,23 +4374,22 @@ class context {
         this.__trackedEntitiesMap.clear();  // sole registry; the list view follows
         this.__dirtyEntities.clear();
         this.__identityIndex.clear();
+        this.__identityCopies.clear();
         this.__identityKeys = new WeakMap();
     }
 
-    // ---- Identity resolution ------------------------------------------------
+    // ---- One clean copy per row ----------------------------------------------
 
     /**
-     * Index a tracked entity under its type + primary key, so a later tracked
-     * query that reads the same row returns this instance. Called from
-     * __track(). An entity with no usable key yet (a pending insert with an
-     * auto key) is skipped, and indexed once its key is assigned.
+     * Index a tracked entity under its type + primary key, so the next tracked
+     * query that reads the same row can release it. Called from __track(). An
+     * entity with no usable key yet (a pending insert with an auto key) is
+     * skipped, and indexed once its key is assigned.
      *
-     * A context can still end up tracking two instances of one row: saved
-     * entities are detached, and a later edit re-tracks the old instance while a
-     * newer query copy is tracked. Then the instance with pending changes takes
-     * the key from a clean holder, so once it is saved (and detached) the next
-     * query reads the row afresh instead of returning the stale clean copy.
-     * Otherwise the instance that already holds the key keeps it.
+     * A context can track two instances of one row: an instance a read replaced
+     * or a save detached re-tracks itself when it is edited. Then the instance
+     * with pending changes holds the key and the clean copy moves to
+     * __identityCopies. Neither is lost, and the next read releases the clean one.
      * @private
      */
     __indexIdentity(model) {
@@ -4402,9 +4403,16 @@ class context {
         const holder = this.__identityIndex.get(key);
         if (holder !== undefined && holder !== model && this.__isLiveIdentity(holder, key)) {
             const modelDirty = context._isEntityDirty(model);
-            if (!modelDirty || context._isEntityDirty(holder)) return;
-            this.__identityKeys.delete(holder);   // the clean copy stays tracked, unindexed
+            if (!modelDirty) {
+                if (!context._isEntityDirty(holder)) return;
+                this.__identityCopies.set(key, model);   // a clean copy beside pending changes
+                this.__identityKeys.set(model, key);
+                return;
+            }
+            if (context._isEntityDirty(holder)) return;
+            this.__identityCopies.set(key, holder);      // the clean copy stays tracked
         }
+        if (this.__identityCopies.get(key) === model) this.__identityCopies.delete(key);
         this.__identityIndex.set(key, model);
         this.__identityKeys.set(model, key);
     }
@@ -4414,8 +4422,16 @@ class context {
         if (!model || typeof model !== 'object') return;
         const key = this.__identityKeys.get(model);
         if (key === undefined) return;
-        if (this.__identityIndex.get(key) === model) this.__identityIndex.delete(key);
         this.__identityKeys.delete(model);
+        if (this.__identityCopies.get(key) === model) this.__identityCopies.delete(key);
+        if (this.__identityIndex.get(key) === model) {
+            this.__identityIndex.delete(key);
+            // The clean copy beside it went stale when this instance was saved or
+            // detached; nothing would ever read it from here (a deleted row is
+            // never read again), so it goes too.
+            const copy = this.__identityCopies.get(key);
+            if (copy !== undefined && !context._isEntityDirty(copy)) this.__untrack([copy]);
+        }
     }
 
     /** Is `e` still tracked here and does its current key still equal `key`? @private */
@@ -4427,28 +4443,29 @@ class context {
     }
 
     /**
-     * The tracked instance of the row `row` (a raw database row of `def`), or
-     * null. Used by tracked queries before they build a new entity. The tracked
-     * instance is returned as is: database values do not overwrite it, and a
-     * modified instance keeps its pending changes (EF Core identity resolution).
+     * A tracked query is about to build a new entity from `row` (a raw database row
+     * of `def`): stop tracking the clean copies of that row. An older instance a
+     * caller still holds keeps working: editing it tracks it again. An instance
+     * with pending changes (modified, pending delete or insert) stays tracked and
+     * is saved as usual.
      * @private
      */
-    __trackedForRow(def, row) {
-        if (this.__identityIndex.size === 0 || !row) return null;
+    __releaseCleanCopy(def, row) {
+        if (!row || (this.__identityIndex.size === 0 && this.__identityCopies.size === 0)) return;
         let key;
         try {
             key = _identityKey(def, (c) => FieldTransformer.fromDatabase(row[c], def[c], def.__name, c));
         } catch (_) {
-            return null;   // a failing transformer: let the normal build path report it
+            return;   // a failing transformer: let the normal build path report it
         }
-        if (key === null) return null;
-        const e = this.__identityIndex.get(key);
-        if (e === undefined) return null;
-        if (this.__isLiveIdentity(e, key)) return e;
-        // Stale entry (detached elsewhere, or its key changed): drop it.
-        this.__identityIndex.delete(key);
-        this.__identityKeys.delete(e);
-        return null;
+        if (key === null) return;
+        const holder = this.__identityIndex.get(key);
+        const copy = this.__identityCopies.get(key);
+        for (const e of [holder, copy]) {
+            if (e === undefined) continue;
+            if (!this.__isLiveIdentity(e, key)) this.__unindexIdentity(e);   // detached elsewhere, or its key changed
+            else if (!context._isEntityDirty(e)) this.__untrack([e]);
+        }
     }
 
     /**
@@ -4502,8 +4519,8 @@ class context {
      *
      * A context is a unit of work and is safest scoped per request. If you must
      * reuse a long-lived (e.g. singleton) context, read-only queries still
-     * auto-track their results: one instance per distinct row (identity
-     * resolution), which still grows with every new row read — call this
+     * auto-track their results: one clean copy per distinct row, which still
+     * grows with every new row read — call this
      * after a read-only operation to release them and keep the tracked set
      * bounded. It drops PENDING changes too, so only call it when there is
      * nothing dirty you still intend to save.

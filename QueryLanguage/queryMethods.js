@@ -325,10 +325,10 @@ class queryMethods{
     }
 
     /**
-     * Can this query's rows be identity-resolved? Only when each row is a whole
-     * entity row: not raw() SQL, not a select() projection (a partial row must
-     * not stand in for the entity later), and not a full-text search (each row
-     * carries a per-query __rank).
+     * Do this query's rows replace the context's clean copy of the row? Only when
+     * each row is a whole entity row: not raw() SQL, not a select() projection (a
+     * partial row must not replace the entity), and not a full-text search (each
+     * row carries a per-query __rank).
      */
     __identityResolvable(){
         const s = this.__queryObject.script;
@@ -347,13 +347,11 @@ class queryMethods{
                 const derived = tph.derived.get(String(dataModel[tph.column]));
                 if (derived) def = derived;
             }
-            // Identity resolution (EF Core): if this context already tracks the
-            // row, return that instance. It is NOT refreshed from the row, so
-            // pending changes on it are kept.
-            if (resolvable) {
-                const tracked = $that.__context.__trackedForRow(def, dataModel);
-                if (tracked) return tracked;
-            }
+            // A query returns the row as the database has it now, as a new object.
+            // The clean copy this read replaces is released, so a context holds one
+            // clean copy per row however often it re-reads (memory follows the rows,
+            // not the reads). An instance with pending changes stays tracked.
+            if (resolvable) $that.__context.__releaseCleanCopy(def, dataModel);
             const ent = new entityTrackerModel();
             const mod = ent.build(dataModel, def, $that.__context);
             mod.__state = "track";
@@ -1424,8 +1422,8 @@ class queryMethods{
 
             // Fetch fresh from database
             const EntityClass = this.__context[this.__name];
-            // No tracking: a tracked findById would return THIS instance
-            // (identity resolution), not the database values.
+            // No tracking: reading the values for THIS instance must not release it
+            // or track a second copy.
             const fresh = await EntityClass.asNoTracking().findById(primaryKeyValue);
             if (!fresh) {
                 throw new Error(

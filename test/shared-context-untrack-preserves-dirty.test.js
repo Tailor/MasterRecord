@@ -89,11 +89,13 @@ test('saveChanges writes its change set and leaves unrelated tracked rows alone'
 
     // The write landed and the entity is clean again.
     assert.equal(target.__state, 'track', 'written entity reset to clean');
-    assert.equal((await ctx.Widget.toList()).find(r => r.id === target.id).label, 'changed');
 
-    // Unrelated clean rows were NOT swept out of tracking by this save.
+    // Unrelated clean rows were NOT swept out of tracking by this save. (Checked
+    // before the re-read below, which replaces each row's clean copy by design.)
     const stillTracked = rows.slice(1).filter(r => ctx.__trackedEntitiesMap.has(r.__ID)).length;
     assert.equal(stillTracked, 4, 'a save must not untrack unrelated (clean) entities');
+
+    assert.equal((await ctx.Widget.toList()).find(r => r.id === target.id).label, 'changed');
 });
 
 test('a mutation that lands during the async write still persists (version-aware reset)', async () => {
