@@ -1,5 +1,19 @@
 # MasterRecord Changelog
 
+## v1.32.3 — building a context is 7 times cheaper
+
+**Fix: `dbset()` walked every registered entity each time it ran.** Registering an entity re-resolved
+every foreign key and re-checked every many-to-many in the model, so building a context grew with the
+square of its tables. CodeBook has 311 tables in one context and builds about 6 contexts a second while
+idle: that was about 80% of its idle CPU, with nobody using it.
+
+- `dbset()` now looks at the entity it was given, and foreign keys wait by parent name. A context with
+  311 entities takes 6 ms to build, down from 43 ms. The model it ends up with is the same.
+- A derived type (`dbset(Model, { extends })`) that declares `manyToMany()` now gets its join entity
+  straight away. Before, that only happened if another `dbset()` followed it.
+- New `test/context-build-cost.test.js` checks the same FK types come out in any registration order,
+  and that the work grows linearly.
+
 ## v1.32.2 — re-reads return current data again
 
 **Fix: since 1.32.0 a tracked re-read could answer with an old row.** 1.32.0 returned the

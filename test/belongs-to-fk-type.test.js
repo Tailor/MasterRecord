@@ -6,8 +6,8 @@
  * was string/bigint/uuid, the FK column was still declared INTEGER. SQLite
  * accepted the mismatch (dynamic typing); Postgres and MySQL rejected it.
  *
- * Fix: after each dbset() call, walk every entity and re-resolve every
- * belongsTo column's `type` from its parent's primary-key type. Order-
+ * Fix: each dbset() resolves the belongsTo columns of the entity it registers
+ * and those waiting for it from the parent's primary-key type. Order-
  * independent, idempotent.
  *
  * Notes for future maintenance:

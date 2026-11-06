@@ -1544,13 +1544,13 @@ class context {
         });
 
         // belongsTo() hardcodes type='integer' before the parent entity is known.
-        // Now that another entity is registered, re-resolve every belongsTo FK
-        // column's type from its parent's primary-key type. Idempotent.
-        this.#resolveBelongsToTypes();
+        // Now that this entity is registered, resolve its FK columns and the ones
+        // already waiting for it from the parent's primary-key type. Idempotent.
+        this.#resolveBelongsToTypes(validModel);
 
         // EF 5+ skip navigations: materialize the implicit join entity for every
-        // manyToMany() declaration (idempotent; no-op while synthesizing).
-        this.#synthesizeJoinEntities();
+        // manyToMany() this entity declares (idempotent; no-op while synthesizing).
+        this.#synthesizeJoinEntities(validModel);
 
         // Return chainable object with seed() / queryFilter() methods
         const chain = {
@@ -1627,7 +1627,9 @@ class context {
             get: function() { return tools.createNewInstance(derivedDef, query, this); },
             configurable: true, enumerable: true,
         });
-        this.#resolveBelongsToTypes();
+        // The derived type's columns live on the root now.
+        this.#resolveBelongsToTypes(rootDef);
+        this.#synthesizeJoinEntities(rootDef);
         const chain = {
             seed: (data) => this.#addSeedData(table, data),
             queryFilter: (...a) => { this.queryFilter(model.name, ...a); return chain; },
@@ -1638,42 +1640,39 @@ class context {
     // ---- Implicit many-to-many join entities (EF Core 5+ skip navigations) ---
 
     /**
-     * For each `manyToMany()` navigation whose join entity is not registered,
+     * For each `manyToMany()` navigation of `entity` whose join entity is not registered,
      * synthesize it exactly as a user-written model would be: an auto PK,
      * `belongsTo()` to both sides (FK constraints, ON DELETE CASCADE) and a
      * unique composite index on the two FK columns. Registered through dbset()
      * so table prefix, validation, FK type resolution, migrations and query
      * builders all see it. Idempotent.
      */
-    #synthesizeJoinEntities() {
+    #synthesizeJoinEntities(ent) {
         if (this.__synthesizingJoins) return;
         const prefix = (this.tablePrefix && typeof this.tablePrefix === 'string') ? this.tablePrefix : '';
         const registered = (name) => this.__entities.some(e => e && (e.__name === name || e.__name === prefix + name));
-        for (const ent of [...this.__entities]) {
-            if (!ent) continue;
-            for (const key of Object.keys(ent)) {
-                const def = ent[key];
-                if (key.startsWith('__') || !def || typeof def !== 'object' || !def.implicitJoin) continue;
-                const joinName = def.foreignTable;
-                if (!joinName || registered(joinName)) continue;
-                const ownerName = (prefix && ent.__name.startsWith(prefix)) ? ent.__name.slice(prefix.length) : ent.__name;
-                const targetName = def.targetTable;
-                const fkOwner = def.joinForeignKey;
-                const fkTarget = def.joinOtherKey;
-                const ownerField = fkOwner.replace(/_id$/i, '') || ownerName.toLowerCase();
-                const targetField = fkTarget.replace(/_id$/i, '') || targetName.toLowerCase();
-                if (ownerField === targetField) {
-                    throw new Error(`masterrecord: manyToMany join '${joinName}' would have two identical fields '${ownerField}'; pass distinct { foreignKey, otherKey }.`);
-                }
-                const Join = { [joinName]: class { id(db) { db.integer().primary().auto(); } } }[joinName];
-                Object.defineProperty(Join.prototype, ownerField, { value: function(db) { db.belongsTo(ownerName, fkOwner); }, writable: true, configurable: true, enumerable: false });
-                Object.defineProperty(Join.prototype, targetField, { value: function(db) { db.belongsTo(targetName, fkTarget); }, writable: true, configurable: true, enumerable: false });
-                Join.compositeIndexes = [{ columns: [fkOwner, fkTarget], unique: true, name: `ux_${joinName.toLowerCase()}_${fkOwner}_${fkTarget}` }];
-                this.__synthesizingJoins = true;
-                try { this.dbset(Join); } finally { this.__synthesizingJoins = false; }
-                const joinDef = this.__entities.find(e => e && e.__name === prefix + joinName);
-                if (joinDef) Object.defineProperty(joinDef, '__implicitJoin', { value: true, enumerable: false, configurable: true });
+        for (const key of Object.keys(ent)) {
+            const def = ent[key];
+            if (key.startsWith('__') || !def || typeof def !== 'object' || !def.implicitJoin) continue;
+            const joinName = def.foreignTable;
+            if (!joinName || registered(joinName)) continue;
+            const ownerName = (prefix && ent.__name.startsWith(prefix)) ? ent.__name.slice(prefix.length) : ent.__name;
+            const targetName = def.targetTable;
+            const fkOwner = def.joinForeignKey;
+            const fkTarget = def.joinOtherKey;
+            const ownerField = fkOwner.replace(/_id$/i, '') || ownerName.toLowerCase();
+            const targetField = fkTarget.replace(/_id$/i, '') || targetName.toLowerCase();
+            if (ownerField === targetField) {
+                throw new Error(`masterrecord: manyToMany join '${joinName}' would have two identical fields '${ownerField}'; pass distinct { foreignKey, otherKey }.`);
             }
+            const Join = { [joinName]: class { id(db) { db.integer().primary().auto(); } } }[joinName];
+            Object.defineProperty(Join.prototype, ownerField, { value: function(db) { db.belongsTo(ownerName, fkOwner); }, writable: true, configurable: true, enumerable: false });
+            Object.defineProperty(Join.prototype, targetField, { value: function(db) { db.belongsTo(targetName, fkTarget); }, writable: true, configurable: true, enumerable: false });
+            Join.compositeIndexes = [{ columns: [fkOwner, fkTarget], unique: true, name: `ux_${joinName.toLowerCase()}_${fkOwner}_${fkTarget}` }];
+            this.__synthesizingJoins = true;
+            try { this.dbset(Join); } finally { this.__synthesizingJoins = false; }
+            const joinDef = this.__entities.find(e => e && e.__name === prefix + joinName);
+            if (joinDef) Object.defineProperty(joinDef, '__implicitJoin', { value: true, enumerable: false, configurable: true });
         }
     }
 
@@ -2395,47 +2394,47 @@ class context {
         });
     }
 
-    // Walk every registered entity. For each column with relationshipType ===
-    // 'belongsTo', look up the parent entity by foreignTable name and copy the
-    // parent's primary-key type onto the FK column. Without this, FKs to a
-    // string/uuid/bigint PK end up declared INTEGER, which SQLite tolerates
-    // (dynamic typing) but Postgres and MySQL reject.
-    #resolveBelongsToTypes() {
-        const entities = this.__entities;
-        if (!entities || entities.length === 0) return;
-
-        // Case-insensitive lookup table — users may write
+    // For each column of `entity` with relationshipType === 'belongsTo', copy the
+    // parent's primary-key type onto the FK column, now if the parent is registered
+    // and otherwise when it is. Without this, FKs to a string/uuid/bigint PK end up
+    // declared INTEGER, which SQLite tolerates (dynamic typing) but Postgres and
+    // MySQL reject.
+    //
+    // Runs once per registered entity and touches only that entity's columns, so
+    // building a context stays linear in its tables. It used to walk every entity
+    // for every dbset(): 311 tables cost CodeBook 40 ms for each context it built.
+    #resolveBelongsToTypes(entity) {
+        // Case-insensitive lookups — users may write
         // db.belongsTo('run') while the class is `Run`.
-        const byName = {};
-        for (const e of entities) {
-            if (e && e.__name) {
-                byName[e.__name.toLowerCase()] = e;
+        const parents = this.__fkParents || (this.__fkParents = new Map());
+        const waiting = this.__fkWaiting || (this.__fkWaiting = new Map());
+        const primaryKeyType = (parent) => {
+            for (const pKey of Object.keys(parent)) {
+                const pCol = parent[pKey];
+                if (pCol && typeof pCol === 'object' && pCol.primary === true && pCol.type) return pCol.type;
             }
+            return null;
+        };
+        const assign = (columns, type) => {
+            if (!type) return;
+            for (const col of columns) if (col.type !== type) col.type = type;
+        };
+
+        if (entity.__name) parents.set(entity.__name.toLowerCase(), entity);
+        for (const key of Object.keys(entity)) {
+            const col = entity[key];
+            if (!col || typeof col !== 'object') continue;
+            if (col.relationshipType !== 'belongsTo') continue;
+            if (!col.foreignTable) continue;
+
+            const parentName = String(col.foreignTable).toLowerCase();
+            if (!waiting.has(parentName)) waiting.set(parentName, []);
+            waiting.get(parentName).push(col);
+            const parent = parents.get(parentName);
+            if (parent) assign([col], primaryKeyType(parent));
         }
-
-        for (const entity of entities) {
-            for (const key of Object.keys(entity)) {
-                const col = entity[key];
-                if (!col || typeof col !== 'object') continue;
-                if (col.relationshipType !== 'belongsTo') continue;
-                if (!col.foreignTable) continue;
-
-                const parent = byName[String(col.foreignTable).toLowerCase()];
-                if (!parent) continue;
-
-                // Find the parent's primary-key column.
-                for (const pKey of Object.keys(parent)) {
-                    const pCol = parent[pKey];
-                    if (!pCol || typeof pCol !== 'object') continue;
-                    if (pCol.primary === true && pCol.type) {
-                        if (col.type !== pCol.type) {
-                            col.type = pCol.type;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
+        // FK columns registered before this entity, and a self-reference.
+        if (entity.__name && waiting.has(entity.__name.toLowerCase())) assign(waiting.get(entity.__name.toLowerCase()), primaryKeyType(entity));
     }
 
     /**
