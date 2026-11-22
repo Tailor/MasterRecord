@@ -1,5 +1,21 @@
 # MasterRecord Changelog
 
+## v1.32.4 — a context is freed as soon as nothing uses it
+
+**Fix: every context stayed in memory until the current job ended.** Each context registered
+`new WeakRef(this)` for the cross-context dirty check. V8 holds a WeakRef's target strongly until
+control returns to the event loop, so a chain of awaits that never did (synchronous SQLite, a worker
+run driven in microtasks, a test) kept every context it created, closed or not, with all its dbsets.
+For CodeBook's 311-table `KanbanContext` that was about 3 MB a context: its `agent-output-limits`
+test ended with 289 MB on the heap after a full collection, and 58 MB with this fix.
+
+- The registry now holds a WeakRef to a small entry that shares the context's dirty index and never
+  points at the context. The cross-context warning reads that index, which holds every pending change.
+- `attach()` now also takes the entity out of its old context's change set. Before, the old context's
+  `saveChanges()` still flushed an entity that had moved to another context.
+- New `test/context-memory-freed.test.js` builds 40 contexts in one job, closed and dropped, read and
+  written, and checks each leaves under 100 KB behind (it was about 640 KB for its 120-table context).
+
 ## v1.32.3 — building a context is 7 times cheaper
 
 **Fix: `dbset()` walked every registered entity each time it ran.** Registering an entity re-resolved
