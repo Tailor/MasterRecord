@@ -112,6 +112,27 @@ test('attach() re-homes the entity so context B persists it and stops warning', 
     }
 });
 
+test('after attach() the old context no longer holds the change', async () => {
+    const ctxA = seed();
+    const ctxB = new XCtx();
+    try {
+        const e = await ctxA.Thing.where(t => t.id == $$, 1).single();
+        e.name = 'moved';
+        ctxB.attach(e);
+        assert.ok(!ctxA.__dirtyEntities.has(e), 'the entity left the old context\'s change set');
+        const spy = spyWarn();
+        await ctxA.saveChanges();          // A no longer owns it, so A must not flush it
+        spy.restore();
+        assert.notEqual(await readName(new XCtx()), 'moved', 'the old context wrote a change it no longer tracks');
+        assert.ok(ctxB.__dirtyEntities.has(e), 'the new context still holds the change');
+        await ctxB.saveChanges();
+        assert.equal(await readName(ctxB), 'moved');
+    } finally {
+        await ctxA.close();
+        await ctxB.close();
+    }
+});
+
 test('saving via the owning context persists and does not warn', async () => {
     const ctxA = seed();
     const spy = spyWarn();

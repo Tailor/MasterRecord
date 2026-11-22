@@ -101,11 +101,22 @@ function _ensurePoolReaper() {
 // entity loaded by context A, then call saveChanges() on context B (a different
 // instance), and B silently writes nothing because A owns the change tracking.
 //
-// Leak-safe: the Set holds WeakRefs (never strong references to a context), and a
-// FinalizationRegistry prunes a context's WeakRef once the context is GC'd. Live
-// contexts are also removed explicitly on close().
-const _liveContexts = global.__MR_LIVE_CONTEXTS__ || (global.__MR_LIVE_CONTEXTS__ = new Set());
-const _liveContextFinalizer = global.__MR_LIVE_CTX_FIN__ || (global.__MR_LIVE_CTX_FIN__ =
+// Leak-safe: the Set holds WeakRefs, and a FinalizationRegistry prunes a WeakRef
+// once its target is GC'd. Live contexts are also removed explicitly on close().
+//
+// The WeakRefs point at a small entry ({ dirty: <the context's dirty index> }),
+// never at the context itself. Creating a WeakRef (and every deref()) adds its
+// target to V8's "kept during job" list, which holds it STRONGLY until the
+// current job ends. A job ends only when control returns to the event loop, so
+// in a long chain of awaits that never does (synchronous SQLite, a run driven
+// in microtasks) every context created stayed alive with all its dbsets (about
+// 3 MB for a 311-table context), closed or not. Pinning the entry instead pins
+// only the dirty index, which is empty once the context saved or closed.
+//
+// The global key changed with this shape (v2), so a second copy of the package
+// loaded in the same process never mixes the two kinds of entry.
+const _liveContexts = global.__MR_LIVE_CONTEXTS_V2__ || (global.__MR_LIVE_CONTEXTS_V2__ = new Set());
+const _liveContextFinalizer = global.__MR_LIVE_CTX_FIN_V2__ || (global.__MR_LIVE_CTX_FIN_V2__ =
     new FinalizationRegistry((ref) => { _liveContexts.delete(ref); }));
 
 function _poolKey(type, cfg) {
@@ -407,11 +418,13 @@ class context {
         this.__trackedEntitiesMap = new Map();  // Initialize Map for O(1) lookups
 
         // Register this instance for cross-context change-tracking detection
-        // (see _liveContexts). Held only as a WeakRef so it never keeps the
-        // context alive; removed on close() and auto-pruned on GC.
-        this.__liveRef = new WeakRef(this);
+        // (see _liveContexts). The registry holds a WeakRef to an entry that
+        // shares this context's dirty index and must never reference the context
+        // itself (see _liveContexts for why); removed on close() and pruned on GC.
+        this.__liveEntry = { dirty: this.__dirtyEntities };
+        this.__liveRef = new WeakRef(this.__liveEntry);
         _liveContexts.add(this.__liveRef);
-        _liveContextFinalizer.register(this, this.__liveRef, this.__liveRef);
+        _liveContextFinalizer.register(this.__liveEntry, this.__liveRef, this.__liveRef);
 
         // Track if this is the first instance of this context class
         // Used to determine if duplicate warnings should be shown
@@ -4015,6 +4028,7 @@ class context {
             _liveContexts.delete(this.__liveRef);
             _liveContextFinalizer.unregister(this.__liveRef);
             this.__liveRef = null;
+            this.__liveEntry = null;
         }
 
         // Find this instance's pool in the registry and decrement
@@ -4166,6 +4180,9 @@ class context {
         if (previous && previous !== this && entity.__ID &&
             previous.__trackedEntitiesMap && previous.__trackedEntitiesMap.has(entity.__ID)) {
             previous.__trackedEntitiesMap.delete(entity.__ID);  // list view follows the map
+            // Leave the old context's dirty index too: it is what the old
+            // context's saveChanges() flushes and what the cross-context check reads.
+            if (previous.__dirtyEntities) previous.__dirtyEntities.delete(entity);
             if (typeof previous.__unindexIdentity === 'function') previous.__unindexIdentity(entity);
         }
 
@@ -4620,12 +4637,13 @@ class context {
     _foreignDirtyEntities() {
         const foreign = [];
         for (const ref of _liveContexts) {
-            const ctx = ref.deref();
-            if (!ctx) { _liveContexts.delete(ref); continue; }  // prune dead ref
-            if (ctx === this) { continue; }
-            const tracked = ctx.__trackedEntities || [];
-            for (const e of tracked) {
-                if (context._isEntityDirty(e)) { foreign.push(e); }
+            const entry = ref.deref();
+            if (!entry) { _liveContexts.delete(ref); continue; }  // prune dead ref
+            if (entry === this.__liveEntry) { continue; }
+            // The dirty index is the complete set of a context's pending changes
+            // (every dirty transition goes through __markDirty / __track).
+            for (const e of entry.dirty) {
+                if (context._isEntityDirty(e) && !e.__noTracking) { foreign.push(e); }
             }
         }
         return foreign;
